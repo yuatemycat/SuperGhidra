@@ -1,0 +1,19 @@
+{
+  "Non-Returning Functions - Discovered": "false",
+  "Repair Flow Damage": "false",
+  "Non-Returning Functions - Known": "true",
+  "Disassemble Entry Points": "true",
+  "Decompiler Switch Analysis": "true",
+  "Demangler GNU": "true",
+  "Demangler Microsoft": "true",
+  "Demangler Rust": "true",
+  "Demangler Swift": "true",
+  "Stack": "true",
+  "Subroutine References": "false",
+  "Call-Fixup Installer": "true",
+  "Variadic Function Signature Override": "false",
+  "Aggressive Instruction Finder": "false",
+  "ARM Aggressive Instruction Finder": "false",
+  "Function ID": "true",
+  "ASCII Strings": "true"
+}
