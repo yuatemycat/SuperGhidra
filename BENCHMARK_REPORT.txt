@@ -1,0 +1,24 @@
+==============================================================================
+ SUPERGHIDRA STORAGE COMPRESSION LAYER BENCHMARK REPORT
+ 16 KB Buffer Interception & 64-bit Slot Directory Format
+==============================================================================
+ Corpus Pages:        5,000 Ghidra B-Tree pages (16 KB each)
+ Raw Database Size:   78.15 MB (81,945,000 bytes)
+ Slot Entry Format:   [block_id: uint32, offset: uint64, comp_len: uint32, orig_len: uint32]
+ Slot Entry Size:     20 bytes / page (100,000 bytes total)
+------------------------------------------------------------------------------
+Metric                           | LZ4 (In-Flight)      | ZSTD Level 3 (Snapshot)
+------------------------------------------------------------------------------
+Compressed Size                  |            16.38 MB |            10.76 MB
+Reduction Percentage (Target > 75%) |               79.05% |               86.23%
+Compression Ratio                |               4.77x |               7.26x
+Compression Throughput           |         142.76 MB/s |          51.65 MB/s
+Decompression Throughput         |         173.99 MB/s |          64.12 MB/s
+Avg Page Comp Latency            |            109.48 us |            302.60 us
+Avg Page Decomp Latency          |             89.83 us |            243.77 us
+Round-Trip Lossless Fidelity     |                 True |                 True
+==============================================================================
+ Target Verification:
+   - LZ4 Reduction > 75%:    79.05% -> PASS (Met > 75%)
+   - ZSTD Reduction > 75%:   86.23% -> PASS (Met > 75%)
+==============================================================================

@@ -1,0 +1,121 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-10-16T21:38:22.134153+00:00",
+  "obligations": [
+    {
+      "obligation_id": "OBL-DC971971",
+      "obligation_type": "FUNCTION_HOOK",
+      "target_name": "sub_10045A820",
+      "proposed_name": "Player::TakeDamage",
+      "target_address": "0x10045a820",
+      "evidence": {
+        "vtable_slot": 7,
+        "vtable_offset": 56,
+        "allocator_symbol": "g_game_alloc",
+        "allocation_size": 512,
+        "struct_size": 384,
+        "field_displacements": [
+          {
+            "name": "m_vtable",
+            "offset": 0,
+            "access_size": 8,
+            "instruction": "ldr x8, [x0]"
+          },
+          {
+            "name": "m_health",
+            "offset": 36,
+            "access_size": 4,
+            "instruction": "ldr w1, [x22, #0x24]"
+          },
+          {
+            "name": "m_maxHealth",
+            "offset": 40,
+            "access_size": 4,
+            "instruction": "ldr w2, [x22, #0x28]"
+          }
+        ]
+      },
+      "status": "COMMITTED",
+      "created_at": "2026-10-16T21:38:22.132571+00:00",
+      "verified_at": "2026-10-16T21:38:22.133423+00:00",
+      "committed_at": "2026-10-16T21:38:22.134153+00:00",
+      "verification_results": [
+        {
+          "check_name": "VTableSlotCheck",
+          "passed": true,
+          "message": "VTable slot verified: index 7 (offset 0x38, aligned to 8B)",
+          "details": {
+            "index": 7,
+            "offset": 56
+          }
+        },
+        {
+          "check_name": "AllocationSizeCheck",
+          "passed": true,
+          "message": "Allocation size verified: 0x200 via 'g_game_alloc' (struct size: 0x180)",
+          "details": {
+            "allocation_size": 512,
+            "allocator": "g_game_alloc",
+            "struct_size": 384
+          }
+        },
+        {
+          "check_name": "FieldDisplacementCheck",
+          "passed": true,
+          "message": "All 3 field displacements verified with valid natural alignment and bounds",
+          "details": {
+            "count": 3
+          }
+        }
+      ],
+      "metadata": {}
+    },
+    {
+      "obligation_id": "OBL-AFAD4503",
+      "obligation_type": "STRUCT_DEFINITION",
+      "target_name": "struct_unknown_48",
+      "proposed_name": "BadAlignmentStruct",
+      "target_address": null,
+      "evidence": {
+        "field_displacements": [
+          {
+            "name": "m_badField",
+            "offset": 37,
+            "access_size": 4,
+            "instruction": "ldr w1, [x22, #0x25]"
+          }
+        ]
+      },
+      "status": "REJECTED",
+      "created_at": "2026-10-16T21:38:22.134153+00:00",
+      "verified_at": "2026-10-16T21:38:22.134153+00:00",
+      "committed_at": null,
+      "verification_results": [
+        {
+          "check_name": "VTableSlotCheck",
+          "passed": true,
+          "message": "No VTable evidence provided (skipped)",
+          "details": {}
+        },
+        {
+          "check_name": "AllocationSizeCheck",
+          "passed": true,
+          "message": "No allocation size evidence provided (skipped)",
+          "details": {}
+        },
+        {
+          "check_name": "FieldDisplacementCheck",
+          "passed": false,
+          "message": "Field 'm_badField' at offset 0x25 violates natural alignment for access size 4 bytes (offset % 4 != 0)",
+          "details": {
+            "field": "m_badField",
+            "offset": 37,
+            "access_size": 4,
+            "instruction": "ldr w1, [x22, #0x25]"
+          }
+        }
+      ],
+      "metadata": {}
+    }
+  ]
+}
