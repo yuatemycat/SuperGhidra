@@ -109,13 +109,14 @@ E:\02_Projects\SuperGhidra\
 ├── neural_decompiler_pipeline.py         # Two-phase Skeleton-to-Skin neural lifter
 ├── resource_governor.py                  # Speed-vs-CPU Governor (eco/balanced/turbo/auto)
 │
-├── test_superghidra.py                   # Phase 1 unit tests
-├── test_superghidra_suite.py             # Phase 1 benchmark & regression suite
-├── test_ipc_and_seeder.py                # SHM bridge and GPU seeder test suite
-├── test_dag_and_delta.py                 # Dependency DAG and Semantic Delta test suite
+├── test_superghidra.py                   # Phase 1 unit tests (10 tests)
+├── test_superghidra_suite.py             # Phase 1 benchmark & regression suite (9 tests)
+├── test_ipc_and_seeder.py                # SHM bridge and GPU seeder test suite (7 tests)
+├── test_dag_and_delta.py                 # Dependency DAG and Semantic Delta test suite (7 tests)
 ├── test_phase2_suite.py                  # Phase 2 integrated test suite (17 tests)
 ├── test_spec_reformation_suite.py        # Sections 5-7 spec test suite (8 tests)
 ├── test_resource_governor.py             # Section 8 Resource Governor test suite (6 tests)
+├── test_oracle_governor_cache.py         # Section 8 Governor & L2 Cache integration tests (24 tests)
 │
 ├── BENCHMARK_REPORT.txt                  # Phase 1 storage benchmark figures
 ├── PHASE2_BENCHMARK_REPORT.txt           # Phase 2 consolidated benchmark figures
@@ -135,20 +136,36 @@ E:\02_Projects\SuperGhidra\
 
 ### 2. Running Test Suites & Benchmarks
 ```powershell
-# Run the complete test suite (40 tests, ~8 seconds total)
+# Run the complete test suite (98 tests across all modules, ~14 seconds total)
+E:\03_Devops\Python\python.exe -m unittest discover -s E:\02_Projects\SuperGhidra -p "test_*.py"
+
+# Or run individual specialized suites:
+E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\test_oracle_governor_cache.py
 E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\test_resource_governor.py
 E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\test_spec_reformation_suite.py
 E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\test_phase2_suite.py
 E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\test_superghidra_suite.py
 ```
 
-### 3. Using the Persistent Lock-Free Daemon
+### 3. Using the Persistent Lock-Free Daemon & L2 Cache
 ```powershell
 # Query status (auto-spawns background daemon if offline)
 E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\ghidra_oracle.py status
 
-# Instant decompile query (<5 ms cached)
+# Sub-millisecond repeat query (<0.01 ms via persistent L2 SQLite cache, 0% JVM CPU)
 E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\ghidra_oracle.py decompile 0x00CF2D84
+
+# Hot-swap runtime resource governor mode (eco, balanced, turbo, auto)
+E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\ghidra_oracle.py mode eco
+
+# Decompile with custom simplification style downshifting & duty-cycle throttling
+E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\ghidra_oracle.py decompile 0x00CF2D84 --style normalize --throttle-ms 50
+
+# Force immediate native decompiler hibernation & JVM memory release
+E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\ghidra_oracle.py hibernate
+
+# Clear persistent L2 SQLite cache table
+E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\ghidra_oracle.py clear-cache
 
 # Inspect VTable slots and runtime hook RVAs
 E:\03_Devops\Python\python.exe E:\02_Projects\SuperGhidra\ghidra_oracle.py vtable 0x015A9378 7
