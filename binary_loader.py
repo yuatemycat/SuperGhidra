@@ -32,6 +32,7 @@ __all__ = [
     "BinaryImage",
     "load_binary",
     "detect_format",
+    "resolve_import_ordinals",
 ]
 
 
@@ -590,8 +591,15 @@ def _load_pe(data: bytes) -> BinaryImage:
             if p + entry_size > len(data):
                 break
             begin = struct.unpack_from("<I", data, p)[0]
-            if begin:
-                img.function_starts.append(image_base + (begin & ~1 if arch == "arm" else begin))
+            if not begin:
+                continue
+            if arch == "x86_64":
+                # Chained unwind info (UNW_FLAG_CHAININFO) marks a fragment of the previous
+                # function (shrink-wrapped or split code), not a function of its own.
+                uo = rva_off(struct.unpack_from("<I", data, p + 8)[0])
+                if uo is not None and uo < len(data) and (data[uo] >> 3) & 0x4:
+                    continue
+            img.function_starts.append(image_base + (begin & ~1 if arch == "arm" else begin))
 
     # Debug directory => CodeView RSDS PDB path.
     dbg_rva, dbg_size = directory(6)
@@ -839,6 +847,56 @@ def load_binary(source: Union[str, bytes, bytearray, memoryview], *,
 def iter_code(img: BinaryImage) -> Iterable[Tuple[int, bytes]]:
     """Yield (start VA, bytes) for each executable region."""
     yield from img.code_regions()
+
+
+_ORDINAL_TABLES: Dict[str, Dict[int, str]] = {}
+
+
+def _ghidra_symbol_dirs(bits: int) -> List[str]:
+    sub = "win64" if bits == 64 else "win32"
+    roots = [os.environ.get("GHIDRA_INSTALL_DIR"), r"E:\03_Devops\Ghidra"]
+    return [os.path.join(r, "Ghidra", "Features", "Base", "data", "symbols", sub) for r in roots if r]
+
+
+def _ordinal_table(path: str) -> Dict[int, str]:
+    if path not in _ORDINAL_TABLES:
+        import re
+
+        table: Dict[int, str] = {}
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for m in re.finditer(r'ORDINAL="(\d+)"\s+NAME="([^"]+)"', f.read()):
+                    table[int(m.group(1))] = m.group(2)
+        except OSError:
+            pass
+        _ORDINAL_TABLES[path] = table
+    return _ORDINAL_TABLES[path]
+
+
+def resolve_import_ordinals(img: BinaryImage, symbol_dirs: Optional[List[str]] = None) -> int:
+    """Name PE imports that are by ordinal only (e.g. every mfc140u.dll import).
+
+    Uses Ghidra's ``data/symbols/win32|win64/<dll>.exports`` tables (from
+    ``GHIDRA_INSTALL_DIR``) or ``symbol_dirs``. Returns how many imports were named; does
+    nothing when no table is found.
+    """
+    if img.format != "pe":
+        return 0
+    dirs = symbol_dirs if symbol_dirs is not None else _ghidra_symbol_dirs(img.bits)
+    named = 0
+    for imp in img.imports:
+        if imp.name or imp.ordinal is None or not imp.library:
+            continue
+        base = os.path.splitext(imp.library.lower())[0]
+        for d in dirs:
+            path = os.path.join(d, base + ".exports")
+            if os.path.isfile(path):
+                name = _ordinal_table(path).get(imp.ordinal)
+                if name:
+                    imp.name = name
+                    named += 1
+                break
+    return named
 
 
 if __name__ == "__main__":  # pragma: no cover - manual inspection helper
