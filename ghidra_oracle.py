@@ -21,6 +21,8 @@ Supported Commands:
   - rename <addr> <name>         : Sets function/symbol rename in JSON write-overlay table.
   - comment <addr> <text>        : Sets address comment in JSON write-overlay table.
   - overlay [list|clear]         : Inspects or clears active JSON write-overlay entries.
+  - type <name_or_id>            : Queries off-heap struct/type layout and C declaration.
+  - register_struct <name> <sz>  : Registers deduplicated struct in off-heap type store.
   - mode [eco|balanced|turbo|auto]: Dynamic Governor mode switch.
   - hibernate                    : Forces immediate decompiler process hibernation & RAM cleanup.
   - clear-cache                  : Clears persistent L2 SQLite query cache.
@@ -37,11 +39,66 @@ import struct
 import sqlite3
 import contextlib
 import logging
+import re
 import subprocess
 import threading
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Set, Tuple, Union, Iterable
 from collections import OrderedDict
 
+# Import DependencyCacheDAG and SemanticDeltaLog
+try:
+    from dependency_cache_dag import DependencyCacheDAG, FunctionNode, InvalidationImpactReport
+except ImportError:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from dependency_cache_dag import DependencyCacheDAG, FunctionNode, InvalidationImpactReport
+
+try:
+    from semantic_delta_log import SemanticDeltaLog, DeltaEventType, SemanticEvent, CommentType
+except ImportError:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from semantic_delta_log import SemanticDeltaLog, DeltaEventType, SemanticEvent, CommentType
+
+# Import OffHeapTypeStore, OracleTypeStoreAdapter, TypeDeduplicator, TypeKind, StructMember
+try:
+    from dwarf_pdb_preindexer import (
+        OffHeapTypeStore,
+        OracleTypeStoreAdapter,
+        TypeDeduplicator,
+        TypeKind,
+        StructMember,
+    )
+except ImportError:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from dwarf_pdb_preindexer import (
+        OffHeapTypeStore,
+        OracleTypeStoreAdapter,
+        TypeDeduplicator,
+        TypeKind,
+        StructMember,
+    )
+
+# Import Resource Governor components
+try:
+    from resource_governor import (
+        ResourceMode,
+        ModePolicy,
+        get_default_mode_policy,
+        DecompilerComplexityGovernor,
+        FunctionComplexityTier,
+    )
+except ImportError:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from resource_governor import (
+        ResourceMode,
+        ModePolicy,
+        get_default_mode_policy,
+        DecompilerComplexityGovernor,
+        FunctionComplexityTier,
+    )
 # ==============================================================================
 # Configuration & Constants
 # ==============================================================================
@@ -54,7 +111,7 @@ OVERLAY_FILENAME = "ghidra_overlay.json"
 DAEMON_LOG_FILENAME = "ghidra_oracle_daemon.log"
 L2_CACHE_FILENAME = "ghidra_oracle_cache.db"
 
-PROJECT_CANDIDATES = [
+DEFAULT_PROJECT_CANDIDATES = [
     # 1. Intra-farm libg_analysis
     (
         r"E:\02_Projects\Intra-farm\pyghidra_mcp_projects",
@@ -79,13 +136,30 @@ PROJECT_CANDIDATES = [
         "libg_analysis",
         "libg_17381_exact.so-3c8447",
     ),
-    # 5. Legacy D:\
-    (
-        r"D:\01_Apps\DevTools\ghidra_projects",
-        "hayday_cli",
-        "libg.so-b3ae02",
-    ),
 ]
+PROJECT_CANDIDATES = list(DEFAULT_PROJECT_CANDIDATES)
+
+
+def get_project_candidates() -> List[Tuple[str, str, Optional[str]]]:
+    """Returns candidate project tuples, checking SUPERGHIDRA_PROJECTS env var first."""
+    env_projects = os.environ.get("SUPERGHIDRA_PROJECTS")
+    candidates: List[Tuple[str, str, Optional[str]]] = []
+    if env_projects:
+        for item in env_projects.split(";"):
+            item = item.strip()
+            if not item:
+                continue
+            parts = [p.strip() for p in item.split(",")]
+            if len(parts) >= 3:
+                candidates.append((parts[0], parts[1], parts[2]))
+            elif len(parts) == 2:
+                candidates.append((parts[0], parts[1], None))
+            elif len(parts) == 1:
+                p_path = parts[0]
+                candidates.append((os.path.dirname(p_path) or ".", os.path.basename(p_path), None))
+    candidates.extend(DEFAULT_PROJECT_CANDIDATES)
+    return candidates
+
 
 logger = logging.getLogger("ghidra_oracle")
 
@@ -94,22 +168,24 @@ logger = logging.getLogger("ghidra_oracle")
 # Environment Configuration
 # ==============================================================================
 
-def setup_environment():
+def setup_environment(ghidra_dir: Optional[str] = None, java_home: Optional[str] = None):
     """Configures JDK 21 and Ghidra environment paths before starting PyGhidra."""
-    if "GHIDRA_INSTALL_DIR" not in os.environ:
-        if os.path.exists(r"E:\03_Devops\Ghidra"):
-            os.environ["GHIDRA_INSTALL_DIR"] = r"E:\03_Devops\Ghidra"
-        elif os.path.exists(r"D:\01_Apps\DevTools\ghidra_12.1.3_PUBLIC"):
-            os.environ["GHIDRA_INSTALL_DIR"] = r"D:\01_Apps\DevTools\ghidra_12.1.3_PUBLIC"
+    g_dir = ghidra_dir or os.environ.get("GHIDRA_INSTALL_DIR")
+    if not g_dir:
+        default_ghidra = r"E:\03_Devops\Ghidra"
+        if os.path.exists(default_ghidra):
+            g_dir = default_ghidra
+    if g_dir:
+        os.environ["GHIDRA_INSTALL_DIR"] = g_dir
 
-    if "JAVA_HOME" not in os.environ:
-        if os.path.exists(r"E:\03_Devops\JDK"):
-            os.environ["JAVA_HOME"] = r"E:\03_Devops\JDK"
-        elif os.path.exists(r"D:\01_Apps\DevTools\Java21"):
-            os.environ["JAVA_HOME"] = r"D:\01_Apps\DevTools\Java21"
-
-    if "JAVA_HOME" in os.environ:
-        java_bin = os.path.join(os.environ["JAVA_HOME"], "bin")
+    j_home = java_home or os.environ.get("JAVA_HOME")
+    if not j_home:
+        default_jdk = r"E:\03_Devops\JDK"
+        if os.path.exists(default_jdk):
+            j_home = default_jdk
+    if j_home:
+        os.environ["JAVA_HOME"] = j_home
+        java_bin = os.path.join(j_home, "bin")
         cur_path = os.environ.get("PATH", "")
         if java_bin not in cur_path:
             os.environ["PATH"] = java_bin + ";" + cur_path
@@ -133,9 +209,13 @@ def parse_addr_int(addr_input: Any) -> int:
 
 
 def normalize_hex_key(addr_input: Any) -> str:
-    """Returns canonical '0x00123456' format string for address keys."""
-    val = parse_addr_int(addr_input)
-    return f"0x{val:08X}"
+    """Returns canonical '0x00123456' format string for address keys, or string symbol if non-address."""
+    try:
+        val = parse_addr_int(addr_input)
+        return f"0x{val:08X}"
+    except (ValueError, TypeError):
+        return str(addr_input).strip()
+
 
 
 def va_to_rva(va: int, base: int = DEFAULT_IMAGE_BASE) -> int:
@@ -180,6 +260,12 @@ class LRUCache:
                 self.hits += 1
                 self.cache.move_to_end(key)
                 return self.cache[key]
+            # Fallback for single key lookup when cache has tuple keys (e.g. (va, style))
+            if not isinstance(key, tuple):
+                for k, v in self.cache.items():
+                    if isinstance(k, tuple) and len(k) > 0 and (k[0] == key or str(k[0]) == str(key)):
+                        self.hits += 1
+                        return v
             self.misses += 1
             return None
 
@@ -203,11 +289,38 @@ class LRUCache:
                 "hit_rate_pct": round(rate, 2),
             }
 
+    def evict(self, key: Any) -> bool:
+        with self._lock:
+            found = False
+            if key in self.cache:
+                del self.cache[key]
+                found = True
+            # Also evict tuple keys where first element matches
+            matching = [k for k in list(self.cache.keys()) if isinstance(k, tuple) and len(k) > 0 and (k[0] == key or str(k[0]) == str(key))]
+            for k in matching:
+                del self.cache[k]
+                found = True
+            return found
+
+    def evict_batch(self, keys: Iterable[Any]) -> List[Any]:
+        evicted = []
+        with self._lock:
+            for k in keys:
+                if k in self.cache:
+                    del self.cache[k]
+                    evicted.append(k)
+                matching = [mk for mk in list(self.cache.keys()) if isinstance(mk, tuple) and len(mk) > 0 and (mk[0] == k or str(mk[0]) == str(k))]
+                for mk in matching:
+                    del self.cache[mk]
+                    evicted.append(mk)
+        return evicted
+
     def clear(self) -> None:
         with self._lock:
             self.cache.clear()
             self.hits = 0
             self.misses = 0
+
 
 
 # ==============================================================================
@@ -255,23 +368,39 @@ class L2SQLiteCache:
                         CREATE TABLE IF NOT EXISTS oracle_cache (
                             query_type TEXT NOT NULL,
                             query_key TEXT NOT NULL,
+                            program_id TEXT NOT NULL DEFAULT '',
                             data_json TEXT NOT NULL,
                             timestamp REAL NOT NULL,
-                            PRIMARY KEY (query_type, query_key)
+                            PRIMARY KEY (query_type, query_key, program_id)
                         )
                     """)
+                    cols = [r[1] for r in conn.execute("PRAGMA table_info(oracle_cache)").fetchall()]
+                    if "program_id" not in cols:
+                        conn.execute("ALTER TABLE oracle_cache ADD COLUMN program_id TEXT NOT NULL DEFAULT ''")
+                    # Purge any un-scoped legacy rows written before program scoping
+                    conn.execute("DELETE FROM oracle_cache WHERE program_id = ''")
                     conn.commit()
             except Exception as e:
                 logger.warning(f"Failed to initialize L2 SQLite cache at {self.db_path}: {e}")
 
-    def get(self, query_type: str, query_key: str) -> Optional[Dict[str, Any]]:
+    def get(self, query_type: str, query_key: str, program_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         with self._lock:
             try:
                 with self._conn_ctx() as conn:
-                    cur = conn.execute(
-                        "SELECT data_json, timestamp FROM oracle_cache WHERE query_type = ? AND query_key = ?",
-                        (query_type, str(query_key).lower())
-                    )
+                    if program_id:
+                        cur = conn.execute(
+                            """
+                            SELECT data_json, timestamp FROM oracle_cache
+                            WHERE query_type = ? AND query_key = ? AND program_id = ?
+                            LIMIT 1
+                            """,
+                            (query_type, str(query_key).lower(), str(program_id))
+                        )
+                    else:
+                        cur = conn.execute(
+                            "SELECT data_json, timestamp FROM oracle_cache WHERE query_type = ? AND query_key = ? LIMIT 1",
+                            (query_type, str(query_key).lower())
+                        )
                     row = cur.fetchone()
                     if row:
                         data = json.loads(row[0])
@@ -288,6 +417,7 @@ class L2SQLiteCache:
         query_key: str,
         data: Dict[str, Any],
         timestamp: Optional[float] = None,
+        program_id: Optional[str] = None,
     ) -> None:
         with self._lock:
             try:
@@ -296,11 +426,12 @@ class L2SQLiteCache:
                 data_copy.pop("cached", None)
                 data_copy.pop("l2_timestamp", None)
                 ts = timestamp if timestamp is not None else time.time()
+                prog_id = str(program_id or "")
                 with self._conn_ctx() as conn:
                     conn.execute("""
-                        INSERT OR REPLACE INTO oracle_cache (query_type, query_key, data_json, timestamp)
-                        VALUES (?, ?, ?, ?)
-                    """, (query_type, str(query_key).lower(), json.dumps(data_copy), ts))
+                        INSERT OR REPLACE INTO oracle_cache (query_type, query_key, program_id, data_json, timestamp)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (query_type, str(query_key).lower(), prog_id, json.dumps(data_copy), ts))
                     conn.commit()
             except Exception as e:
                 logger.debug(f"L2 cache write error: {e}")
@@ -384,9 +515,82 @@ class L2SQLiteCache:
                 logger.debug(f"L2 cache count error: {e}")
                 return 0
 
+    def invalidate_address(self, va: Any, program_id: Optional[str] = None) -> int:
+        """
+        Deletes cached entries from L2 SQLite cache matching the given virtual address
+        across all query types that may embed names (decompile, vtable, refs, disassemble).
+        Matches both direct address keys and JSON target arrays. Returns deleted rowcount.
+        """
+        with self._lock:
+            try:
+                candidates = set()
+                try:
+                    v_int = parse_addr_int(va)
+                    candidates.add(f"0x{v_int:08x}".lower())
+                    candidates.add(hex(v_int).lower())
+                    candidates.add(f"{v_int:x}".lower())
+                    candidates.add(str(v_int))
+                except Exception:
+                    pass
+                if isinstance(va, str):
+                    candidates.add(va.strip().lower())
+
+                with self._conn_ctx() as conn:
+                    select_sql = """
+                        SELECT query_type, query_key FROM oracle_cache
+                        WHERE query_type IN ('decompile', 'vtable', 'refs', 'references', 'disassemble')
+                    """
+                    params: List[Any] = []
+                    if program_id:
+                        select_sql += " AND program_id = ?"
+                        params.append(str(program_id))
+
+                    cur = conn.execute(select_sql, params)
+                    items_to_delete = []
+                    for row in cur.fetchall():
+                        qtype, qkey = row[0], row[1]
+                        qkey_lower = qkey.lower()
+                        # Direct match
+                        if qkey_lower in candidates:
+                            items_to_delete.append((qtype, qkey))
+                            continue
+                        # Target array or substring match in JSON
+                        for cand in candidates:
+                            if f'"{cand}"' in qkey_lower or f"'{cand}'" in qkey_lower or f": {cand}" in qkey_lower:
+                                items_to_delete.append((qtype, qkey))
+                                break
+                    deleted = 0
+                    for qt, k in items_to_delete:
+                        del_sql = "DELETE FROM oracle_cache WHERE query_type = ? AND query_key = ?"
+                        del_params = [qt, k]
+                        if program_id:
+                            del_sql += " AND program_id = ?"
+                            del_params.append(str(program_id))
+                        c = conn.execute(del_sql, del_params)
+                        deleted += c.rowcount
+                    conn.commit()
+                    return deleted
+            except Exception as e:
+                logger.warning(f"L2 cache invalidate_address error for {va}: {e}")
+                return 0
+
+    def invalidate_program(self, program_id: str) -> int:
+        """Deletes all cached rows for a specific program identity."""
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    cur = conn.execute("DELETE FROM oracle_cache WHERE program_id = ?", (str(program_id),))
+                    deleted = cur.rowcount
+                    conn.commit()
+                    return deleted
+            except Exception as e:
+                logger.warning(f"L2 cache invalidate_program error for {program_id}: {e}")
+                return 0
+
     def close(self) -> None:
         """Closes any persistent resources."""
         pass
+
 
 
 # ==============================================================================
@@ -463,11 +667,57 @@ class WriteOverlay:
                     return self.comments[k]
         return None
 
+    def apply_to_c_code(self, c_code: str, image_base: int = DEFAULT_IMAGE_BASE) -> str:
+        """
+        Replaces occurrences of FUN_<va_hex> or FUN_<rva_hex> (case-insensitive 8-hex-digit addresses)
+        and any known renamed symbols in self.renames inside decompiled C source code.
+        """
+        if not c_code:
+            return c_code
+
+        with self._lock:
+            if not self.renames:
+                return c_code
+            renames_copy = dict(self.renames)
+
+        def _replace_fun(match: re.Match) -> str:
+            hex_str = match.group(1)
+            try:
+                val = int(hex_str, 16)
+            except ValueError:
+                return match.group(0)
+
+            # Check direct VA, RVA, and image base translation
+            candidates = [val]
+            if val >= image_base:
+                candidates.append(val - image_base)
+            else:
+                candidates.append(val + image_base)
+
+            for cand in candidates:
+                k = normalize_hex_key(cand)
+                if k in renames_copy:
+                    return renames_copy[k]
+
+            return match.group(0)
+
+        # Replace FUN_<8hex> (case-insensitive)
+        result = re.sub(r"\bFUN_([0-9a-fA-F]{8})\b", _replace_fun, c_code, flags=re.IGNORECASE)
+
+        # Also replace any non-address symbol names in renames_copy if present
+        for old_sym, new_sym in renames_copy.items():
+            if not old_sym.lower().startswith("0x"):
+                pattern = r"\b" + re.escape(old_sym) + r"\b"
+                result = re.sub(pattern, new_sym, result)
+
+        return result
+
     def clear(self) -> None:
         with self._lock:
             self.renames.clear()
             self.comments.clear()
         self.save()
+
 
     def to_dict(self) -> Dict[str, Any]:
         with self._lock:
@@ -493,10 +743,14 @@ class GhidraOracleSession:
         resource_mode: str = "balanced",
         l2_cache: Optional[L2SQLiteCache] = None,
         overlay: Optional[WriteOverlay] = None,
+        clean_stale_locks: bool = False,
+        lock_stale_threshold_sec: float = 600.0,
     ):
         self.project_dir = project_dir
         self.project_name = project_name
         self.program_name = program_name
+        self.clean_stale_locks = clean_stale_locks
+        self.lock_stale_threshold_sec = lock_stale_threshold_sec
 
         self.project = None
         self.program = None
@@ -510,6 +764,12 @@ class GhidraOracleSession:
         self.vtable_cache = LRUCache(512)
         self.overlay = overlay if overlay is not None else WriteOverlay()
         self.l2_cache = l2_cache if l2_cache is not None else L2SQLiteCache()
+        self.dep_dag = DependencyCacheDAG()
+        delta_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".ghidra-delta.jsonl")
+        self.delta_log = SemanticDeltaLog(delta_log_path)
+        self.type_store = OffHeapTypeStore()
+        self.type_adapter = OracleTypeStoreAdapter(self.type_store)
+
 
         # Section 8 Resource Governor & Decompiler Watchdog state
         self.resource_mode = "balanced"  # eco, balanced, turbo, auto
@@ -520,6 +780,7 @@ class GhidraOracleSession:
         self._watchdog_thread: Optional[threading.Thread] = None
         self._watchdog_stop = threading.Event()
         self._session_lock = threading.Lock()
+        self._engine_lock = threading.RLock()
 
         if resource_mode and resource_mode != "balanced":
             self.set_resource_mode(resource_mode)
@@ -529,15 +790,81 @@ class GhidraOracleSession:
         # Pre-indexed ADRP pages: dict mapping page_va -> list of (insn_va, dest_reg, paired_insn_info)
         self._adrp_pages: Dict[int, List[Dict[str, Any]]] = {}
 
-    def clean_locks(self, proj_dir: str, proj_name: str) -> None:
-        """Removes orphaned lock files to prevent lock collisions."""
+    def get_program_id(self) -> str:
+        """Returns deterministic program identity string."""
+        if hasattr(self, "program") and self.program:
+            prog_name = getattr(self, "program_name", "") or ""
+            img_base = getattr(self, "image_base", 0) or 0
+            return f"{prog_name}:{img_base:#x}"
+        if self.project_name or self.program_name:
+            return f"{self.project_name or ''}:{self.program_name or ''}"
+        return ""
+
+    @property
+    def program_id(self) -> str:
+        return self.get_program_id()
+
+    def clean_locks(
+        self,
+        proj_dir: str,
+        proj_name: str,
+        clean_stale_locks: Optional[bool] = None,
+        stale_threshold_sec: Optional[float] = None,
+    ) -> List[str]:
+        """
+        Safely inspects Ghidra project lock files.
+        By default, does NOT delete anything and logs a warning listing locks found.
+        Only deletes if opt-in is enabled (clean_stale_locks=True), file mtime is
+        older than threshold (default 10 min), and on POSIX non-blocking flock succeeds.
+        Returns list of deleted file paths.
+        """
+        opt_in = self.clean_stale_locks if clean_stale_locks is None else clean_stale_locks
+        threshold = self.lock_stale_threshold_sec if stale_threshold_sec is None else stale_threshold_sec
+
+        deleted = []
         for lock_name in [f"{proj_name}.lock", f"{proj_name}.lock~"]:
             p = os.path.join(proj_dir, lock_name)
-            if os.path.exists(p):
+            if not os.path.exists(p):
+                continue
+
+            try:
+                mtime = os.path.getmtime(p)
+                age_sec = time.time() - mtime
+            except OSError as e:
+                logger.warning(f"Could not inspect lock file '{p}': {e}")
+                continue
+
+            if not opt_in:
+                logger.warning(
+                    f"Found existing Ghidra lock file '{p}' (age: {age_sec:.1f}s). Skipping removal (clean_stale_locks opt-in not set)."
+                )
+                continue
+
+            if age_sec < threshold:
+                logger.warning(
+                    f"Lock file '{p}' is active or recent (age: {age_sec:.1f}s < threshold {threshold:.1f}s), skipping removal."
+                )
+                continue
+
+            # On POSIX, verify flock non-blocking lock can be acquired
+            if os.name != "nt":
                 try:
-                    os.remove(p)
-                except Exception:
-                    pass
+                    import fcntl
+                    with open(p, "r+") as f:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                except (IOError, OSError) as e:
+                    logger.warning(f"Lock file '{p}' is held by an active process, skipping removal: {e}")
+                    continue
+
+            try:
+                os.remove(p)
+                deleted.append(p)
+                logger.info(f"Removed stale lock file '{p}' (age: {age_sec:.1f}s)")
+            except OSError as e:
+                logger.warning(f"Failed to remove stale lock file '{p}': {e}")
+
+        return deleted
 
     def initialize(self) -> None:
         """Boots PyGhidra and opens the project in read-only mode."""
@@ -550,10 +877,12 @@ class GhidraOracleSession:
         from ghidra.app.decompiler import DecompInterface, DecompileOptions
         from ghidra.util.task import ConsoleTaskMonitor
 
-        candidates = []
         if self.project_dir and self.project_name:
-            candidates.append((self.project_dir, self.project_name, self.program_name))
-        candidates.extend(PROJECT_CANDIDATES)
+            candidates = [(self.project_dir, self.project_name, self.program_name)]
+            is_explicit = True
+        else:
+            candidates = list(get_project_candidates())
+            is_explicit = False
 
         opened = False
         last_err = None
@@ -567,14 +896,14 @@ class GhidraOracleSession:
                 prog = None
                 if prg_name:
                     try:
-                        prog = proj.openProgram("/", prg_name, False)
-                    except Exception:
-                        pass
+                        prog = proj.openProgram("/", prg_name, True)
+                    except Exception as e:
+                        last_err = e
                 if prog is None:
                     # Pick first program from root folder
                     files = proj.getRootFolder().getFiles()
                     if files:
-                        prog = proj.openProgram("/", files[0].getName(), False)
+                        prog = proj.openProgram("/", files[0].getName(), True)
 
                 if prog is not None:
                     self.project = proj
@@ -595,8 +924,12 @@ class GhidraOracleSession:
                 continue
 
         if not opened:
+            if is_explicit:
+                raise RuntimeError(
+                    f"Failed to open requested Ghidra project '{self.project_name}' in '{self.project_dir}': {last_err}"
+                )
             raise RuntimeError(
-                f"Could not open any Ghidra project in read-only mode! Last error: {last_err}"
+                f"Could not open any Ghidra project candidates in read-only mode! Last error: {last_err}"
             )
 
         self.flat_api = FlatProgramAPI(self.program)
@@ -642,110 +975,114 @@ class GhidraOracleSession:
         Forces immediate native decompiler hibernation & RAM release (Section 8.2).
         Calls decompiler.flushCache(), decompiler.stopProcess(), and triggers System.gc().
         """
-        with self._session_lock:
-            if self.decompiler is not None:
+        with self._engine_lock:
+            with self._session_lock:
+                if self.decompiler is not None:
+                    try:
+                        self.decompiler.flushCache()
+                        self.decompiler.stopProcess()
+                    except Exception as e:
+                        logger.debug(f"decompiler.stopProcess() notice: {e}")
+                self.is_hibernating = True
+
+                # Trigger JVM garbage collection to release unused pages
                 try:
-                    self.decompiler.flushCache()
-                    self.decompiler.stopProcess()
-                except Exception as e:
-                    logger.debug(f"decompiler.stopProcess() notice: {e}")
-            self.is_hibernating = True
+                    import java.lang.System
+                    java.lang.System.gc()
+                except Exception:
+                    pass
 
-            # Trigger JVM garbage collection to release unused pages
-            try:
-                import java.lang.System
-                java.lang.System.gc()
-            except Exception:
-                pass
-
-            return {
-                "status": "ok",
-                "message": "Native decompiler process hibernated; idle RAM reclaimed via System.gc()",
-                "is_hibernating": True,
-            }
+                return {
+                    "status": "ok",
+                    "message": "Native decompiler process hibernated; idle RAM reclaimed via System.gc()",
+                    "is_hibernating": True,
+                }
 
     def _ensure_decompiler_active(self) -> None:
         """Re-arms the native decompiler process if currently hibernated."""
         self.last_decompile_time = time.time()
         if self.is_hibernating or self.decompiler is None:
-            with self._session_lock:
-                if self.decompiler is None:
-                    from ghidra.app.decompiler import DecompInterface, DecompileOptions
-                    self.decompiler = DecompInterface()
-                    options = DecompileOptions()
-                    self.decompiler.setOptions(options)
-                self.decompiler.openProgram(self.program)
-                self.is_hibernating = False
+            with self._engine_lock:
+                with self._session_lock:
+                    if self.decompiler is None:
+                        from ghidra.app.decompiler import DecompInterface, DecompileOptions
+                        self.decompiler = DecompInterface()
+                        options = DecompileOptions()
+                        self.decompiler.setOptions(options)
+                    if self.program is not None:
+                        self.decompiler.openProgram(self.program)
+                    self.is_hibernating = False
                 logger.info("Native decompiler process re-armed and program opened.")
 
     def set_resource_mode(self, mode: str) -> Dict[str, Any]:
         """
         Hot-swaps running daemon between eco, balanced, turbo, and auto resource profiles.
         """
-        mode_lower = mode.lower().strip()
-        if mode_lower == "eco":
-            self.resource_mode = "eco"
-            self.idle_timeout_sec = 15.0
-            self.throttle_ms = 50
-            self.decompile_cache.capacity = 128
-            self.vtable_cache.capacity = 128
-            try:
-                import psutil
-                p = psutil.Process()
-                p.cpu_affinity([0])
-                p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 15)
-            except Exception:
-                pass
-        elif mode_lower == "balanced":
-            self.resource_mode = "balanced"
-            self.idle_timeout_sec = 120.0
-            self.throttle_ms = 10
-            self.decompile_cache.capacity = 512
-            self.vtable_cache.capacity = 512
-            try:
-                import psutil
-                p = psutil.Process()
-                avail = list(range(min(2, os.cpu_count() or 2)))
-                p.cpu_affinity(avail)
-                p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 5)
-            except Exception:
-                pass
-        elif mode_lower == "turbo":
-            self.resource_mode = "turbo"
-            self.idle_timeout_sec = 0.0  # Never hibernate
-            self.throttle_ms = 0
-            self.decompile_cache.capacity = 2048
-            self.vtable_cache.capacity = 2048
-            try:
-                import psutil
-                p = psutil.Process()
-                p.cpu_affinity(list(range(os.cpu_count() or 8)))
-                p.nice(psutil.NORMAL_PRIORITY_CLASS if os.name == "nt" else 0)
-            except Exception:
-                pass
-        elif mode_lower == "auto":
-            self.resource_mode = "auto"
-            self.idle_timeout_sec = 60.0
-            self.throttle_ms = 10
-            self.decompile_cache.capacity = 1024
-            self.vtable_cache.capacity = 1024
-            try:
-                import psutil
-                p = psutil.Process()
-                avail = list(range(min(4, os.cpu_count() or 4)))
-                p.cpu_affinity(avail)
-                p.nice(psutil.NORMAL_PRIORITY_CLASS if os.name == "nt" else 0)
-            except Exception:
-                pass
-        else:
-            return {
-                "status": "error",
-                "message": f"Unknown mode '{mode}'. Choose from: eco, balanced, turbo, auto",
-            }
+        with self._engine_lock:
+            mode_lower = mode.lower().strip()
+            if mode_lower == "eco":
+                self.resource_mode = "eco"
+                self.idle_timeout_sec = 15.0
+                self.throttle_ms = 50
+                self.decompile_cache.capacity = 128
+                self.vtable_cache.capacity = 128
+                try:
+                    import psutil
+                    p = psutil.Process()
+                    p.cpu_affinity([0])
+                    p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 15)
+                except Exception:
+                    pass
+            elif mode_lower == "balanced":
+                self.resource_mode = "balanced"
+                self.idle_timeout_sec = 120.0
+                self.throttle_ms = 10
+                self.decompile_cache.capacity = 512
+                self.vtable_cache.capacity = 512
+                try:
+                    import psutil
+                    p = psutil.Process()
+                    avail = list(range(min(2, os.cpu_count() or 2)))
+                    p.cpu_affinity(avail)
+                    p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 5)
+                except Exception:
+                    pass
+            elif mode_lower == "turbo":
+                self.resource_mode = "turbo"
+                self.idle_timeout_sec = 0.0  # Never hibernate
+                self.throttle_ms = 0
+                self.decompile_cache.capacity = 2048
+                self.vtable_cache.capacity = 2048
+                try:
+                    import psutil
+                    p = psutil.Process()
+                    p.cpu_affinity(list(range(os.cpu_count() or 8)))
+                    p.nice(psutil.NORMAL_PRIORITY_CLASS if os.name == "nt" else 0)
+                except Exception:
+                    pass
+            elif mode_lower == "auto":
+                self.resource_mode = "auto"
+                self.idle_timeout_sec = 60.0
+                self.throttle_ms = 10
+                self.decompile_cache.capacity = 1024
+                self.vtable_cache.capacity = 1024
+                try:
+                    import psutil
+                    p = psutil.Process()
+                    avail = list(range(min(4, os.cpu_count() or 4)))
+                    p.cpu_affinity(avail)
+                    p.nice(psutil.NORMAL_PRIORITY_CLASS if os.name == "nt" else 0)
+                except Exception:
+                    pass
+            else:
+                return {
+                    "status": "error",
+                    "message": f"Unknown mode '{mode}'. Choose from: eco, balanced, turbo, auto",
+                }
 
-        return {
-            "status": "ok",
-            "mode": self.resource_mode,
+            return {
+                "status": "ok",
+                "mode": self.resource_mode,
             "idle_timeout_sec": self.idle_timeout_sec,
             "throttle_ms": self.throttle_ms,
             "cache_capacity": self.decompile_cache.capacity,
@@ -780,88 +1117,134 @@ class GhidraOracleSession:
             self.project = None
 
     def _build_fast_indexes(self) -> None:
-        """Extracts executable segments into memory to build instant opcode & ADRP tables."""
+        """Extracts executable segments into memory to build instant opcode & ADRP tables across all segments."""
         from java.lang.reflect import Array
         from java.lang import Byte
         import re
 
         try:
             mem = self.program.getMemory()
-            b = mem.getBlock(self.flat_api.toAddr(self.image_base))
-            if not b:
-                # Find first executable or main segment
-                for blk in mem.getBlocks():
-                    if blk.getSize() > 1024 * 1024:
-                        b = blk
-                        break
-            if not b:
+            candidate_blocks = []
+            for blk in mem.getBlocks():
+                try:
+                    is_exec = (hasattr(blk, "isExecute") and blk.isExecute())
+                except Exception:
+                    is_exec = False
+                sz = int(blk.getSize())
+                if is_exec or sz > 4096:
+                    candidate_blocks.append(blk)
+            if not candidate_blocks:
+                b = mem.getBlock(self.flat_api.toAddr(self.image_base))
+                if b and int(b.getSize()) > 0:
+                    candidate_blocks = [b]
+                else:
+                    candidate_blocks = [blk for blk in mem.getBlocks() if int(blk.getSize()) > 0]
+
+            if not candidate_blocks:
                 return
 
-            size = int(b.getSize())
-            jbytes = Array.newInstance(Byte.TYPE, size)
-            mem.getBytes(b.getStart(), jbytes)
-            raw = bytes(jbytes)
-            base_va = b.getStart().getOffset()
-
-            # 1. Opcode gates: movz w0, #imm; ret
-            # In ARM64: [b0, b1, b2, 0x52], [0xc0, 0x03, 0x5f, 0xd6]
-            pattern_op = re.compile(b"([\x00-\xe0][\x00-\xff][\x80-\x9f]\x52)\xc0\x03\x5f\xd6")
             gates = []
-            for m in pattern_op.finditer(raw):
-                offset = m.start()
-                b0 = raw[offset]
-                b1 = raw[offset + 1]
-                b2 = raw[offset + 2]
-                imm = ((b0 >> 5) & 7) | (b1 << 3) | ((b2 & 0x1f) << 11)
-                va = base_va + offset
-                rva = va - self.image_base
-                gates.append((imm, va, rva))
-            self._opcode_gates = gates
-
-            # 2. ADRP instructions: 0x90000000 mask 0x9F000000
-            # Scan 4-byte aligned instructions for ADRP
             adrp_dict: Dict[int, List[Dict[str, Any]]] = {}
-            for offset in range(0, size - 8, 4):
-                inst = struct.unpack_from("<I", raw, offset)[0]
-                if (inst & 0x9F000000) == 0x90000000:
-                    rd = inst & 0x1F
-                    immlo = (inst >> 29) & 0x3
-                    immhi = (inst >> 5) & 0x7FFFF
-                    imm = (immhi << 2) | immlo
-                    if imm & (1 << 20):
-                        imm -= (1 << 21)
-                    pc = base_va + offset
-                    pc_page = pc & ~0xFFF
-                    target_page = pc_page + (imm << 12)
+            pattern_op = re.compile(b"([\x00-\xe0][\x00-\xff][\x80-\x9f]\x52)\xc0\x03\x5f\xd6")
 
-                    # Inspect next instruction (paired add or ldr)
-                    next_inst = struct.unpack_from("<I", raw, offset + 4)[0]
-                    paired_info = None
-                    paired_offset = None
-                    # add xd, xd, #imm12: mask 0xFF800000 == 0x91000000 or 0x11000000
-                    if (next_inst & 0x7F800000) == 0x11000000 and ((next_inst >> 5) & 0x1F) == rd:
-                        paired_offset = (next_inst >> 10) & 0xFFF
-                        paired_info = f"add x{next_inst & 0x1F}, x{rd}, #0x{paired_offset:x}"
-                    # ldr xd, [xd, #imm12]: mask 0xFFC00000 == 0xF9400000
-                    elif (next_inst & 0xFFC00000) == 0xF9400000 and ((next_inst >> 5) & 0x1F) == rd:
-                        shift = (next_inst >> 30) & 0x3
-                        paired_offset = ((next_inst >> 10) & 0xFFF) << shift
-                        paired_info = f"ldr x{next_inst & 0x1F}, [x{rd}, #0x{paired_offset:x}]"
+            for b in candidate_blocks:
+                try:
+                    size = int(b.getSize())
+                    if size < 8:
+                        continue
+                    jbytes = Array.newInstance(Byte.TYPE, size)
+                    mem.getBytes(b.getStart(), jbytes)
+                    raw = bytes(jbytes)
+                    base_va = b.getStart().getOffset()
 
-                    if target_page not in adrp_dict:
-                        adrp_dict[target_page] = []
-                    adrp_dict[target_page].append({
-                        "insn_va": pc,
-                        "insn_rva": pc - self.image_base,
-                        "rd": rd,
-                        "target_page": target_page,
-                        "paired_offset": paired_offset,
-                        "paired_info": paired_info,
-                    })
+                    # 1. Opcode gates: movz w0, #imm; ret
+                    for m in pattern_op.finditer(raw):
+                        offset = m.start()
+                        b0 = raw[offset]
+                        b1 = raw[offset + 1]
+                        b2 = raw[offset + 2]
+                        imm = ((b0 >> 5) & 7) | (b1 << 3) | ((b2 & 0x1f) << 11)
+                        va = base_va + offset
+                        rva = va - self.image_base
+                        gates.append((imm, va, rva))
+
+                    # 2. ADRP instructions: GPUAdrpScanner with fallback
+                    gpu_scanned = False
+                    try:
+                        import numpy as np
+                        from gpu_adrp_scanner import GPUAdrpScanner
+
+                        scanner = GPUAdrpScanner(backend="auto")
+                        usable_size = size - (size % 4)
+                        insn_array = np.frombuffer(raw[:usable_size], dtype="<u4")
+                        matches = scanner.scan_matches(insn_array, base_pc=base_va, filter_same_register=True)
+
+                        for m in matches:
+                            target_page = m.resolved_target & ~0xFFF
+                            if m.paired_type == "ADD":
+                                paired_info = f"add x{m.paired_rt}, x{m.paired_rn}, #0x{m.immediate:x}"
+                            else:
+                                paired_info = f"ldr x{m.paired_rt}, [x{m.paired_rn}, #0x{m.immediate:x}]"
+
+                            if target_page not in adrp_dict:
+                                adrp_dict[target_page] = []
+                            adrp_dict[target_page].append({
+                                "insn_va": m.adrp_pc,
+                                "insn_rva": m.adrp_pc - self.image_base,
+                                "rd": m.adrp_rd,
+                                "target_page": target_page,
+                                "paired_offset": m.immediate,
+                                "paired_info": paired_info,
+                            })
+                        gpu_scanned = True
+                    except Exception as e:
+                        logger.debug(f"GPUAdrpScanner fallback to pure-Python: {e}")
+
+                    if not gpu_scanned:
+                        for offset in range(0, size - 8, 4):
+                            inst = struct.unpack_from("<I", raw, offset)[0]
+                            if (inst & 0x9F000000) == 0x90000000:
+                                rd = inst & 0x1F
+                                immlo = (inst >> 29) & 0x3
+                                immhi = (inst >> 5) & 0x7FFFF
+                                imm = (immhi << 2) | immlo
+                                if imm & (1 << 20):
+                                    imm -= (1 << 21)
+                                pc = base_va + offset
+                                pc_page = pc & ~0xFFF
+                                target_page = pc_page + (imm << 12)
+
+                                # Inspect next instruction (paired add or ldr)
+                                next_inst = struct.unpack_from("<I", raw, offset + 4)[0]
+                                paired_info = None
+                                paired_offset = None
+                                if (next_inst & 0x7F800000) == 0x11000000 and ((next_inst >> 5) & 0x1F) == rd:
+                                    paired_offset = (next_inst >> 10) & 0xFFF
+                                    paired_info = f"add x{next_inst & 0x1F}, x{rd}, #0x{paired_offset:x}"
+                                elif (next_inst & 0xFFC00000) == 0xF9400000 and ((next_inst >> 5) & 0x1F) == rd:
+                                    shift = (next_inst >> 30) & 0x3
+                                    paired_offset = ((next_inst >> 10) & 0xFFF) << shift
+                                    paired_info = f"ldr x{next_inst & 0x1F}, [x{rd}, #0x{paired_offset:x}]"
+
+                                if target_page not in adrp_dict:
+                                    adrp_dict[target_page] = []
+                                adrp_dict[target_page].append({
+                                    "insn_va": pc,
+                                    "insn_rva": pc - self.image_base,
+                                    "rd": rd,
+                                    "target_page": target_page,
+                                    "paired_offset": paired_offset,
+                                    "paired_info": paired_info,
+                                })
+                except Exception as b_err:
+                    logger.debug(f"Error scanning segment {b}: {b_err}")
+
+            self._opcode_gates = gates
             self._adrp_pages = adrp_dict
+
             logger.info(
                 f"Warmed up indexes: {len(self._opcode_gates)} opcode gates, "
-                f"{len(self._adrp_pages)} unique ADRP target pages indexed."
+                f"{len(self._adrp_pages)} unique ADRP target pages indexed across {len(candidate_blocks)} segments."
             )
         except Exception as e:
             logger.warning(f"Error during fast index building: {e}")
@@ -873,18 +1256,23 @@ class GhidraOracleSession:
 
     def query_rva(self, addr_input: Any) -> Dict[str, Any]:
         """Instant VA <-> RVA translation (<1 ms, zero JVM call)."""
-        t0 = time.perf_counter()
-        va, rva = normalize_address_pair(addr_input, self.image_base)
-        t_ms = (time.perf_counter() - t0) * 1000.0
-        return {
-            "status": "ok",
-            "va": f"0x{va:08X}",
-            "rva": f"0x{rva:08X}",
-            "va_int": va,
-            "rva_int": rva,
-            "image_base": f"0x{self.image_base:08X}",
-            "time_ms": round(t_ms, 4),
-        }
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                t0 = time.perf_counter()
+                va, rva = normalize_address_pair(addr_input, self.image_base)
+                t_ms = (time.perf_counter() - t0) * 1000.0
+                return {
+                    "status": "ok",
+                    "va": f"0x{va:08X}",
+                    "rva": f"0x{rva:08X}",
+                    "va_int": va,
+                    "rva_int": rva,
+                    "image_base": f"0x{self.image_base:08X}",
+                    "time_ms": round(t_ms, 4),
+                }
+            finally:
+                self.last_decompile_time = time.time()
 
     def query_decompile(
         self,
@@ -893,388 +1281,669 @@ class GhidraOracleSession:
         throttle_ms: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Returns decompiled C code, mapping Ghidra VA and runtime RVA."""
-        self._ensure_decompiler_active()
-
-        # Apply simplification style (Section 8.3)
-        simplification = style or ("normalize" if self.resource_mode == "eco" else "decompile")
-        try:
-            self.decompiler.setSimplificationStyle(simplification)
-        except Exception as e:
-            logger.debug(f"Could not set simplification style '{simplification}': {e}")
-
-        effective_throttle_ms = throttle_ms if throttle_ms is not None else self.throttle_ms
-        results = []
-
-        for idx, t in enumerate(targets):
-            if idx > 0 and effective_throttle_ms > 0:
-                time.sleep(effective_throttle_ms / 1000.0)
-
-            va, rva = normalize_address_pair(t, self.image_base)
-            cached = self.decompile_cache.get(va)
-            if cached is not None:
-                cached_copy = dict(cached)
-                cached_copy["cached"] = True
-                results.append(cached_copy)
-                continue
-
-            addr = self.flat_api.toAddr(va)
-            fm = self.program.getFunctionManager()
-            func = fm.getFunctionAt(addr)
-            if not func:
-                func = fm.getFunctionContaining(addr)
-
-            # In read-only mode, use transient transaction if function needs creation
-            tx = self.program.startTransaction("decompile_transient")
+        with self._engine_lock:
+            self._ensure_decompiler_active()
+            self.last_decompile_time = time.time()
             try:
-                if not func:
-                    self.flat_api.disassemble(addr)
-                    func = fm.getFunctionAt(addr) or fm.getFunctionContaining(addr)
+                # Apply simplification style (Section 8.3)
+                simplification = style or ("normalize" if self.resource_mode == "eco" else "decompile")
+                decomp_style = style or simplification
+                try:
+                    self.decompiler.setSimplificationStyle(simplification)
+                except Exception as e:
+                    logger.debug(f"Could not set simplification style '{simplification}': {e}")
+
+                effective_throttle_ms = throttle_ms if throttle_ms is not None else self.throttle_ms
+                results = []
+
+                for idx, t in enumerate(targets):
+                    if idx > 0 and effective_throttle_ms > 0:
+                        time.sleep(effective_throttle_ms / 1000.0)
+
+                    va, rva = normalize_address_pair(t, self.image_base)
+                    cached = self.decompile_cache.get((va, decomp_style))
+                    if cached is not None:
+                        cached_copy = dict(cached)
+                        if "code" in cached_copy:
+                            cached_copy["code"] = self.overlay.apply_to_c_code(cached_copy["code"], self.image_base)
+                        cached_copy["cached"] = True
+                        results.append(cached_copy)
+                        continue
+
+                    addr = self.flat_api.toAddr(va)
+                    fm = self.program.getFunctionManager()
+                    func = fm.getFunctionAt(addr)
                     if not func:
-                        func = self.flat_api.createFunction(addr, f"func_{va:08X}")
+                        func = fm.getFunctionContaining(addr)
 
-                if func is None:
-                    entry = {
-                        "target": str(t),
-                        "va": f"0x{va:08X}",
-                        "rva": f"0x{rva:08X}",
-                        "error": "Could not locate or disassemble function at address",
-                    }
-                    results.append(entry)
-                    continue
+                    if func is None:
+                        entry = {
+                            "target": str(t),
+                            "va": f"0x{va:08X}",
+                            "rva": f"0x{rva:08X}",
+                            "error": "Could not locate or disassemble function at address",
+                        }
+                        results.append(entry)
+                        continue
 
-                res = self.decompiler.decompileFunction(func, 45, self.monitor)
-                if res.decompileCompleted():
-                    c_code = res.getDecompiledFunction().getC()
-                    entry_addr = func.getEntryPoint().getOffset()
-                    entry_rva = entry_addr - self.image_base
-                    fn_name = self.overlay.get_rename(entry_addr, entry_rva) or func.getName()
-                    comment = self.overlay.get_comment(entry_addr, entry_rva)
+                    # Dynamic per-function complexity downshifting
+                    effective_style = simplification
+                    if style is None and DecompilerComplexityGovernor is not None:
+                        try:
+                            body_size = int(func.getBody().getNumAddresses()) if hasattr(func, "getBody") and func.getBody() else 0
+                            mode_enum = ResourceMode(self.resource_mode.lower()) if ResourceMode else None
+                            if mode_enum and get_default_mode_policy:
+                                policy = get_default_mode_policy(mode_enum)
+                                dyn_style, _ = DecompilerComplexityGovernor.resolve_simplification_style(
+                                    policy,
+                                    body_size_bytes=body_size,
+                                    basic_block_count=0,
+                                    is_cpu_throttled=(self.resource_mode == "eco"),
+                                )
+                                if dyn_style:
+                                    effective_style = dyn_style
+                        except Exception as e:
+                            logger.debug(f"Complexity governor resolution failed: {e}")
 
-                    data = {
-                        "target": str(t),
-                        "va": f"0x{va:08X}",
-                        "rva": f"0x{rva:08X}",
-                        "name": fn_name,
-                        "entry_va": f"0x{entry_addr:08X}",
-                        "entry_rva": f"0x{entry_rva:08X}",
-                        "code": c_code,
-                        "comment": comment,
-                        "style": simplification,
-                        "cached": False,
-                    }
-                    self.decompile_cache.put(va, data)
-                    results.append(data)
-                else:
-                    results.append({
-                        "target": str(t),
-                        "va": f"0x{va:08X}",
-                        "rva": f"0x{rva:08X}",
-                        "error": res.getErrorMessage(),
-                    })
+                    try:
+                        self.decompiler.setSimplificationStyle(effective_style)
+                    except Exception as e:
+                        logger.debug(f"Could not set simplification style '{effective_style}': {e}")
+
+                    try:
+                        res = self.decompiler.decompileFunction(func, 45, self.monitor)
+                        if res.decompileCompleted():
+                            raw_c_code = res.getDecompiledFunction().getC()
+                            entry_addr = func.getEntryPoint().getOffset()
+                            entry_rva = entry_addr - self.image_base
+                            fn_name = self.overlay.get_rename(entry_addr, entry_rva) or func.getName()
+                            comment = self.overlay.get_comment(entry_addr, entry_rva)
+
+                            # Register caller and discovered callees in self.dep_dag
+                            caller_fid = f"0x{entry_addr:08X}"
+                            self.dep_dag.add_function(caller_fid, address=entry_addr, name=fn_name)
+
+                            # Record all callees by address
+                            discovered_callees: Set[Tuple[int, Optional[str]]] = set()
+                            try:
+                                if hasattr(func, "getCalledFunctions"):
+                                    for cf in func.getCalledFunctions(self.monitor):
+                                        if cf and hasattr(cf, "getEntryPoint"):
+                                            c_addr = cf.getEntryPoint().getOffset()
+                                            c_name = cf.getName() if hasattr(cf, "getName") else None
+                                            discovered_callees.add((c_addr, c_name))
+                            except Exception as e:
+                                logger.debug(f"func.getCalledFunctions notice: {e}")
+
+                            # Also scan C code for FUN_<hex> callees
+                            for callee_hex in re.findall(r"\bFUN_([0-9a-fA-F]{8})\b", raw_c_code, flags=re.IGNORECASE):
+                                try:
+                                    c_val = int(callee_hex, 16)
+                                    c_va = c_val if c_val >= self.image_base else (c_val + self.image_base)
+                                    discovered_callees.add((c_va, f"FUN_{callee_hex}"))
+                                except Exception:
+                                    pass
+
+                            # Also check known named functions from dep_dag
+                            for node in list(self.dep_dag.functions.values()):
+                                if node.name and len(node.name) >= 3 and node.address is not None:
+                                    if re.search(r"\b" + re.escape(node.name) + r"\b", raw_c_code):
+                                        discovered_callees.add((node.address, node.name))
+
+                            for c_va, c_name in discovered_callees:
+                                try:
+                                    callee_fid = f"0x{c_va:08X}"
+                                    self.dep_dag.add_function(callee_fid, address=c_va, name=c_name)
+                                    self.dep_dag.add_call_edge(caller_fid, callee_fid)
+                                except Exception:
+                                    pass
+
+                            # Apply write overlay renames to decompiled C body
+                            c_code = self.overlay.apply_to_c_code(raw_c_code, self.image_base)
+
+                            data = {
+                                "target": str(t),
+                                "va": f"0x{va:08X}",
+                                "rva": f"0x{rva:08X}",
+                                "name": fn_name,
+                                "entry_va": f"0x{entry_addr:08X}",
+                                "entry_rva": f"0x{entry_rva:08X}",
+                                "code": c_code,
+                                "comment": comment,
+                                "style": effective_style,
+                                "cached": False,
+                            }
+                            self.decompile_cache.put((va, decomp_style), data)
+                            try:
+                                self.dep_dag.cache.put(caller_fid, c_code)
+                            except Exception:
+                                pass
+                            results.append(data)
+
+                        else:
+                            results.append({
+                                "target": str(t),
+                                "va": f"0x{va:08X}",
+                                "rva": f"0x{rva:08X}",
+                                "error": res.getErrorMessage(),
+                            })
+                    finally:
+                        if effective_style != simplification:
+                            try:
+                                self.decompiler.setSimplificationStyle(simplification)
+                            except Exception:
+                                pass
+
+                return {"status": "ok", "results": results}
             finally:
-                # Rollback leaves project DB untouched
-                self.program.endTransaction(tx, False)
-
-        return {"status": "ok", "results": results}
+                self.last_decompile_time = time.time()
 
     def query_vtable(self, target: Any, count: int = 12) -> Dict[str, Any]:
         """Dumps VTable slots, function names, and runtime hook RVAs."""
-        vt_va, vt_rva = normalize_address_pair(target, self.image_base)
-        cache_key = (vt_va, count)
-        cached = self.vtable_cache.get(cache_key)
-        if cached is not None:
-            c = dict(cached)
-            c["cached"] = True
-            return c
-
-        addr = self.flat_api.toAddr(vt_va)
-        mem = self.program.getMemory()
-        fm = self.program.getFunctionManager()
-        af = self.program.getAddressFactory().getDefaultAddressSpace()
-
-        entries = []
-        for i in range(count):
-            slot_va = vt_va + (i * 8)
-            slot_rva = vt_rva + (i * 8)
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
             try:
-                fn_ptr = mem.getLong(af.getAddress(slot_va))
-                fn_va = fn_ptr
-                fn_rva = fn_ptr - self.image_base if fn_ptr >= self.image_base else fn_ptr
-                fn = fm.getFunctionAt(af.getAddress(fn_va))
-                fn_name = (
-                    self.overlay.get_rename(fn_va, fn_rva)
-                    or (fn.getName() if fn else None)
-                    or "None"
-                )
-                slot_comment = self.overlay.get_comment(slot_va, slot_rva)
-                entries.append({
-                    "slot": i,
-                    "slot_va": f"0x{slot_va:08X}",
-                    "slot_rva": f"0x{slot_rva:08X}",
-                    "fn_va": f"0x{fn_va:08X}",
-                    "fn_rva": f"0x{fn_rva:08X}",
-                    "name": fn_name,
-                    "comment": slot_comment,
-                })
-            except Exception as e:
-                entries.append({
-                    "slot": i,
-                    "slot_va": f"0x{slot_va:08X}",
-                    "slot_rva": f"0x{slot_rva:08X}",
-                    "error": str(e),
-                })
+                vt_va, vt_rva = normalize_address_pair(target, self.image_base)
+                cache_key = (vt_va, count)
+                cached = self.vtable_cache.get(cache_key)
+                if cached is not None:
+                    c = dict(cached)
+                    c["cached"] = True
+                    return c
 
-        vt_name = self.overlay.get_rename(vt_va, vt_rva)
-        result = {
-            "status": "ok",
-            "vtable_va": f"0x{vt_va:08X}",
-            "vtable_rva": f"0x{vt_rva:08X}",
-            "name": vt_name,
-            "count": count,
-            "entries": entries,
-            "cached": False,
-        }
-        self.vtable_cache.put(cache_key, result)
-        return result
+                addr = self.flat_api.toAddr(vt_va)
+                mem = self.program.getMemory()
+                fm = self.program.getFunctionManager()
+                af = self.program.getAddressFactory().getDefaultAddressSpace()
+
+                entries = []
+                for i in range(count):
+                    slot_va = vt_va + (i * 8)
+                    slot_rva = vt_rva + (i * 8)
+                    try:
+                        fn_ptr = mem.getLong(af.getAddress(slot_va))
+                        fn_va = fn_ptr
+                        fn_rva = fn_ptr - self.image_base if fn_ptr >= self.image_base else fn_ptr
+                        fn = fm.getFunctionAt(af.getAddress(fn_va))
+                        fn_name = (
+                            self.overlay.get_rename(fn_va, fn_rva)
+                            or (fn.getName() if fn else None)
+                            or "None"
+                        )
+                        slot_comment = self.overlay.get_comment(slot_va, slot_rva)
+                        entries.append({
+                            "slot": i,
+                            "slot_va": f"0x{slot_va:08X}",
+                            "slot_rva": f"0x{slot_rva:08X}",
+                            "fn_va": f"0x{fn_va:08X}",
+                            "fn_rva": f"0x{fn_rva:08X}",
+                            "name": fn_name,
+                            "comment": slot_comment,
+                        })
+                    except Exception as e:
+                        entries.append({
+                            "slot": i,
+                            "slot_va": f"0x{slot_va:08X}",
+                            "slot_rva": f"0x{slot_rva:08X}",
+                            "error": str(e),
+                        })
+
+                vt_name = self.overlay.get_rename(vt_va, vt_rva)
+                result = {
+                    "status": "ok",
+                    "vtable_va": f"0x{vt_va:08X}",
+                    "vtable_rva": f"0x{vt_rva:08X}",
+                    "name": vt_name,
+                    "count": count,
+                    "entries": entries,
+                    "cached": False,
+                }
+                self.vtable_cache.put(cache_key, result)
+                return result
+            finally:
+                self.last_decompile_time = time.time()
 
     def query_disassemble(self, target: Any, count: int = 30) -> Dict[str, Any]:
         """Returns instruction disassembly, hex bytes, and operands."""
-        va, rva = normalize_address_pair(target, self.image_base)
-        addr = self.flat_api.toAddr(va)
-        listing = self.program.getListing()
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                va, rva = normalize_address_pair(target, self.image_base)
+                addr = self.flat_api.toAddr(va)
+                listing = self.program.getListing()
 
-        tx = self.program.startTransaction("disasm_transient")
-        try:
-            if listing.getInstructionAt(addr) is None:
-                self.flat_api.disassemble(addr)
+                rows = []
+                for insn in listing.getInstructions(addr, True):
+                    if len(rows) >= count:
+                        break
+                    insn_va = insn.getAddress().getOffset()
+                    insn_rva = insn_va - self.image_base
+                    raw_hex = bytes([b & 0xFF for b in insn.getBytes()]).hex()
+                    ops = [
+                        insn.getDefaultOperandRepresentation(i)
+                        for i in range(insn.getNumOperands())
+                    ]
+                    comment = self.overlay.get_comment(insn_va, insn_rva)
+                    rows.append({
+                        "va": f"0x{insn_va:08X}",
+                        "rva": f"0x{insn_rva:08X}",
+                        "bytes": raw_hex,
+                        "mnemonic": insn.getMnemonicString(),
+                        "operands": ", ".join(filter(None, ops)),
+                        "comment": comment,
+                    })
 
-            rows = []
-            for insn in listing.getInstructions(addr, True):
-                if len(rows) >= count:
-                    break
-                insn_va = insn.getAddress().getOffset()
-                insn_rva = insn_va - self.image_base
-                raw_hex = bytes([b & 0xFF for b in insn.getBytes()]).hex()
-                ops = [
-                    insn.getDefaultOperandRepresentation(i)
-                    for i in range(insn.getNumOperands())
-                ]
-                comment = self.overlay.get_comment(insn_va, insn_rva)
-                rows.append({
-                    "va": f"0x{insn_va:08X}",
-                    "rva": f"0x{insn_rva:08X}",
-                    "bytes": raw_hex,
-                    "mnemonic": insn.getMnemonicString(),
-                    "operands": ", ".join(filter(None, ops)),
-                    "comment": comment,
-                })
-        finally:
-            self.program.endTransaction(tx, False)
-
-        return {
-            "status": "ok",
-            "target_va": f"0x{va:08X}",
-            "target_rva": f"0x{rva:08X}",
-            "count": len(rows),
-            "instructions": rows,
-        }
+                return {
+                    "status": "ok",
+                    "target_va": f"0x{va:08X}",
+                    "target_rva": f"0x{rva:08X}",
+                    "count": len(rows),
+                    "instructions": rows,
+                }
+            finally:
+                self.last_decompile_time = time.time()
 
     def query_refs(self, target: Any, max_count: int = 20) -> Dict[str, Any]:
         """Queries incoming cross-references with caller function names."""
-        va, rva = normalize_address_pair(target, self.image_base)
-        addr = self.flat_api.toAddr(va)
-        ref_mgr = self.program.getReferenceManager()
-        fm = self.program.getFunctionManager()
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                va, rva = normalize_address_pair(target, self.image_base)
+                addr = self.flat_api.toAddr(va)
+                ref_mgr = self.program.getReferenceManager()
+                fm = self.program.getFunctionManager()
 
-        refs = list(ref_mgr.getReferencesTo(addr))
-        entries = []
-        for r in refs[:max_count]:
-            from_addr = r.getFromAddress()
-            from_va = from_addr.getOffset()
-            from_rva = from_va - self.image_base
-            fn = fm.getFunctionContaining(from_addr)
-            caller_name = None
-            caller_va = None
-            caller_rva = None
-            if fn:
-                caller_va = fn.getEntryPoint().getOffset()
-                caller_rva = caller_va - self.image_base
-                caller_name = self.overlay.get_rename(caller_va, caller_rva) or fn.getName()
+                refs = list(ref_mgr.getReferencesTo(addr))
+                entries = []
+                for r in refs[:max_count]:
+                    from_addr = r.getFromAddress()
+                    from_va = from_addr.getOffset()
+                    from_rva = from_va - self.image_base
+                    fn = fm.getFunctionContaining(from_addr)
+                    caller_name = None
+                    caller_va = None
+                    caller_rva = None
+                    if fn:
+                        caller_va = fn.getEntryPoint().getOffset()
+                        caller_rva = caller_va - self.image_base
+                        caller_name = self.overlay.get_rename(caller_va, caller_rva) or fn.getName()
 
-            comment = self.overlay.get_comment(from_va, from_rva)
-            entries.append({
-                "from_va": f"0x{from_va:08X}",
-                "from_rva": f"0x{from_rva:08X}",
-                "ref_type": str(r.getReferenceType()),
-                "caller_name": caller_name or "None",
-                "caller_entry_va": f"0x{caller_va:08X}" if caller_va else None,
-                "caller_entry_rva": f"0x{caller_rva:08X}" if caller_rva else None,
-                "comment": comment,
-            })
+                    comment = self.overlay.get_comment(from_va, from_rva)
+                    entries.append({
+                        "from_va": f"0x{from_va:08X}",
+                        "from_rva": f"0x{from_rva:08X}",
+                        "ref_type": str(r.getReferenceType()),
+                        "caller_name": caller_name or "None",
+                        "caller_entry_va": f"0x{caller_va:08X}" if caller_va else None,
+                        "caller_entry_rva": f"0x{caller_rva:08X}" if caller_rva else None,
+                        "comment": comment,
+                    })
 
-        return {
-            "status": "ok",
-            "target_va": f"0x{va:08X}",
-            "target_rva": f"0x{rva:08X}",
-            "total_refs": len(refs),
-            "count": len(entries),
-            "references": entries,
-        }
+                return {
+                    "status": "ok",
+                    "target_va": f"0x{va:08X}",
+                    "target_rva": f"0x{rva:08X}",
+                    "total_refs": len(refs),
+                    "count": len(entries),
+                    "references": entries,
+                }
+            finally:
+                self.last_decompile_time = time.time()
 
     def query_adrp_add(self, symbol_or_addr: str) -> Dict[str, Any]:
         """Fast lookup for PC-relative string and pointer references via cached page index."""
-        target_va = None
-        target_sym = None
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                target_va = None
+                target_sym = None
 
-        # Check if input is symbol name
-        s = symbol_or_addr.strip()
-        is_num = False
-        try:
-            if s.lower().startswith("0x") or all(c in "0123456789abcdefABCDEF" for c in s):
-                target_va, _ = normalize_address_pair(s, self.image_base)
-                is_num = True
-        except Exception:
-            pass
+                # Check if input is symbol name
+                s = symbol_or_addr.strip()
+                is_num = False
+                try:
+                    if s.lower().startswith("0x") or all(c in "0123456789abcdefABCDEF" for c in s):
+                        target_va, _ = normalize_address_pair(s, self.image_base)
+                        is_num = True
+                except Exception:
+                    pass
 
-        if not is_num:
-            target_sym = s
-            # Search symbol table
-            sym_tab = self.program.getSymbolTable()
-            syms = list(sym_tab.getGlobalSymbols(s))
-            if syms:
-                target_va = syms[0].getAddress().getOffset()
-            else:
-                # Check write-overlay
-                for k, v in self.overlay.renames.items():
-                    if v == s:
-                        target_va, _ = normalize_address_pair(k, self.image_base)
-                        break
+                if not is_num:
+                    target_sym = s
+                    # Search symbol table
+                    sym_tab = self.program.getSymbolTable()
+                    syms = list(sym_tab.getGlobalSymbols(s))
+                    if syms:
+                        target_va = syms[0].getAddress().getOffset()
+                    else:
+                        # Check write-overlay
+                        for k, v in self.overlay.renames.items():
+                            if v == s:
+                                target_va, _ = normalize_address_pair(k, self.image_base)
+                                break
 
-        if target_va is None:
-            return {"status": "error", "message": f"Symbol or address '{symbol_or_addr}' could not be resolved"}
+                if target_va is None:
+                    return {"status": "error", "message": f"Symbol or address '{symbol_or_addr}' could not be resolved"}
 
-        target_rva = target_va - self.image_base
-        target_page = target_va & ~0xFFF
-        target_offset = target_va & 0xFFF
+                target_rva = target_va - self.image_base
+                target_page = target_va & ~0xFFF
+                target_offset = target_va & 0xFFF
 
-        fm = self.program.getFunctionManager()
-        ref_mgr = self.program.getReferenceManager()
+                fm = self.program.getFunctionManager()
+                ref_mgr = self.program.getReferenceManager()
 
-        # 1. References from Ghidra reference manager
-        direct_refs = []
-        for r in ref_mgr.getReferencesTo(self.flat_api.toAddr(target_va)):
-            f_addr = r.getFromAddress()
-            f_va = f_addr.getOffset()
-            f_rva = f_va - self.image_base
-            fn = fm.getFunctionContaining(f_addr)
-            direct_refs.append({
-                "source": "ReferenceManager",
-                "insn_va": f"0x{f_va:08X}",
-                "insn_rva": f"0x{f_rva:08X}",
-                "ref_type": str(r.getReferenceType()),
-                "caller": fn.getName() if fn else "None",
-            })
+                # 1. References from Ghidra reference manager
+                direct_refs = []
+                for r in ref_mgr.getReferencesTo(self.flat_api.toAddr(target_va)):
+                    f_addr = r.getFromAddress()
+                    f_va = f_addr.getOffset()
+                    f_rva = f_va - self.image_base
+                    fn = fm.getFunctionContaining(f_addr)
+                    direct_refs.append({
+                        "source": "ReferenceManager",
+                        "insn_va": f"0x{f_va:08X}",
+                        "insn_rva": f"0x{f_rva:08X}",
+                        "ref_type": str(r.getReferenceType()),
+                        "caller": fn.getName() if fn else "None",
+                    })
 
-        # 2. Fast Page Index lookup
-        page_refs = []
-        if target_page in self._adrp_pages:
-            for item in self._adrp_pages[target_page]:
-                p_offset = item.get("paired_offset")
-                is_exact = (p_offset == target_offset)
-                f_va = item["insn_va"]
-                fn = fm.getFunctionContaining(self.flat_api.toAddr(f_va))
-                page_refs.append({
-                    "source": "ADRPPageIndex",
-                    "insn_va": f"0x{f_va:08X}",
-                    "insn_rva": f"0x{item['insn_rva']:08X}",
-                    "register": f"x{item['rd']}",
+                # 2. Fast Page Index lookup
+                page_refs = []
+                if target_page in self._adrp_pages:
+                    for item in self._adrp_pages[target_page]:
+                        p_offset = item.get("paired_offset")
+                        is_exact = (p_offset == target_offset)
+                        f_va = item["insn_va"]
+                        fn = fm.getFunctionContaining(self.flat_api.toAddr(f_va))
+                        page_refs.append({
+                            "source": "ADRPPageIndex",
+                            "insn_va": f"0x{f_va:08X}",
+                            "insn_rva": f"0x{item['insn_rva']:08X}",
+                            "register": f"x{item['rd']}",
+                            "target_page": f"0x{target_page:08X}",
+                            "paired_insn": item.get("paired_info"),
+                            "exact_offset_match": is_exact,
+                            "caller": fn.getName() if fn else "None",
+                        })
+
+                return {
+                    "status": "ok",
+                    "symbol": target_sym,
+                    "target_va": f"0x{target_va:08X}",
+                    "target_rva": f"0x{target_rva:08X}",
                     "target_page": f"0x{target_page:08X}",
-                    "paired_insn": item.get("paired_info"),
-                    "exact_offset_match": is_exact,
-                    "caller": fn.getName() if fn else "None",
-                })
-
-        return {
-            "status": "ok",
-            "symbol": target_sym,
-            "target_va": f"0x{target_va:08X}",
-            "target_rva": f"0x{target_rva:08X}",
-            "target_page": f"0x{target_page:08X}",
-            "target_offset": f"0x{target_offset:03X}",
-            "direct_refs_count": len(direct_refs),
-            "page_refs_count": len(page_refs),
-            "direct_references": direct_refs,
-            "page_references": page_refs,
-        }
+                    "target_offset": f"0x{target_offset:03X}",
+                    "direct_refs_count": len(direct_refs),
+                    "page_refs_count": len(page_refs),
+                    "direct_references": direct_refs,
+                    "page_references": page_refs,
+                }
+            finally:
+                self.last_decompile_time = time.time()
 
     def query_opcodes(self, min_op: int, max_op: int) -> Dict[str, Any]:
         """Fast opcode enumeration for `mov w0, #imm; ret` dispatcher gates."""
-        matches = []
-        fm = self.program.getFunctionManager()
-        for imm, va, rva in self._opcode_gates:
-            if min_op <= imm <= max_op:
-                fn = fm.getFunctionAt(self.flat_api.toAddr(va))
-                fn_name = (
-                    self.overlay.get_rename(va, rva)
-                    or (fn.getName() if fn else None)
-                )
-                comment = self.overlay.get_comment(va, rva)
-                matches.append({
-                    "opcode": imm,
-                    "opcode_hex": f"0x{imm:04X}",
-                    "va": f"0x{va:08X}",
-                    "rva": f"0x{rva:08X}",
-                    "func_name": fn_name,
-                    "comment": comment,
-                    "asm": f"mov w0, #0x{imm:x}; ret",
-                })
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                matches = []
+                fm = self.program.getFunctionManager()
+                for imm, va, rva in self._opcode_gates:
+                    if min_op <= imm <= max_op:
+                        fn = fm.getFunctionAt(self.flat_api.toAddr(va))
+                        fn_name = (
+                            self.overlay.get_rename(va, rva)
+                            or (fn.getName() if fn else None)
+                        )
+                        comment = self.overlay.get_comment(va, rva)
+                        matches.append({
+                            "opcode": imm,
+                            "opcode_hex": f"0x{imm:04X}",
+                            "va": f"0x{va:08X}",
+                            "rva": f"0x{rva:08X}",
+                            "func_name": fn_name,
+                            "comment": comment,
+                            "asm": f"mov w0, #0x{imm:x}; ret",
+                        })
 
-        matches.sort(key=lambda x: x["opcode"])
-        return {
-            "status": "ok",
-            "min": min_op,
-            "max": max_op,
-            "count": len(matches),
-            "total_indexed_gates": len(self._opcode_gates),
-            "gates": matches,
-        }
+                matches.sort(key=lambda x: x["opcode"])
+                return {
+                    "status": "ok",
+                    "min": min_op,
+                    "max": max_op,
+                    "count": len(matches),
+                    "total_indexed_gates": len(self._opcode_gates),
+                    "gates": matches,
+                }
+            finally:
+                self.last_decompile_time = time.time()
 
     def query_status(self) -> Dict[str, Any]:
         """Reports daemon uptime, function count, and LRU cache hit rate."""
-        uptime = time.time() - self.start_time
-        fm = self.program.getFunctionManager()
-        func_count = fm.getFunctionCount()
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                uptime = time.time() - self.start_time
+                fm = self.program.getFunctionManager()
+                func_count = fm.getFunctionCount()
 
-        d_stats = self.decompile_cache.stats()
-        v_stats = self.vtable_cache.stats()
-        total_hits = d_stats["hits"] + v_stats["hits"]
-        total_queries = total_hits + d_stats["misses"] + v_stats["misses"]
-        overall_hit_rate = (
-            round((total_hits / total_queries * 100.0), 2)
-            if total_queries > 0
-            else 0.0
-        )
+                d_stats = self.decompile_cache.stats()
+                v_stats = self.vtable_cache.stats()
+                total_hits = d_stats["hits"] + v_stats["hits"]
+                total_queries = total_hits + d_stats["misses"] + v_stats["misses"]
+                overall_hit_rate = (
+                    round((total_hits / total_queries * 100.0), 2)
+                    if total_queries > 0
+                    else 0.0
+                )
 
-        return {
-            "status": "ok",
-            "uptime_seconds": round(uptime, 2),
-            "uptime_human": f"{int(uptime // 3600)}h {int((uptime % 3600) // 60)}m {int(uptime % 60)}s",
-            "resource_mode": self.resource_mode,
-            "is_hibernating": self.is_hibernating,
-            "project_name": self.project_name,
-            "project_dir": self.project_dir,
-            "program_name": self.program_name,
-            "image_base": f"0x{self.image_base:08X}",
-            "function_count": func_count,
-            "indexed_opcode_gates": len(self._opcode_gates),
-            "indexed_adrp_pages": len(self._adrp_pages),
-            "decompile_cache": d_stats,
-            "vtable_cache": v_stats,
-            "overall_hit_rate_pct": overall_hit_rate,
-            "overlay_renames_count": len(self.overlay.renames),
-            "overlay_comments_count": len(self.overlay.comments),
-            "l2_cache_count": self.l2_cache.count(),
-        }
+                return {
+                    "status": "ok",
+                    "uptime_seconds": round(uptime, 2),
+                    "uptime_human": f"{int(uptime // 3600)}h {int((uptime % 3600) // 60)}m {int(uptime % 60)}s",
+                    "resource_mode": self.resource_mode,
+                    "is_hibernating": self.is_hibernating,
+                    "project_name": self.project_name,
+                    "project_dir": self.project_dir,
+                    "program_name": self.program_name,
+                    "image_base": f"0x{self.image_base:08X}",
+                    "function_count": func_count,
+                    "indexed_opcode_gates": len(self._opcode_gates),
+                    "indexed_adrp_pages": len(self._adrp_pages),
+                    "decompile_cache": d_stats,
+                    "vtable_cache": v_stats,
+                    "overall_hit_rate_pct": overall_hit_rate,
+                    "overlay_renames_count": len(self.overlay.renames),
+                    "overlay_comments_count": len(self.overlay.comments),
+                    "l2_cache_count": self.l2_cache.count(),
+                }
+            finally:
+                self.last_decompile_time = time.time()
+
+    def invalidate_function_cache(self, addr: Any) -> Any:
+        """
+        Executes 1-hop selective cache invalidation via DependencyCacheDAG.
+        Evicts target function and its direct 1-hop callers from self.decompile_cache, self.vtable_cache, and self.l2_cache.
+        """
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                try:
+                    va = parse_addr_int(addr)
+                    fid = f"0x{va:08X}"
+                except (ValueError, TypeError):
+                    va = None
+                    fid = str(addr).strip()
+
+                report = None
+                if hasattr(self.dep_dag, "invalidate_function"):
+                    report = self.dep_dag.invalidate_function(fid)
+                elif hasattr(self.dep_dag, "invalidate_function_signature"):
+                    report = self.dep_dag.invalidate_function_signature(fid)
+
+                # Evict target and 1-hop callers from decompile_cache (L1), vtable_cache (L1) and l2_cache (L2)
+                affected_set = set(report.affected_functions) if report else set()
+                affected_set.add(fid)
+
+                prog_id = self.program_id or None
+                for aff in affected_set:
+                    aff_va = None
+                    try:
+                        aff_va = parse_addr_int(aff)
+                    except Exception:
+                        node = self.dep_dag.functions.get(aff)
+                        if node and node.address is not None:
+                            aff_va = node.address
+
+                    if aff_va is not None:
+                        self.decompile_cache.evict(aff_va)
+                        self.vtable_cache.evict(aff_va)
+                        self.l2_cache.invalidate_address(aff_va, program_id=prog_id)
+                    self.decompile_cache.evict(aff)
+                    self.vtable_cache.evict(aff)
+
+                if va is not None:
+                    self.decompile_cache.evict(va)
+                    self.vtable_cache.evict(va)
+                    self.l2_cache.invalidate_address(va, program_id=prog_id)
+
+                return report
+            finally:
+                self.last_decompile_time = time.time()
+
+    def set_rename(self, addr: Any, new_name: str, old_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Sets function rename in WriteOverlay, records mutation in SemanticDeltaLog,
+        and performs 1-hop selective cache invalidation.
+        """
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                try:
+                    va = parse_addr_int(addr)
+                    norm_key = normalize_hex_key(va)
+                    old_n = old_name or self.overlay.renames.get(norm_key, f"FUN_{va:08X}")
+                except (ValueError, TypeError):
+                    va = None
+                    norm_key = str(addr).strip()
+                    old_n = old_name or norm_key
+
+                self.overlay.set_rename(addr, new_name)
+                if hasattr(self.delta_log, "record_function_rename"):
+                    self.delta_log.record_function_rename(va, new_name, old_name=old_n)
+                elif SemanticEvent is not None:
+                    evt = SemanticEvent.create_rename_symbol(
+                        old_name=old_n,
+                        new_name=new_name,
+                        target_address=va,
+                        symbol_type="FUNCTION",
+                    )
+                    self.delta_log.append(evt)
+
+                report = self.invalidate_function_cache(addr)
+                return {
+                    "status": "ok",
+                    "message": f"Renamed {norm_key} to '{new_name}'",
+                    "invalidation_report": report.to_dict() if hasattr(report, "to_dict") else None,
+                }
+            finally:
+                self.last_decompile_time = time.time()
+
+    def set_comment(self, addr: Any, comment: str, comment_type: str = "EOL") -> Dict[str, Any]:
+        """
+        Sets address comment in WriteOverlay, records mutation in SemanticDeltaLog,
+        and invalidates function cache.
+        """
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                try:
+                    va = parse_addr_int(addr)
+                    norm_key = normalize_hex_key(va)
+                except (ValueError, TypeError):
+                    va = None
+                    norm_key = str(addr).strip()
+
+                self.overlay.set_comment(addr, comment)
+                if hasattr(self.delta_log, "record_comment"):
+                    self.delta_log.record_comment(va, comment, comment_type=comment_type)
+                elif SemanticEvent is not None:
+                    evt = SemanticEvent.create_set_comment(
+                        comment_text=comment,
+                        target_address=va,
+                        comment_type=comment_type,
+                    )
+                    self.delta_log.append(evt)
+
+                report = self.invalidate_function_cache(addr)
+                return {
+                    "status": "ok",
+                    "message": f"Set comment on {norm_key}",
+                    "invalidation_report": report.to_dict() if hasattr(report, "to_dict") else None,
+                }
+            finally:
+                self.last_decompile_time = time.time()
+
+    def query_type(self, name_or_id: str) -> Dict[str, Any]:
+        """Queries the off-heap deduplicated type store for layout and C declaration."""
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                res = self.type_adapter.handle_oracle_command("type", [name_or_id])
+                if res.get("status") == "ok":
+                    res["layout"] = self.type_store.get_struct_layout(name_or_id)
+                return res
+            finally:
+                self.last_decompile_time = time.time()
+
+    def register_struct(
+        self, name: str, byte_size: int, members: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Registers a deduplicated struct in the off-heap SQLite type store."""
+        with self._engine_lock:
+            self.last_decompile_time = time.time()
+            try:
+                struct_members = []
+                for m in members:
+                    struct_members.append(
+                        StructMember(
+                            name=m.get("name", f"field_{m.get('offset', 0):x}"),
+                            type_id=m.get("type_id", "void*"),
+                            offset=int(m.get("offset", 0)),
+                            size=int(m.get("size", 4)),
+                            bit_size=m.get("bit_size"),
+                            bit_offset=m.get("bit_offset"),
+                            access=m.get("access", "public"),
+                        )
+                    )
+                align = max([m.size for m in struct_members], default=4) if struct_members else 4
+                dedup = TypeDeduplicator()
+                norm_type = dedup.register_type(
+                    name=name,
+                    kind=TypeKind.STRUCT,
+                    byte_size=byte_size,
+                    alignment=align,
+                    members=struct_members,
+                )
+                cursor = self.type_store._conn.cursor()
+                cursor.execute("DELETE FROM struct_members WHERE owner_type_id = ?", (norm_type.type_id,))
+                self.type_store._conn.commit()
+
+                self.type_store.ingest_from_deduplicator(dedup)
+                return {
+                    "status": "ok",
+                    "type_id": norm_type.type_id,
+                    "name": norm_type.name,
+                    "byte_size": norm_type.byte_size,
+                    "members_count": len(norm_type.members),
+                    "fingerprint": norm_type.fingerprint,
+                    "layout": self.type_store.get_struct_layout(norm_type.type_id),
+                    "c_decl": self.type_store.render_c_declaration(norm_type.type_id),
+                }
+            finally:
+                self.last_decompile_time = time.time()
+
+
 
 
 # ==============================================================================
@@ -1323,19 +1992,48 @@ class GhidraDaemonServer:
     def _handle_client(self, conn: socket.socket, addr: Any) -> None:
         with conn:
             conn.settimeout(60.0)
-            buffer = ""
+            buffer = bytearray()
             while self.running:
                 try:
                     data = conn.recv(8192)
                     if not data:
                         break
-                    buffer += data.decode("utf-8")
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        line = line.strip()
-                        if not line:
+                    buffer.extend(data)
+                    while b"\n" in buffer:
+                        idx = buffer.index(b"\n")
+                        line_bytes = bytes(buffer[:idx]).strip()
+                        del buffer[:idx + 1]
+                        if not line_bytes:
                             continue
-                        response = self._dispatch_command(line)
+
+                        # Reject cross-protocol attacks (e.g. browser HTTP POST to 127.0.0.1:5073)
+                        for http_method in (b"GET ", b"POST ", b"OPTIONS ", b"PUT ", b"DELETE ", b"HEAD ", b"TRACE ", b"CONNECT "):
+                            if line_bytes.startswith(http_method):
+                                logger.warning(f"Closing connection: detected HTTP method prefix from {addr}")
+                                return
+
+                        try:
+                            line_str = line_bytes.decode("utf-8")
+                        except UnicodeDecodeError:
+                            err_resp = {"status": "error", "message": "Invalid UTF-8 encoding"}
+                            try:
+                                conn.sendall((json.dumps(err_resp) + "\n").encode("utf-8"))
+                            except Exception:
+                                pass
+                            return
+
+                        try:
+                            req = json.loads(line_str)
+                        except Exception:
+                            err_resp = {"status": "error", "message": "Invalid JSON payload"}
+                            try:
+                                conn.sendall((json.dumps(err_resp) + "\n").encode("utf-8"))
+                            except Exception:
+                                pass
+                            # Close connection on invalid JSON after first bad line (prevents cross-protocol smuggling)
+                            return
+
+                        response = self._dispatch_command(req)
                         conn.sendall((json.dumps(response) + "\n").encode("utf-8"))
                         if response.get("should_stop"):
                             threading.Thread(target=self.stop, daemon=True).start()
@@ -1350,11 +2048,14 @@ class GhidraDaemonServer:
                         pass
                     break
 
-    def _dispatch_command(self, raw_line: str) -> Dict[str, Any]:
-        try:
-            req = json.loads(raw_line)
-        except Exception:
-            return {"status": "error", "message": "Invalid JSON payload"}
+    def _dispatch_command(self, req_or_line: Union[Dict[str, Any], str]) -> Dict[str, Any]:
+        if isinstance(req_or_line, dict):
+            req = req_or_line
+        else:
+            try:
+                req = json.loads(req_or_line)
+            except Exception:
+                return {"status": "error", "message": "Invalid JSON payload"}
 
         cmd = req.get("cmd", "").lower()
         args = req.get("args", {})
@@ -1396,13 +2097,34 @@ class GhidraDaemonServer:
             elif cmd == "rename":
                 addr = args.get("addr")
                 name = args.get("name")
-                self.session.overlay.set_rename(addr, name)
-                return {"status": "ok", "message": f"Renamed {normalize_hex_key(addr)} to '{name}'"}
+                old_name = args.get("old_name")
+                return self.session.set_rename(addr, name, old_name=old_name)
             elif cmd == "comment":
                 addr = args.get("addr")
                 comment = args.get("comment")
-                self.session.overlay.set_comment(addr, comment)
-                return {"status": "ok", "message": f"Set comment on {normalize_hex_key(addr)}"}
+                ctype = args.get("comment_type", "EOL")
+                return self.session.set_comment(addr, comment, comment_type=ctype)
+            elif cmd == "type":
+                name_or_id = (
+                    args.get("name")
+                    or args.get("type_id")
+                    or req.get("name")
+                    or req.get("type_id")
+                    or args.get("name_or_id")
+                )
+                if not name_or_id and isinstance(args, str):
+                    name_or_id = args
+                if not name_or_id:
+                    return {"status": "error", "message": "Usage: type <name_or_id>"}
+                return self.session.query_type(str(name_or_id))
+            elif cmd == "register_struct":
+                name = args.get("name") or req.get("name")
+                byte_size = int(args.get("byte_size", req.get("byte_size", 0)))
+                members = args.get("members", req.get("members", []))
+                if not name:
+                    return {"status": "error", "message": "Missing 'name' for register_struct"}
+                return self.session.register_struct(name, byte_size, members)
+
             elif cmd == "overlay":
                 action = args.get("action", "list")
                 if action == "clear":
@@ -1634,6 +2356,59 @@ def client_send_request(
             t_ms = (time.perf_counter() - t0) * 1000.0
             cached_res["l2_cached"] = True
             cached_res["time_ms"] = round(t_ms, 4)
+
+            # Apply WriteOverlay renames and comments on L2 cache hits for decompile queries
+            if cmd_lower == "decompile":
+                try:
+                    overlay = WriteOverlay()
+                    img_base = DEFAULT_IMAGE_BASE
+                    if "image_base" in cached_res:
+                        try:
+                            img_base = parse_addr_int(cached_res["image_base"])
+                        except Exception:
+                            pass
+                    elif isinstance(cached_res.get("results"), list) and cached_res["results"]:
+                        first = cached_res["results"][0]
+                        if isinstance(first, dict) and "va" in first and "rva" in first:
+                            try:
+                                v_p = parse_addr_int(first["va"])
+                                r_p = parse_addr_int(first["rva"])
+                                if v_p > r_p:
+                                    img_base = v_p - r_p
+                            except Exception:
+                                pass
+
+                    results = cached_res.get("results")
+                    if isinstance(results, list):
+                        for item in results:
+                            if isinstance(item, dict):
+                                c_code = item.get("code")
+                                if c_code:
+                                    item["code"] = overlay.apply_to_c_code(c_code, img_base)
+                                va_val = item.get("entry_va") or item.get("va")
+                                rva_val = item.get("entry_rva") or item.get("rva")
+                                if va_val is not None:
+                                    v_int, r_int = normalize_address_pair(va_val, img_base)
+                                    rn = overlay.get_rename(v_int, r_int)
+                                    if rn:
+                                        item["name"] = rn
+                                    cm = overlay.get_comment(v_int, r_int)
+                                    if cm:
+                                        item["comment"] = cm
+                    elif "code" in cached_res:
+                        cached_res["code"] = overlay.apply_to_c_code(cached_res["code"], img_base)
+                        va_val = cached_res.get("entry_va") or cached_res.get("va")
+                        if va_val is not None:
+                            v_int, r_int = normalize_address_pair(va_val, img_base)
+                            rn = overlay.get_rename(v_int, r_int)
+                            if rn:
+                                cached_res["name"] = rn
+                            cm = overlay.get_comment(v_int, r_int)
+                            if cm:
+                                cached_res["comment"] = cm
+                except Exception as e:
+                    logger.debug(f"Failed to apply WriteOverlay to cached decompile result: {e}")
+
             return cached_res
 
     if not is_daemon_online(host, port):
@@ -1655,15 +2430,16 @@ def client_send_request(
     res = {"status": "error", "message": "No response from daemon"}
     with socket.create_connection((host, port), timeout=60.0) as s:
         s.sendall(payload.encode("utf-8"))
-        buf = ""
+        buf = bytearray()
         while True:
             chunk = s.recv(8192)
             if not chunk:
                 break
-            buf += chunk.decode("utf-8")
-            if "\n" in buf:
-                line = buf.split("\n", 1)[0]
-                res = json.loads(line)
+            buf.extend(chunk)
+            if b"\n" in buf:
+                idx = buf.index(b"\n")
+                line_bytes = bytes(buf[:idx])
+                res = json.loads(line_bytes.decode("utf-8"))
                 break
 
     # 2. Store successful responses into L2 SQLite cache for future instant retrieval
@@ -1881,6 +2657,17 @@ def main():
         action="store_true",
         help="Clears persistent L2 SQLite cache and exits",
     )
+    parser.add_argument(
+        "--clean-stale-locks",
+        action="store_true",
+        help="Allow deletion of stale lock files older than threshold",
+    )
+    parser.add_argument(
+        "--lock-stale-threshold-sec",
+        type=float,
+        default=600.0,
+        help="Threshold in seconds before a lock file is considered stale (default 600s)",
+    )
     parser.add_argument("-h", "--help", action="store_true", help="Show help message")
 
     parsed, unknown = parser.parse_known_args()
@@ -1909,6 +2696,8 @@ def main():
             project_name=parsed.project_name,
             program_name=parsed.program_name,
             resource_mode=target_mode,
+            clean_stale_locks=parsed.clean_stale_locks,
+            lock_stale_threshold_sec=parsed.lock_stale_threshold_sec,
         )
         if parsed.mode:
             session.set_resource_mode(parsed.mode)
@@ -1980,6 +2769,18 @@ def main():
         req_args["comment"] = " ".join(c_args[1:])
     elif cmd == "overlay":
         req_args["action"] = c_args[0] if c_args else "list"
+    elif cmd == "type":
+        if not c_args:
+            print("Usage: python ghidra_oracle.py type <name_or_id>")
+            return
+        req_args["name"] = c_args[0]
+    elif cmd == "register_struct":
+        if len(c_args) < 2:
+            print("Usage: python ghidra_oracle.py register_struct <name> <byte_size> [members_json]")
+            return
+        req_args["name"] = c_args[0]
+        req_args["byte_size"] = int(c_args[1])
+        req_args["members"] = json.loads(c_args[2]) if len(c_args) > 2 else []
     elif cmd == "hibernate":
         pass
     elif cmd == "mode":
@@ -1999,7 +2800,7 @@ def main():
         pass
     else:
         print(f"Unknown command: {cmd}")
-        print("Available commands: decompile, vtable, disassemble, refs, adrp_add, opcodes, rva, rename, comment, overlay, status, stop, hibernate, mode, clear-cache, serve")
+        print("Available commands: decompile, vtable, disassemble, refs, adrp_add, opcodes, rva, rename, comment, overlay, type, register_struct, status, stop, hibernate, mode, clear-cache, serve")
         return
 
     res = client_send_request(cmd, req_args, host=parsed.host, port=parsed.port)
@@ -2037,6 +2838,18 @@ def main():
         print(res.get("message") or res)
     elif cmd == "overlay":
         print(json.dumps(res.get("overlay", res), indent=2))
+    elif cmd == "type":
+        if res.get("status") == "ok":
+            print(f"=== Type: {res.get('type', {}).get('name', 'Unknown')} ===")
+            print(res.get("c_decl", ""))
+        else:
+            print(f"ERROR: {res.get('message')}")
+    elif cmd == "register_struct":
+        if res.get("status") == "ok":
+            print(f"[*] Registered struct '{res.get('name')}' (ID: {res.get('type_id')}, Size: {res.get('byte_size')}B)")
+            print(res.get("c_decl", ""))
+        else:
+            print(f"ERROR: {res.get('message')}")
 
     if res.get("l2_cached") and cmd not in ("rva", "status"):
         t_ms = res.get("time_ms", 0.0)

@@ -25,9 +25,9 @@ Implements Section 8 of GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md:
       and Tier 3 (>16KB or >300 BBs).
     * Automatically sets simplification style ("decompile", "normalize", "jumptable", "firstpass")
       and caps payload thresholds to prevent 30-second single-core hangs.
-- Persistent Disk-Backed Decompiler Cache (db.buffers emulator):
-    * LZ4-compressed persistent decompiler cache (DecompilerCacheDBAdapter) eliminating repeat
-      process spawns on revisited functions.
+- In-Memory Decompiler Cache (db.buffers emulator):
+    * In-memory decompiler cache (PersistentDecompilerDBCache) simulating the
+      table interface to avoid repeat decompiler work on revisited functions.
 """
 
 from __future__ import annotations
@@ -278,13 +278,16 @@ class JVMResourceConfigurator:
         output_path: Optional[str] = None
     ) -> str:
         """Generates Ghidra support/launch.properties text."""
-        vmargs = " ".join(cls.generate_launch_vmargs(policy))
-        max_mem = f"{policy.soft_max_heap_mb}M"
-        content = f"""# Auto-generated SuperGhidra launch.properties
-# Mode: {policy.mode.value} | Max CPU: {policy.thread_count} threads
-VMARGS={vmargs}
-MAXMEM={max_mem}
-"""
+        vmargs_list = list(cls.generate_launch_vmargs(policy))
+        if not any(arg.startswith("-Xmx") for arg in vmargs_list):
+            vmargs_list.append(f"-Xmx{policy.soft_max_heap_mb}m")
+        lines = [
+            "# Auto-generated SuperGhidra launch.properties",
+            f"# Mode: {policy.mode.value} | Max CPU: {policy.thread_count} threads",
+        ]
+        for arg in vmargs_list:
+            lines.append(f"VMARGS={arg}")
+        content = "\n".join(lines) + "\n"
         if output_path:
             with open(output_path, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -345,10 +348,56 @@ class DecompileProcessPoolReaper:
             if not info["is_busy"]:
                 idle_duration = current_time - info["last_active_time"]
                 if idle_duration >= self.idle_timeout_sec:
-                    # Execute stopProcess()
+                    # Execute stop/dispose on process handle if present
+                    h = info.get("handle")
+                    if h is not None:
+                        for meth_name in ("stopProcess", "stop", "dispose", "close"):
+                            meth = getattr(h, meth_name, None)
+                            if callable(meth):
+                                try:
+                                    meth()
+                                    break
+                                except Exception as e:
+                                    logger.debug(f"Failed to invoke {meth_name} on handle: {e}")
                     reaped.append(inst_id)
                     del self._instances[inst_id]
 
+        return reaped
+
+    def hibernate_instance(self, inst_id: int) -> bool:
+        """Forces hibernation of a single instance, calling its stop/dispose method."""
+        if inst_id in self._instances:
+            info = self._instances[inst_id]
+            h = info.get("handle")
+            if h is not None:
+                for meth_name in ("stopProcess", "stop", "dispose", "close"):
+                    meth = getattr(h, meth_name, None)
+                    if callable(meth):
+                        try:
+                            meth()
+                            break
+                        except Exception as e:
+                            logger.debug(f"Failed to invoke {meth_name} on handle: {e}")
+            del self._instances[inst_id]
+            return True
+        return False
+
+    def hibernate_all(self) -> List[int]:
+        """Forces hibernation of all registered decompile instances, calling stop/dispose."""
+        reaped = []
+        for inst_id, info in list(self._instances.items()):
+            h = info.get("handle")
+            if h is not None:
+                for meth_name in ("stopProcess", "stop", "dispose", "close"):
+                    meth = getattr(h, meth_name, None)
+                    if callable(meth):
+                        try:
+                            meth()
+                            break
+                        except Exception as e:
+                            logger.debug(f"Failed to invoke {meth_name} on handle: {e}")
+            reaped.append(inst_id)
+            del self._instances[inst_id]
         return reaped
 
 
@@ -358,8 +407,8 @@ class DecompileProcessPoolReaper:
 
 class PersistentDecompilerDBCache:
     """
-    Simulates the LZ4-compressed DecompilerCacheDBAdapter table inside .rep/db.buffers.
-    Persists solved ClangTokenGroup / C ASTs across program restarts.
+    In-memory cache simulating the DecompilerCacheDBAdapter table interface inside .rep/db.buffers.
+    Persists decompiled representations in memory across queries to avoid repeat decompiler work.
     """
 
     def __init__(self):
@@ -397,8 +446,8 @@ class PersistentDecompilerDBCache:
 
 class TelemetryResourceGovernor:
     """
-    Closed-loop governor polling system metrics every 3s and dynamically adapting
-    GThreadPool concurrency, duty-cycle yield sleep, and decompiler downshifting.
+    Closed-loop governor accepting live system telemetry (CPU load and free RAM ratio)
+    and dynamically adapting GThreadPool concurrency, duty-cycle yield sleep, and decompiler downshifting.
     """
 
     def __init__(self, logical_cores: int = 8):
@@ -460,3 +509,7 @@ class TelemetryResourceGovernor:
 
         self.reaper.idle_timeout_sec = self.policy.decompiler_idle_timeout_sec
         return self.policy
+
+    def hibernate(self) -> List[int]:
+        """Hibernates all native decompiler instances."""
+        return self.reaper.hibernate_all()

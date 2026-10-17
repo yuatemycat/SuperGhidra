@@ -29,6 +29,8 @@ public enum CompressionAlgorithm {
     
     // Framing header: MAGIC(4B) + VERSION(2B) + ALGO(1B) + FLAGS(1B) + ORIG_LEN(4B) + COMP_LEN(4B) + CRC32(4B) = 20B
     public static final int FRAME_HEADER_SIZE = 20;
+    public static final byte FLAG_ZSTD_DEFLATE_FALLBACK = 0x01;
+    public static final byte FLAG_EMPTY_BUFFER = 0x02;
 
     private final byte id;
     private final String name;
@@ -76,15 +78,27 @@ public enum CompressionAlgorithm {
      * Compresses a raw payload and packages it with an SGDB frame header and CRC32 proof.
      */
     public static byte[] compressFrame(byte[] rawData, int offset, int length, CompressionAlgorithm algo) throws IOException {
+        return compressFrame(rawData, offset, length, algo, (byte) 0);
+    }
+
+    /**
+     * Compresses a raw payload with explicit extra flags (e.g. FLAG_EMPTY_BUFFER).
+     */
+    public static byte[] compressFrame(byte[] rawData, int offset, int length, CompressionAlgorithm algo, byte extraFlags) throws IOException {
         long crcVal = computeCRC32(rawData, offset, length);
         byte[] payload;
+        byte frameFlags = extraFlags;
 
         switch (algo) {
             case LZ4:
                 payload = compressLZ4(rawData, offset, length);
                 break;
             case ZSTD:
-                payload = compressZstdOrFallback(rawData, offset, length);
+                CompressResult zstdRes = compressZstdOrFallback(rawData, offset, length);
+                payload = zstdRes.payload;
+                if (zstdRes.isDeflateFallback) {
+                    frameFlags |= FLAG_ZSTD_DEFLATE_FALLBACK;
+                }
                 break;
             case DEFLATE:
                 payload = compressDeflate(rawData, offset, length);
@@ -99,7 +113,7 @@ public enum CompressionAlgorithm {
         header.put(MAGIC_BYTES);
         header.putShort((short) VERSION);
         header.put(algo.getId());
-        header.put((byte) 0); // flags
+        header.put(frameFlags); // flags (offset 7)
         header.putInt(length);
         header.putInt(payload.length);
         header.putInt((int) (crcVal & 0xFFFFFFFFL));
@@ -145,7 +159,7 @@ public enum CompressionAlgorithm {
                 decompressLZ4(frameBytes, payloadOffset, compLen, decompressed, 0, origLen);
                 break;
             case ZSTD:
-                decompressed = decompressZstdOrFallback(frameBytes, payloadOffset, compLen, origLen);
+                decompressed = decompressZstdOrFallback(frameBytes, payloadOffset, compLen, origLen, flags);
                 break;
             case DEFLATE:
                 decompressDeflate(frameBytes, payloadOffset, compLen, decompressed, 0, origLen);
@@ -181,6 +195,7 @@ public enum CompressionAlgorithm {
         int anchor = srcOff;
         int ip = srcOff;
         int mflimit = srcOff + srcLen - 12;
+        int matchLimit = srcOff + srcLen - 5;
 
         while (ip < mflimit) {
             int d = ((src[ip] & 0xFF) |
@@ -201,9 +216,9 @@ public enum CompressionAlgorithm {
                 int litLen = ip - anchor;
                 int matchOff = ip - ref;
 
-                // Find match length
+                // Find match length (leaving last 5 bytes as trailing literals per LZ4 block spec)
                 int len = 4;
-                while (ip + len < srcOff + srcLen && src[ref + len] == src[ip + len]) {
+                while (ip + len < matchLimit && src[ref + len] == src[ip + len]) {
                     len++;
                 }
 
@@ -352,7 +367,16 @@ public enum CompressionAlgorithm {
         }
     }
 
-    private static byte[] compressZstdOrFallback(byte[] src, int srcOff, int srcLen) throws IOException {
+    private static class CompressResult {
+        final byte[] payload;
+        final boolean isDeflateFallback;
+        CompressResult(byte[] payload, boolean isDeflateFallback) {
+            this.payload = payload;
+            this.isDeflateFallback = isDeflateFallback;
+        }
+    }
+
+    private static CompressResult compressZstdOrFallback(byte[] src, int srcOff, int srcLen) throws IOException {
         // Try commons-compress Zstandard if available, else compress with Deflate
         try {
             Class<?> zstdClass = Class.forName("org.apache.commons.compress.compressors.zstandard.ZstdCompressorOutputStream");
@@ -360,24 +384,23 @@ public enum CompressionAlgorithm {
             java.io.OutputStream zstdOut = (java.io.OutputStream) zstdClass.getConstructor(java.io.OutputStream.class).newInstance(baos);
             zstdOut.write(src, srcOff, srcLen);
             zstdOut.close();
-            return baos.toByteArray();
+            return new CompressResult(baos.toByteArray(), false);
         } catch (Throwable t) {
             // High compression fallback
-            Deflater deflater = new Deflater(Deflater.BEST_COMPRESSION, true);
-            deflater.setInput(src, srcOff, srcLen);
-            deflater.finish();
-            byte[] buf = new byte[srcLen + 64];
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(srcLen);
-            while (!deflater.finished()) {
-                int count = deflater.deflate(buf);
-                baos.write(buf, 0, count);
-            }
-            deflater.end();
-            return baos.toByteArray();
+            return new CompressResult(compressDeflate(src, srcOff, srcLen), true);
         }
     }
 
     private static byte[] decompressZstdOrFallback(byte[] src, int srcOff, int srcLen, int expectedOrigLen) throws IOException {
+        return decompressZstdOrFallback(src, srcOff, srcLen, expectedOrigLen, (byte) 0);
+    }
+
+    private static byte[] decompressZstdOrFallback(byte[] src, int srcOff, int srcLen, int expectedOrigLen, byte flags) throws IOException {
+        if ((flags & FLAG_ZSTD_DEFLATE_FALLBACK) != 0) {
+            byte[] output = new byte[expectedOrigLen];
+            decompressDeflate(src, srcOff, srcLen, output, 0, expectedOrigLen);
+            return output;
+        }
         try {
             Class<?> zstdClass = Class.forName("org.apache.commons.compress.compressors.zstandard.ZstdCompressorInputStream");
             ByteArrayInputStream bais = new ByteArrayInputStream(src, srcOff, srcLen);
@@ -395,6 +418,18 @@ public enum CompressionAlgorithm {
             byte[] output = new byte[expectedOrigLen];
             decompressDeflate(src, srcOff, srcLen, output, 0, expectedOrigLen);
             return output;
+        }
+    }
+
+    public static boolean isZstdAvailable() {
+        try {
+            Class<?> zstdClass = Class.forName("org.apache.commons.compress.compressors.zstandard.ZstdCompressorOutputStream");
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            java.io.OutputStream zstdOut = (java.io.OutputStream) zstdClass.getConstructor(java.io.OutputStream.class).newInstance(baos);
+            zstdOut.close();
+            return true;
+        } catch (Throwable t) {
+            return false;
         }
     }
 }

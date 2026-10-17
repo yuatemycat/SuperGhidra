@@ -267,8 +267,8 @@ public class {class_name} extends GhidraScript {{
 
     private static final Set<String> KNOWN_TERMINAL_NAMES = new HashSet<>(Arrays.asList(
         "exit", "_exit", "_Exit", "quick_exit", "abort", "__assert_fail",
-        "__stack_chk_fail", "panic", "fatal", "terminate", "__cxa_throw",
-        "pthread_exit", "ExitProcess", "TerminateProcess", "RaiseException"
+        "__stack_chk_fail", "panic", "fatal", "terminate", "std::terminate", "__cxa_throw",
+        "longjmp", "_longjmp", "siglongjmp", "pthread_exit", "ExitProcess", "TerminateProcess", "RaiseException"
     ));
 
     @Override
@@ -290,7 +290,8 @@ public class {class_name} extends GhidraScript {{
                 String fnName = fn.getName().toLowerCase();
                 boolean isTerminalName = false;
                 for (String term : KNOWN_TERMINAL_NAMES) {{
-                    if (fnName.contains(term.toLowerCase())) {{
+                    String tl = term.toLowerCase();
+                    if (fnName.equals(tl) || fnName.endsWith("::" + tl) || fnName.endsWith("." + tl)) {{
                         isTerminalName = true;
                         break;
                     }}
@@ -300,36 +301,6 @@ public class {class_name} extends GhidraScript {{
                     fn.setNoReturn(true);
                     markedCount++;
                     continue;
-                }}
-
-                // Inspect terminal blocks of function CFG
-                AddressSetView body = fn.getBody();
-                InstructionIterator instIter = listing.getInstructions(body, true);
-                boolean hasReturn = false;
-                boolean callsTerminal = false;
-
-                while (instIter.hasNext()) {{
-                    Instruction inst = instIter.next();
-                    FlowType flow = inst.getFlowType();
-                    if (flow.isTerminal() || flow == RefType.COMPUTED_CALL) {{
-                        Reference[] refs = inst.getReferencesFrom();
-                        for (Reference ref : refs) {{
-                            Function calledFn = fnManager.getFunctionAt(ref.getToAddress());
-                            if (calledFn != null && calledFn.hasNoReturn()) {{
-                                callsTerminal = true;
-                            }}
-                        }}
-                    }}
-                    if (flow.isTerminal() && !flow.isCall()) {{
-                        hasReturn = true;
-                        break;
-                    }}
-                }}
-
-                // If function does not have a return instruction and invokes a non-returning target
-                if (!hasReturn && callsTerminal) {{
-                    fn.setNoReturn(true);
-                    markedCount++;
                 }}
             }}
         }} finally {{
@@ -354,8 +325,8 @@ from ghidra.program.model.symbol import RefType
 
 KNOWN_TERMINALS = {
     "exit", "_exit", "_Exit", "quick_exit", "abort", "__assert_fail",
-    "__stack_chk_fail", "panic", "fatal", "terminate", "__cxa_throw",
-    "pthread_exit", "ExitProcess", "TerminateProcess", "RaiseException"
+    "__stack_chk_fail", "panic", "fatal", "terminate", "std::terminate", "__cxa_throw",
+    "longjmp", "_longjmp", "siglongjmp", "pthread_exit", "ExitProcess", "TerminateProcess", "RaiseException"
 }
 
 def run():
@@ -371,31 +342,17 @@ def run():
             if fn.hasNoReturn():
                 continue
             name_lower = fn.getName().lower()
-            if any(term in name_lower for term in KNOWN_TERMINALS):
+            is_terminal = False
+            for term in KNOWN_TERMINALS:
+                tl = term.lower()
+                if name_lower == tl or name_lower.endswith("::" + tl) or name_lower.endswith("." + tl):
+                    is_terminal = True
+                    break
+
+            if is_terminal:
                 fn.setNoReturn(True)
                 marked_count += 1
                 continue
-
-            # Check instructions for returns vs non-return calls
-            body = fn.getBody()
-            inst_iter = listing.getInstructions(body, True)
-            has_return = False
-            calls_terminal = False
-
-            for inst in inst_iter:
-                flow = inst.getFlowType()
-                if flow.isTerminal() and not flow.isCall():
-                    has_return = True
-                    break
-                if flow.isCall():
-                    for ref in inst.getReferencesFrom():
-                        called = fn_mgr.getFunctionAt(ref.getToAddress())
-                        if called and called.hasNoReturn():
-                            calls_terminal = True
-
-            if not has_return and calls_terminal:
-                fn.setNoReturn(True)
-                marked_count += 1
     finally:
         currentProgram.endTransaction(tx_id, True)
 
@@ -421,7 +378,7 @@ class HeadlessCommandBuilder:
         script_dir: str = "",
         timeout_seconds: int = 600,
         max_cpu: int = 4,
-        read_only: bool = True,
+        read_only: Optional[bool] = None,
         delete_project: bool = False,
         jvm_max_mem: str = "8G",
     ):
@@ -434,7 +391,7 @@ class HeadlessCommandBuilder:
         self.script_dir = script_dir
         self.timeout_seconds = timeout_seconds
         self.max_cpu = max_cpu
-        self.read_only = read_only
+        self.read_only = (False if import_target else True) if read_only is None else read_only
         self.delete_project = delete_project
         self.jvm_max_mem = jvm_max_mem
 

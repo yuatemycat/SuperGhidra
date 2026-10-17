@@ -71,6 +71,7 @@ try:
         DiffResult,
         FunctionCFG,
         FunctionMatch,
+        extract_cfgs_from_binary,
     )
 except ImportError:
     from binary_diff_engine import (  # type: ignore
@@ -78,7 +79,18 @@ except ImportError:
         DiffResult,
         FunctionCFG,
         FunctionMatch,
+        extract_cfgs_from_binary,
     )
+
+try:
+    from struct_shift_migrator import StructShiftMigrator
+except ImportError:
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from struct_shift_migrator import StructShiftMigrator  # type: ignore
+    except ImportError:
+        StructShiftMigrator = None  # type: ignore
 
 
 class DeltaEventType(str, enum.Enum):
@@ -144,7 +156,8 @@ class SemanticEvent:
         if not self.proof_hash:
             self.proof_hash = self.compute_proof_hash()
         if not self.event_id:
-            self.event_id = f"EVT-{self.proof_hash[:12].upper()}"
+            h = hashlib.sha256(f"{self.proof_hash}:{self.timestamp}".encode("utf-8")).hexdigest()
+            self.event_id = f"EVT-{h[:12].upper()}"
 
     def compute_proof_hash(self) -> str:
         return compute_event_proof_hash(
@@ -483,7 +496,7 @@ class SemanticDeltaLog:
         self.file_path = os.path.abspath(file_path)
         self.events: List[SemanticEvent] = []
         self._seen_ids: Set[str] = set()
-        self._seen_hashes: Set[str] = set()
+        self._seen_exact: Set[Tuple[str, str, str]] = set()
 
         if os.path.exists(self.file_path):
             self.load()
@@ -491,14 +504,15 @@ class SemanticDeltaLog:
     def append(self, event: SemanticEvent) -> bool:
         """
         Appends a verified semantic event to the log file and in-memory list.
-        Idempotent: skips duplicate event IDs or identical proof hashes.
+        Idempotent: skips exact duplicate events (same event ID / timestamp).
         """
-        if event.event_id in self._seen_ids or event.proof_hash in self._seen_hashes:
+        exact_key = (event.event_id, event.timestamp, event.proof_hash)
+        if event.event_id in self._seen_ids or exact_key in self._seen_exact:
             return False  # Already recorded
 
         self.events.append(event)
         self._seen_ids.add(event.event_id)
-        self._seen_hashes.add(event.proof_hash)
+        self._seen_exact.add(exact_key)
 
         os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
         with open(self.file_path, "a", encoding="utf-8") as f:
@@ -510,11 +524,12 @@ class SemanticDeltaLog:
         count = 0
         new_lines = []
         for evt in events:
-            if evt.event_id in self._seen_ids or evt.proof_hash in self._seen_hashes:
+            exact_key = (evt.event_id, evt.timestamp, evt.proof_hash)
+            if evt.event_id in self._seen_ids or exact_key in self._seen_exact:
                 continue
             self.events.append(evt)
             self._seen_ids.add(evt.event_id)
-            self._seen_hashes.add(evt.proof_hash)
+            self._seen_exact.add(exact_key)
             new_lines.append(evt.to_json_line())
             count += 1
 
@@ -524,6 +539,43 @@ class SemanticDeltaLog:
                 f.writelines(new_lines)
         return count
 
+    def record_function_rename(
+        self,
+        target_address: Optional[int],
+        new_name: str,
+        old_name: Optional[str] = None,
+        symbol_type: str = "FUNCTION",
+        author: str = "superghidra",
+    ) -> SemanticEvent:
+        """Helper to create and append a RenameSymbol event for a function."""
+        old_n = old_name or (f"FUN_{target_address:08X}" if target_address is not None else "")
+        evt = SemanticEvent.create_rename_symbol(
+            old_name=old_n,
+            new_name=new_name,
+            target_address=target_address,
+            symbol_type=symbol_type,
+            author=author,
+        )
+        self.append(evt)
+        return evt
+
+    def record_comment(
+        self,
+        target_address: Optional[int],
+        comment_text: str,
+        comment_type: Union[CommentType, str] = CommentType.EOL,
+        author: str = "superghidra",
+    ) -> SemanticEvent:
+        """Helper to create and append a SetComment event."""
+        evt = SemanticEvent.create_set_comment(
+            comment_text=comment_text,
+            target_address=target_address,
+            comment_type=comment_type,
+            author=author,
+        )
+        self.append(evt)
+        return evt
+
     def load(self) -> List[SemanticEvent]:
         """Loads and deduplicates all events from the .jsonl file."""
         if not os.path.exists(self.file_path):
@@ -531,18 +583,19 @@ class SemanticDeltaLog:
 
         self.events.clear()
         self._seen_ids.clear()
-        self._seen_hashes.clear()
+        self._seen_exact.clear()
 
         with open(self.file_path, "r", encoding="utf-8") as f:
             for line in f:
                 evt = SemanticEvent.from_json_line(line)
                 if evt is None:
                     continue
-                if evt.event_id in self._seen_ids or evt.proof_hash in self._seen_hashes:
+                exact_key = (evt.event_id, evt.timestamp, evt.proof_hash)
+                if evt.event_id in self._seen_ids or exact_key in self._seen_exact:
                     continue
                 self.events.append(evt)
                 self._seen_ids.add(evt.event_id)
-                self._seen_hashes.add(evt.proof_hash)
+                self._seen_exact.add(exact_key)
 
         return self.events
 
@@ -743,6 +796,10 @@ class DeltaMigrationEngine:
         self.name_a_to_match: Dict[str, FunctionMatch] = {}
         self.id_a_to_match: Dict[str, FunctionMatch] = {}
 
+        # Struct shift lookup tables
+        self.struct_shift_map: Dict[int, int] = {}
+        self.struct_shift_deltas: Dict[int, int] = {}
+
         if diff_result:
             self._index_diff_matches(diff_result.matches)
 
@@ -765,6 +822,59 @@ class DeltaMigrationEngine:
         self._index_diff_matches(self.diff_result.matches)
         return self.diff_result
 
+    def migrate_between_binaries(
+        self,
+        baseline_events: Any,
+        old_binary: Any,
+        new_binary: Any,
+        target_log_path: Optional[str] = None,
+    ) -> Tuple[DeltaMigrationReport, List[SemanticEvent]]:
+        """
+        Executes end-to-end binary diff pairing and struct shift migration:
+        1. Disassembles and extracts CFGs from old_binary and new_binary.
+        2. Runs BatchedBinaryMatcher diff pairing to map function addresses and symbols.
+        3. Discovers struct field displacement shifts using StructShiftMigrator.
+        4. Translates, verifies, and commits migrated semantic events into target delta log.
+
+        Supports both (baseline_events, old_binary, new_binary) and (old_binary, new_binary, baseline_events).
+        """
+        # Support flexible argument order
+        if isinstance(baseline_events, (str, bytes)) and isinstance(new_binary, list):
+            old_bin = baseline_events
+            new_bin = old_binary
+            events = new_binary
+            log_path = target_log_path
+        else:
+            events = baseline_events
+            old_bin = old_binary
+            new_bin = new_binary
+            log_path = target_log_path
+
+        # 1. Extract CFGs and pair functions
+        funcs_a = extract_cfgs_from_binary(old_bin, base_vaddr=0x100000)
+        funcs_b = extract_cfgs_from_binary(new_bin, base_vaddr=0x100000)
+        self.run_diff_pairing(funcs_a, funcs_b)
+
+        # 2. Extract struct shifts
+        if StructShiftMigrator is not None:
+            migrator = StructShiftMigrator()
+            if isinstance(old_bin, str) and isinstance(new_bin, str) and os.path.exists(old_bin) and os.path.exists(new_bin):
+                migrator.load_from_elf_binaries(old_bin, new_bin)
+            else:
+                bytes_a = old_bin if isinstance(old_bin, bytes) else open(old_bin, "rb").read()
+                bytes_b = new_bin if isinstance(new_bin, bytes) else open(new_bin, "rb").read()
+                migrator._v1_functions = migrator._sweep_arm64_functions(bytes_a, 0x1000, default_name="text_section")
+                migrator._v2_functions = migrator._sweep_arm64_functions(bytes_b, 0x1000, default_name="text_section")
+
+            shift_rep = migrator.analyze_shifts()
+            for m in shift_rep.field_migrations:
+                self.struct_shift_map[m.old_offset] = m.new_offset
+                self.struct_shift_deltas[m.old_offset] = m.delta
+
+        # 3. Migrate events and optionally save
+        report, migrated_events = self.migrate_events(events, target_log_path=log_path)
+        return report, migrated_events
+
     def migrate_events(
         self,
         baseline_events: List[SemanticEvent],
@@ -786,8 +896,31 @@ class DeltaMigrationEngine:
         for evt in baseline_events:
             # 1. Structural / Type events that are binary-address agnostic
             if evt.event_type == DeltaEventType.DEFINE_STRUCT_FIELD:
-                # Struct definitions migrate directly across builds
-                passed, msgs = evt.verify_evidence_invariants()
+                new_payload = dict(evt.payload)
+                new_evidence = dict(evt.evidence) if evt.evidence else None
+                new_metadata = {"migration_source": evt.event_id}
+
+                # Check if a struct field shift was discovered
+                old_off = new_payload.get("offset")
+                match_detail = "Direct struct layout migration"
+                if old_off is not None and old_off in self.struct_shift_map:
+                    new_off = self.struct_shift_map[old_off]
+                    shift_delta = self.struct_shift_deltas.get(old_off, new_off - old_off)
+                    new_payload["offset"] = new_off
+                    new_metadata["shift_delta"] = shift_delta
+                    new_metadata["old_offset"] = old_off
+                    new_metadata["new_offset"] = new_off
+                    match_detail = f"Migrated shifted struct field (offset 0x{old_off:x} -> 0x{new_off:x}, delta: {shift_delta:+d})"
+
+                    if new_evidence and "field_displacements" in new_evidence:
+                        updated_fields = []
+                        for fd in new_evidence["field_displacements"]:
+                            fd_copy = dict(fd)
+                            if fd_copy.get("offset") == old_off:
+                                fd_copy["offset"] = new_off
+                            updated_fields.append(fd_copy)
+                        new_evidence["field_displacements"] = updated_fields
+
                 new_evt = SemanticEvent(
                     event_id="",
                     event_type=evt.event_type,
@@ -795,15 +928,20 @@ class DeltaMigrationEngine:
                     author=f"{evt.author}-migrated",
                     target_address=None,
                     target_symbol=evt.target_symbol,
-                    payload=dict(evt.payload),
+                    payload=new_payload,
                     obligation_id=evt.obligation_id,
-                    evidence=dict(evt.evidence) if evt.evidence else None,
-                    verified=passed,
-                    metadata={"migration_source": evt.event_id},
+                    evidence=new_evidence,
+                    metadata=new_metadata,
                 )
+                passed, msgs = new_evt.verify_evidence_invariants()
+                new_evt.verified = passed
                 if passed:
-                    migrated_verified += 1
-                    status = MigrationStatus.MIGRATED_VERIFIED
+                    if new_evt.evidence:
+                        migrated_verified += 1
+                        status = MigrationStatus.MIGRATED_VERIFIED
+                    else:
+                        migrated_unverified += 1
+                        status = MigrationStatus.MIGRATED_UNVERIFIED
                 else:
                     evidence_rejected += 1
                     status = MigrationStatus.EVIDENCE_REJECTED
@@ -816,7 +954,7 @@ class DeltaMigrationEngine:
                         status=status,
                         similarity=1.0,
                         confidence="HIGH",
-                        match_detail="Direct struct layout migration",
+                        match_detail=match_detail,
                     )
                 )
                 continue
@@ -883,8 +1021,12 @@ class DeltaMigrationEngine:
             new_evt.verified = passed
 
             if passed:
-                migrated_verified += 1
-                status = MigrationStatus.MIGRATED_VERIFIED
+                if new_evt.evidence:
+                    migrated_verified += 1
+                    status = MigrationStatus.MIGRATED_VERIFIED
+                else:
+                    migrated_unverified += 1
+                    status = MigrationStatus.MIGRATED_UNVERIFIED
             else:
                 evidence_rejected += 1
                 status = MigrationStatus.EVIDENCE_REJECTED

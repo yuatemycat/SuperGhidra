@@ -450,19 +450,31 @@ class DependencyCacheDAG:
         """
         t0 = time.perf_counter()
         with self._lock:
+            target_key = func_id
+            if target_key not in self.functions:
+                for f_key, f_node in self.functions.items():
+                    if (
+                        f_node.address == func_id
+                        or str(f_node.address) == str(func_id)
+                        or f_key.lower() == str(func_id).lower()
+                        or (f_node.name and f_node.name.lower() == str(func_id).lower())
+                    ):
+                        target_key = f_key
+                        break
+
             pre_size = self.cache.size()
 
             affected: Set[str] = set()
-            if func_id in self.functions:
-                affected.add(func_id)
+            if target_key in self.functions:
+                affected.add(target_key)
                 # 1-hop callers
-                direct_callers = self.callee_to_callers.get(func_id, set())
+                direct_callers = self.callee_to_callers.get(target_key, set())
                 affected.update(direct_callers)
 
                 if new_signature:
-                    self.functions[func_id].signature = new_signature
+                    self.functions[target_key].signature = new_signature
             else:
-                affected.add(func_id)
+                affected.add(target_key)
 
             evicted = self.cache.evict_batch(affected)
             post_size = self.cache.size()
@@ -485,6 +497,27 @@ class DependencyCacheDAG:
             )
             self.invalidation_history.append(report)
             return report
+
+    def invalidate_function(self, func_id: Any) -> InvalidationImpactReport:
+        """
+        Invalidates a function and its direct 1-hop callers by function ID, address, or name.
+        Resolves integer address or string ID / name (case-insensitive) to graph node key.
+        """
+        fid_str = str(func_id)
+        if isinstance(func_id, int):
+            fid_str = f"0x{func_id:08X}"
+        matched_id = fid_str
+        with self._lock:
+            if matched_id not in self.functions:
+                for f_key, f_node in self.functions.items():
+                    if (
+                        f_node.address == func_id
+                        or f_key.lower() == fid_str.lower()
+                        or (f_node.name and f_node.name.lower() == fid_str.lower())
+                    ):
+                        matched_id = f_key
+                        break
+        return self.invalidate_function_signature(matched_id)
 
     def invalidate_struct_field(
         self,

@@ -2,7 +2,7 @@
 """SuperGhidra Storage Compression Layer Prototype.
 
 Demonstrates transparent compression interception for Ghidra buffer pages
-(simulating LocalManagedBufferFile.get() and put()), evaluating:
+(simulating LocalManagedBufferFile.get() and put() using synthetic test pages), evaluating:
   1. LZ4 (in-flight fast buffer compression for working sessions)
   2. Zstandard Level 3 (snapshot / repository commit compression)
 
@@ -20,11 +20,20 @@ import string
 import struct
 import sys
 import time
+import zlib
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-import lz4.block
-import zstandard as zstd
+try:
+    import lz4.block
+except ImportError:
+    lz4 = None
+
+try:
+    import zstandard as zstd
+except ImportError:
+    zstd = None
+
 
 # Ghidra Buffer Constants
 GHIDRA_BUFFER_SIZE = 16384  # 16 KB payload
@@ -36,6 +45,16 @@ FLAG_EMPTY_BUFFER = 0x01
 # Binary layout: Little-endian <I Q I I (20 bytes per slot entry)
 SLOT_ENTRY_STRUCT = struct.Struct("<IQII")
 SLOT_ENTRY_SIZE = SLOT_ENTRY_STRUCT.size  # 20 bytes
+
+# Java SuperGhidraBufferFileAdapter / CompressionAlgorithm SGDB Binary Format Constants
+JAVA_SGDB_HEADER_SIZE = 32
+JAVA_SGDB_HEADER_STRUCT = struct.Struct("<4sHBBQIIQ")
+JAVA_FRAME_HEADER_SIZE = 20
+JAVA_FRAME_HEADER_STRUCT = struct.Struct("<4sHBBIII")
+JAVA_SLOT_ENTRY_SIZE = 24
+JAVA_SLOT_ENTRY_STRUCT = struct.Struct("<iQiiI")
+JAVA_FLAG_EXTENDED_METADATA = 0x01
+JAVA_FLAG_ZSTD_DEFLATE_FALLBACK = 0x01
 
 
 @dataclass
@@ -132,38 +151,61 @@ class CompressedLocalManagedBufferFile:
     Simulates LocalManagedBufferFile with LZ4 or ZSTD storage backend.
     """
 
-    FILE_MAGIC = b"SGDB"  # SuperGhidra DataBase
+    JAVA_FILE_MAGIC = b"SGDB"  # SuperGhidra DataBase (Java compatible format)
+    INTERNAL_FILE_MAGIC = b"SGPY"  # SuperGhidra Python-internal format
+    FILE_MAGIC = JAVA_FILE_MAGIC  # Compatibility alias
     VERSION = 1
+    CODEC_RAW = 0
     CODEC_LZ4 = 1
     CODEC_ZSTD_L3 = 2
+    CODEC_DEFLATE = 3
 
     def __init__(self, backing_stream: Optional[io.BytesIO] = None, codec: str = "lz4"):
         self.stream = backing_stream if backing_stream is not None else io.BytesIO()
         self.codec = codec.lower()
-        if self.codec not in ("lz4", "zstd"):
-            raise ValueError(f"Unsupported codec: {codec}. Must be 'lz4' or 'zstd'")
+        if self.codec not in ("lz4", "zstd", "deflate"):
+            raise ValueError(f"Unsupported codec: {codec}. Must be 'lz4', 'zstd', or 'deflate'")
+        if self.codec == "lz4" and lz4 is None:
+            raise ImportError("install superghidra[storage] to use lz4 compression")
+        if self.codec == "zstd" and zstd is None:
+            raise ImportError("install superghidra[storage] to use zstandard compression")
         self.slot_directory = SlotDirectory()
-        self.zstd_cctx = zstd.ZstdCompressor(level=3)
-        self.zstd_dctx = zstd.ZstdDecompressor()
+        self.java_parameters: Dict[str, int] = {}
+        self.java_free_indexes: List[int] = []
+        if zstd is not None:
+            self.zstd_cctx = zstd.ZstdCompressor(level=3)
+            self.zstd_dctx = zstd.ZstdDecompressor()
+        else:
+            self.zstd_cctx = None
+            self.zstd_dctx = None
         self._init_header()
 
     def _init_header(self) -> None:
         """Writes initial container header if stream is empty."""
         if self.stream.tell() == 0 and len(self.stream.getvalue()) == 0:
-            codec_id = self.CODEC_LZ4 if self.codec == "lz4" else self.CODEC_ZSTD_L3
+            if self.codec == "lz4":
+                codec_id = self.CODEC_LZ4
+            elif self.codec == "deflate":
+                codec_id = self.CODEC_DEFLATE
+            else:
+                codec_id = self.CODEC_ZSTD_L3
             # Header: MAGIC(4B) + VERSION(2B) + CODEC(2B) + DIR_OFFSET(8B) + DIR_COUNT(4B) + RESERVED(12B) = 32B
-            header = struct.pack("<4sHHQI12s", self.FILE_MAGIC, self.VERSION, codec_id, 0, 0, b"\x00" * 12)
+            header = struct.pack("<4sHHQI12s", self.INTERNAL_FILE_MAGIC, self.VERSION, codec_id, 0, 0, b"\x00" * 12)
             self.stream.write(header)
 
     def _compress(self, raw_bytes: bytes) -> bytes:
         if self.codec == "lz4":
             return lz4.block.compress(raw_bytes, store_size=False)
+        elif self.codec == "deflate":
+            return zlib.compress(raw_bytes)
         else:
             return self.zstd_cctx.compress(raw_bytes)
 
     def _decompress(self, comp_bytes: bytes, orig_len: int) -> bytes:
         if self.codec == "lz4":
             return lz4.block.decompress(comp_bytes, uncompressed_size=orig_len)
+        elif self.codec == "deflate":
+            return zlib.decompress(comp_bytes)
         else:
             return self.zstd_dctx.decompress(comp_bytes, max_output_size=orig_len)
 
@@ -223,16 +265,263 @@ class CompressedLocalManagedBufferFile:
         dir_count = len(self.slot_directory)
 
         # Update directory offset in header
-        codec_id = self.CODEC_LZ4 if self.codec == "lz4" else self.CODEC_ZSTD_L3
+        if self.codec == "lz4":
+            codec_id = self.CODEC_LZ4
+        elif self.codec == "deflate":
+            codec_id = self.CODEC_DEFLATE
+        else:
+            codec_id = self.CODEC_ZSTD_L3
         self.stream.seek(0, io.SEEK_SET)
-        header = struct.pack("<4sHHQI12s", self.FILE_MAGIC, self.VERSION, codec_id, dir_offset, dir_count, b"\x00" * 12)
+        header = struct.pack("<4sHHQI12s", self.INTERNAL_FILE_MAGIC, self.VERSION, codec_id, dir_offset, dir_count, b"\x00" * 12)
         self.stream.write(header)
         self.stream.seek(0, io.SEEK_END)
         return self.stream.tell()
 
+    def export_java_sgdb_file(
+        self,
+        file_path: str,
+        parameters: Optional[Dict[str, int]] = None,
+        free_indexes: Optional[List[int]] = None,
+    ) -> int:
+        """Exports the buffer file to disk in the exact Java SuperGhidraBufferFileAdapter SGDB binary container format.
+
+        Uses:
+          - 32-byte SGDB file header (<4sHBBQIIQ) matching SuperGhidraBufferFileAdapter.HEADER_SIZE
+          - 20-byte SGDB block frame header (<4sHBBIII) matching CompressionAlgorithm.FRAME_HEADER_SIZE
+          - 24-byte slot directory entries (<iQiiI) matching SuperGhidraBufferFileAdapter.SlotEntry
+          - Extended metadata trailer (parameters map and freeIndexes array) with FLAG_EXTENDED_METADATA (0x01)
+        """
+        params = dict(parameters) if parameters is not None else dict(self.java_parameters)
+        free_idxs = list(free_indexes) if free_indexes is not None else list(self.java_free_indexes)
+        self.java_parameters = dict(params)
+        self.java_free_indexes = list(free_idxs)
+
+        if self.codec == "lz4":
+            algo_id = self.CODEC_LZ4
+        elif self.codec == "deflate":
+            algo_id = self.CODEC_DEFLATE
+        else:
+            algo_id = self.CODEC_ZSTD_L3
+        sorted_block_ids = sorted(self.slot_directory._entries.keys())
+
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        with open(file_path, "wb") as f:
+            # Write placeholder 32-byte header
+            f.write(b"\x00" * JAVA_SGDB_HEADER_SIZE)
+
+            java_slot_entries: List[bytes] = []
+            for block_id in sorted_block_ids:
+                buf_obj = self.get(None, block_id)
+                raw_block = bytes(buf_obj.data)
+                orig_len = len(raw_block)
+                crc32_val = zlib.crc32(raw_block) & 0xFFFFFFFF
+
+                if algo_id == self.CODEC_LZ4:
+                    payload = lz4.block.compress(raw_block, store_size=False)
+                    frame_flags = 0
+                elif algo_id == self.CODEC_DEFLATE:
+                    comp_obj = zlib.compressobj(level=zlib.Z_BEST_COMPRESSION, wbits=-zlib.MAX_WBITS)
+                    payload = comp_obj.compress(raw_block) + comp_obj.flush()
+                    frame_flags = 0
+                else:
+                    # Real zstandard compression labeled truthfully as CODEC_ZSTD_L3
+                    payload = self.zstd_cctx.compress(raw_block)
+                    frame_flags = 0
+
+                frame_header = JAVA_FRAME_HEADER_STRUCT.pack(
+                    self.JAVA_FILE_MAGIC,
+                    self.VERSION,
+                    algo_id,
+                    frame_flags,
+                    orig_len,
+                    len(payload),
+                    crc32_val,
+                )
+                frame_bytes = frame_header + payload
+                frame_offset = f.tell()
+                f.write(frame_bytes)
+
+                slot_bytes = JAVA_SLOT_ENTRY_STRUCT.pack(
+                    block_id,
+                    frame_offset,
+                    len(frame_bytes),
+                    orig_len,
+                    crc32_val,
+                )
+                java_slot_entries.append(slot_bytes)
+
+            # Write 24-byte slot directory entries
+            dir_offset = f.tell()
+            dir_count = len(java_slot_entries)
+            for sb in java_slot_entries:
+                f.write(sb)
+
+            # Write extended metadata trailer: parameters & freeIndexes
+            f.write(struct.pack("<I", len(params)))
+            for k, v in params.items():
+                k_bytes = str(k).encode("utf-8")
+                f.write(struct.pack("<I", len(k_bytes)))
+                f.write(k_bytes)
+                f.write(struct.pack("<i", int(v)))
+
+            f.write(struct.pack("<I", len(free_idxs)))
+            for idx in free_idxs:
+                f.write(struct.pack("<i", int(idx)))
+
+            total_size = f.tell()
+
+            # Write finalized 32-byte file header at offset 0
+            f.seek(0, io.SEEK_SET)
+            file_header = JAVA_SGDB_HEADER_STRUCT.pack(
+                self.JAVA_FILE_MAGIC,
+                self.VERSION,
+                algo_id,
+                JAVA_FLAG_EXTENDED_METADATA,
+                dir_offset,
+                dir_count,
+                GHIDRA_BUFFER_SIZE,
+                0,
+            )
+            f.write(file_header)
+
+        return total_size
+
+    @classmethod
+    def load_java_sgdb_file(cls, file_path: str) -> CompressedLocalManagedBufferFile:
+        """Loads a Java SuperGhidraBufferFileAdapter .sgdb file from disk into a CompressedLocalManagedBufferFile."""
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+
+        if len(file_bytes) < JAVA_SGDB_HEADER_SIZE:
+            raise IOError(f"Invalid SGDB file (too small: {len(file_bytes)} bytes): {file_path}")
+
+        magic, version, algo_id, flags, dir_offset, dir_count, buffer_size, _ = JAVA_SGDB_HEADER_STRUCT.unpack_from(
+            file_bytes, 0
+        )
+        if magic == cls.INTERNAL_FILE_MAGIC:
+            raise ValueError(
+                f"Cannot load Python-internal format ({magic!r}) as Java SGDB format: "
+                "internal format uses 20-byte slot directory entries, while Java SGDB requires 24-byte entries with CRC32"
+            )
+        if magic != cls.JAVA_FILE_MAGIC:
+            raise ValueError(f"Invalid SGDB file magic: {magic!r}")
+
+        codec_name = "zstd" if algo_id == cls.CODEC_ZSTD_L3 else ("deflate" if algo_id == cls.CODEC_DEFLATE else "lz4")
+        instance = cls(codec=codec_name)
+
+        if dir_offset > 0 and dir_count >= 0 and dir_offset <= len(file_bytes):
+            pos = dir_offset
+            raw_slots: List[Tuple[int, int, int, int, int]] = []
+            for _ in range(dir_count):
+                if pos + JAVA_SLOT_ENTRY_SIZE > len(file_bytes):
+                    raise IOError("Truncated SGDB slot directory")
+                block_id, offset, comp_len, orig_len, crc32_val = JAVA_SLOT_ENTRY_STRUCT.unpack_from(file_bytes, pos)
+                raw_slots.append((block_id, offset, comp_len, orig_len, crc32_val))
+                pos += JAVA_SLOT_ENTRY_SIZE
+
+            # Read extended metadata trailer if FLAG_EXTENDED_METADATA (0x01) is set
+            if (flags & JAVA_FLAG_EXTENDED_METADATA) != 0 and pos + 4 <= len(file_bytes):
+                (param_count,) = struct.unpack_from("<I", file_bytes, pos)
+                pos += 4
+                loaded_params: Dict[str, int] = {}
+                for _ in range(param_count):
+                    (k_len,) = struct.unpack_from("<I", file_bytes, pos)
+                    pos += 4
+                    k_str = file_bytes[pos : pos + k_len].decode("utf-8")
+                    pos += k_len
+                    (val,) = struct.unpack_from("<i", file_bytes, pos)
+                    pos += 4
+                    loaded_params[k_str] = val
+                instance.java_parameters = loaded_params
+
+                if pos + 4 <= len(file_bytes):
+                    (free_count,) = struct.unpack_from("<I", file_bytes, pos)
+                    pos += 4
+                    loaded_free: List[int] = []
+                    for _ in range(free_count):
+                        (f_idx,) = struct.unpack_from("<i", file_bytes, pos)
+                        pos += 4
+                        loaded_free.append(f_idx)
+                    instance.java_free_indexes = loaded_free
+
+            # Decompress each block in block_id order and populate instance
+            for block_id, frame_offset, slot_comp_len, slot_orig_len, slot_crc32 in sorted(raw_slots, key=lambda x: x[0]):
+                if frame_offset + slot_comp_len > len(file_bytes) or slot_comp_len < JAVA_FRAME_HEADER_SIZE:
+                    raise IOError(f"Corrupt SGDB frame bounds for block {block_id}")
+
+                f_magic, f_version, f_algo_id, f_flags, f_orig_len, f_comp_len, f_crc32 = JAVA_FRAME_HEADER_STRUCT.unpack_from(
+                    file_bytes, frame_offset
+                )
+                if f_magic != cls.JAVA_FILE_MAGIC:
+                    raise ValueError(f"Invalid SGDB block frame magic at offset {frame_offset}: {f_magic!r}")
+                if JAVA_FRAME_HEADER_SIZE + f_comp_len > slot_comp_len:
+                    raise IOError(f"Corrupt SGDB block frame payload size for block {block_id}")
+
+                payload_start = frame_offset + JAVA_FRAME_HEADER_SIZE
+                payload = file_bytes[payload_start : payload_start + f_comp_len]
+
+                if f_algo_id == cls.CODEC_LZ4:
+                    if lz4 is None:
+                        raise ImportError("install superghidra[storage] to use lz4 compression")
+                    uncompressed = lz4.block.decompress(payload, uncompressed_size=f_orig_len)
+                elif f_algo_id == cls.CODEC_ZSTD_L3:
+                    if (f_flags & JAVA_FLAG_ZSTD_DEFLATE_FALLBACK) != 0:
+                        uncompressed = zlib.decompress(payload, -zlib.MAX_WBITS)
+                    else:
+                        if zstd is None or instance.zstd_dctx is None:
+                            raise ImportError("install superghidra[storage] to use zstd compression")
+                        uncompressed = instance.zstd_dctx.decompress(payload, max_output_size=f_orig_len)
+                elif f_algo_id == cls.CODEC_DEFLATE:
+                    uncompressed = zlib.decompress(payload, -zlib.MAX_WBITS)
+                else:
+                    uncompressed = payload[:f_orig_len]
+
+                actual_crc = zlib.crc32(uncompressed) & 0xFFFFFFFF
+                if actual_crc != f_crc32 or actual_crc != slot_crc32:
+                    raise IOError(
+                        f"CRC32 mismatch on SGDB block {block_id}: expected {f_crc32:#x}, actual {actual_crc:#x}"
+                    )
+
+                if len(uncompressed) == GHIDRA_BUFFER_SIZE:
+                    dbuf = DataBuffer(buffer_id=block_id, data=bytearray(uncompressed), empty=False)
+                else:
+                    dbuf = DataBuffer.deserialize(uncompressed)
+                instance.put(dbuf, block_id)
+
+        instance.finalize_file()
+        return instance
+
+    @classmethod
+    def load_internal_file(cls, file_path: str) -> CompressedLocalManagedBufferFile:
+        """Loads an internal Python-format .sgpy container file from disk."""
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+
+        if len(file_bytes) < 32:
+            raise ValueError(f"Invalid internal container (too small: {len(file_bytes)} bytes): {file_path}")
+
+        magic, version, codec_id, dir_offset, dir_count, _ = struct.unpack_from("<4sHHQI12s", file_bytes, 0)
+        if magic == cls.JAVA_FILE_MAGIC:
+            raise ValueError(
+                f"Cannot load Java SGDB format ({magic!r}) as internal Python format: "
+                "use load_java_sgdb_file() instead."
+            )
+        if magic != cls.INTERNAL_FILE_MAGIC:
+            raise ValueError(f"Invalid internal container magic: {magic!r}")
+
+        codec_name = "lz4" if codec_id == cls.CODEC_LZ4 else ("deflate" if codec_id == cls.CODEC_DEFLATE else "zstd")
+        stream = io.BytesIO(file_bytes)
+        instance = cls(backing_stream=stream, codec=codec_name)
+        if dir_offset > 0 and dir_count > 0:
+            stream.seek(dir_offset, io.SEEK_SET)
+            dir_bytes = stream.read(dir_count * SLOT_ENTRY_SIZE)
+            instance.slot_directory = SlotDirectory.deserialize(dir_bytes)
+        return instance
+
+
 
 class GhidraPageSimulator:
-    """Synthesizes authentic Ghidra database 16 KB B-tree pages."""
+    """Generates synthetic Ghidra database 16 KB B-tree pages (synthetic simulation, not real libg.so database blocks)."""
 
     @staticmethod
     def generate_sparse_symbol_table_page(seed: int, fullness: float = 0.55) -> bytearray:
