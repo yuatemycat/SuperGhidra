@@ -123,16 +123,86 @@ class EmulatorFleetGuard:
         if not s:
             raise ValueError("Target serial must be explicitly specified (no blind commands).")
 
+        # Direct map lookup
         if s in FLEET_DEVICE_MAP:
             return FLEET_DEVICE_MAP[s]
 
-        # Generic / unrecognized device
+        # Alias resolution: MEmu_0 <-> 127.0.0.1:21503
+        if s == "MEmu_0":
+            base = FLEET_DEVICE_MAP["127.0.0.1:21503"]
+            return EmulatorDeviceInfo(
+                serial=s,
+                instance_name=base.instance_name,
+                purpose=base.purpose,
+                authorized_for_experiments=base.authorized_for_experiments,
+                is_system_default_protected=base.is_system_default_protected,
+                description=f"Alias of {base.serial}: {base.description}",
+            )
+        if s == "MEmu_1":
+            base = FLEET_DEVICE_MAP["127.0.0.1:21513"]
+            return EmulatorDeviceInfo(
+                serial=s,
+                instance_name=base.instance_name,
+                purpose=base.purpose,
+                authorized_for_experiments=base.authorized_for_experiments,
+                description=f"Alias of {base.serial}: {base.description}",
+            )
+
+        # ADB TCP alias resolution: emulator-<N> <-> 127.0.0.1:<N+1>
+        tcp_match = re.match(r"^(?:127\.0\.0\.1|localhost):(\d+)$", s)
+        if tcp_match:
+            port = int(tcp_match.group(1))
+            # e.g. 5565 -> 5564
+            console_serial = f"emulator-{port - 1}"
+            if console_serial in FLEET_DEVICE_MAP:
+                base = FLEET_DEVICE_MAP[console_serial]
+                return EmulatorDeviceInfo(
+                    serial=s,
+                    instance_name=base.instance_name,
+                    purpose=base.purpose,
+                    authorized_for_experiments=base.authorized_for_experiments,
+                    is_live_farm_automation=base.is_live_farm_automation,
+                    is_system_default_protected=base.is_system_default_protected,
+                    requires_explicit_readonly_ack=base.requires_explicit_readonly_ack,
+                    description=f"ADB TCP alias of {console_serial} ({base.description})",
+                )
+            console_same = f"emulator-{port}"
+            if console_same in FLEET_DEVICE_MAP:
+                base = FLEET_DEVICE_MAP[console_same]
+                return EmulatorDeviceInfo(
+                    serial=s,
+                    instance_name=base.instance_name,
+                    purpose=base.purpose,
+                    authorized_for_experiments=base.authorized_for_experiments,
+                    is_live_farm_automation=base.is_live_farm_automation,
+                    is_system_default_protected=base.is_system_default_protected,
+                    requires_explicit_readonly_ack=base.requires_explicit_readonly_ack,
+                    description=f"ADB TCP alias of {console_same} ({base.description})",
+                )
+
+        emu_match = re.match(r"^emulator-(\d+)$", s)
+        if emu_match:
+            num = int(emu_match.group(1))
+            if f"emulator-{num - 1}" in FLEET_DEVICE_MAP:
+                base = FLEET_DEVICE_MAP[f"emulator-{num - 1}"]
+                return EmulatorDeviceInfo(
+                    serial=s,
+                    instance_name=base.instance_name,
+                    purpose=base.purpose,
+                    authorized_for_experiments=base.authorized_for_experiments,
+                    is_live_farm_automation=base.is_live_farm_automation,
+                    is_system_default_protected=base.is_system_default_protected,
+                    requires_explicit_readonly_ack=base.requires_explicit_readonly_ack,
+                    description=f"Alias of emulator-{num-1} ({base.description})",
+                )
+
+        # Generic / unrecognized device: DENY by default
         return EmulatorDeviceInfo(
             serial=s,
             instance_name="GenericDevice",
             purpose="Unclassified Target",
-            authorized_for_experiments=True,
-            description="Unregistered target device; proceeding with caution.",
+            authorized_for_experiments=False,
+            description="Unregistered target device; untrusted and denied by default.",
         )
 
     @classmethod
@@ -174,6 +244,13 @@ class EmulatorFleetGuard:
                     "requires explicit allow_readonly_farm=True acknowledgement for read-only probes."
                 )
 
+        # 4. Unknown or unauthorized devices cannot perform mutations / experiments
+        if is_mutation and not info.authorized_for_experiments:
+            raise FleetSafetyViolationError(
+                f"Fleet Safety Violation: Device '{info.serial}' ({info.instance_name}) "
+                "is not authorized for experiments/mutations."
+            )
+
         return info
 
     @classmethod
@@ -182,9 +259,10 @@ class EmulatorFleetGuard:
         serial: str,
         package_name: str,
         pid: Optional[int] = None,
+        allow_readonly_farm: bool = False,
     ) -> bool:
         """Ensures that the process is explicitly verified before probing."""
-        cls.validate_target(serial, is_mutation=False, allow_readonly_farm=True)
+        cls.validate_target(serial, is_mutation=False, allow_readonly_farm=allow_readonly_farm)
         if not package_name or len(package_name.strip()) == 0:
             raise ValueError("Target process/package name must be explicitly specified.")
         return True
@@ -316,10 +394,32 @@ class Win32ProcessMemoryReader(BaseMemoryReader):
     Direct Windows process memory reader using Win32 API
     (OpenProcess, VirtualQueryEx, ReadProcessMemory).
     Ideal for reading memory from Windows emulator host processes (MEmuHeadless.exe, qemu, etc.).
+
+    NOTE: pid->serial binding cannot be auto-verified. The caller must explicitly provide the device serial,
+    and access is refused if that serial is protected or unknown (not authorized).
     """
 
-    def __init__(self, pid: int):
+    def __init__(self, pid: int, device_serial: str, allow_readonly_farm: bool = False):
+        if not device_serial or not device_serial.strip():
+            raise ValueError("Device serial must be explicitly specified for Win32ProcessMemoryReader.")
+        self.device_serial = device_serial.strip()
         self.pid = pid
+
+        info = EmulatorFleetGuard.identify_device(self.device_serial)
+        if not info.authorized_for_experiments or info.instance_name == "GenericDevice":
+            raise FleetSafetyViolationError(
+                f"Fleet Safety Violation: Device serial '{self.device_serial}' is unknown or unauthorized for Win32 memory reading."
+            )
+        if info.is_system_default_protected or info.is_live_farm_automation or info.serial == "emulator-5556":
+            raise FleetSafetyViolationError(
+                f"Fleet Safety Violation: Device serial '{self.device_serial}' is protected."
+            )
+        self.device_info = EmulatorFleetGuard.validate_target(
+            self.device_serial,
+            is_mutation=False,
+            allow_readonly_farm=allow_readonly_farm,
+        )
+
         self._kernel32 = ctypes.windll.kernel32
         self.h_process = self._kernel32.OpenProcess(
             PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
@@ -401,18 +501,76 @@ class Win32ProcessMemoryReader(BaseMemoryReader):
         self._last_refresh = now
         return regions
 
-    def get_module_base(self, module_name: str) -> Optional[int]:
-        norm_name = module_name.lower()
+    def get_module_base(self, module_name: str) -> int:
+        norm_name = module_name.lower().strip()
         if norm_name in self._module_cache:
             return self._module_cache[norm_name]
 
-        # Scan regions or toolhelp snapshot if needed
-        # By default return first valid executable region or cached entry
-        for reg in self.get_memory_regions():
-            if "x" in reg.permissions:
-                self._module_cache[norm_name] = reg.base_addr
-                return reg.base_addr
-        return None
+        # Use psapi module enumeration
+        try:
+            psapi = ctypes.windll.psapi
+            mods = (ctypes.c_void_p * 1024)()
+            cb_needed = ctypes.c_ulong(0)
+            psapi.EnumProcessModulesEx.restype = ctypes.c_bool
+            psapi.EnumProcessModulesEx.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_ulong,
+                ctypes.POINTER(ctypes.c_ulong),
+                ctypes.c_ulong,
+            ]
+            psapi.GetModuleBaseNameW.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_wchar_p,
+                ctypes.c_ulong,
+            ]
+            if psapi.EnumProcessModulesEx(
+                self.h_process,
+                mods,
+                ctypes.sizeof(mods),
+                ctypes.byref(cb_needed),
+                0x03,  # LIST_MODULES_ALL
+            ):
+                num_mods = cb_needed.value // ctypes.sizeof(ctypes.c_void_p)
+                buf = ctypes.create_unicode_buffer(260)
+                for i in range(num_mods):
+                    mod_handle = mods[i]
+                    if not mod_handle:
+                        continue
+                    if psapi.GetModuleBaseNameW(self.h_process, mod_handle, buf, 260):
+                        mod_base_name = buf.value.lower()
+                        self._module_cache[mod_base_name] = mod_handle
+                        if mod_base_name == norm_name:
+                            return mod_handle
+        except Exception:
+            pass
+
+        # Try GetMappedFileNameW on memory regions if not found via EnumProcessModules
+        try:
+            psapi = ctypes.windll.psapi
+            psapi.GetMappedFileNameW.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_wchar_p,
+                ctypes.c_ulong,
+            ]
+            buf = ctypes.create_unicode_buffer(512)
+            for reg in self.get_memory_regions():
+                if reg.base_addr:
+                    res = psapi.GetMappedFileNameW(self.h_process, ctypes.c_void_p(reg.base_addr), buf, 512)
+                    if res:
+                        mapped_path = buf.value.lower()
+                        mapped_base = os.path.basename(mapped_path)
+                        if mapped_base:
+                            self._module_cache[mapped_base] = reg.base_addr
+                        if norm_name == mapped_base or mapped_path.endswith("\\" + norm_name) or mapped_path.endswith("/" + norm_name):
+                            self._module_cache[norm_name] = reg.base_addr
+                            return reg.base_addr
+        except Exception:
+            pass
+
+        raise FileNotFoundError(f"Module '{module_name}' could not be located in process {self.pid} memory.")
 
     def close(self) -> None:
         if hasattr(self, "h_process") and self.h_process:
@@ -435,10 +593,10 @@ class FridaMemoryReader(BaseMemoryReader):
         self.device_serial = device_serial
         self.target_process = target_process
 
-        # 1. Enforce safety validation
+        # 1. Enforce safety validation (Frida attach injects an agent -> classified as mutation!)
         self.device_info = EmulatorFleetGuard.validate_target(
             device_serial,
-            is_mutation=False,
+            is_mutation=True,
             allow_readonly_farm=allow_readonly_farm,
         )
 
@@ -475,12 +633,10 @@ class FridaMemoryReader(BaseMemoryReader):
             """
             self._script = self._session.create_script(rpc_source)
             self._script.load()
-        except ImportError:
-            # Graceful simulation fallback when frida package is not present
-            pass
+        except ImportError as e:
+            raise ImportError(f"frida module is not installed: {e}") from e
         except Exception as e:
-            # Offline or permission issue
-            pass
+            raise ConnectionError(f"Frida connection failed on device '{self.device_serial}': {e}") from e
 
     def read_bytes(self, address: int, size: int) -> bytes:
         if size <= 0:
@@ -542,9 +698,10 @@ class MockMemoryReader(BaseMemoryReader):
     and unit testing of struct/vtable verifiers.
     """
 
-    def __init__(self, default_module: str = "libg.so", default_base: int = 0x7F00000000):
+    def __init__(self, default_module: str = "libg.so", default_base: int = 0x7F00000000, device_serial: str = "emulator-5580"):
         self.default_module = default_module
         self.default_base = default_base
+        self.device_serial = device_serial
         self._regions: Dict[int, Tuple[int, str, bytearray, str]] = {}
         self._module_map: Dict[str, int] = {default_module: default_base}
         self.read_count: int = 0
@@ -948,11 +1105,24 @@ def extract_dynamic_encryption_keys(
     rva: int,
     length: int = 32,
     module_name: str = "libg.so",
+    device_serial: Optional[str] = None,
 ) -> DynamicKeyResult:
     """
     Reads live runtime keys from memory at module_base + rva and assesses Shannon entropy.
     Real encryption keys (e.g. Curve25519/Sodium nonces/keys) exhibit high entropy (> 3.5).
+    Extraction is strictly restricted to authorized sandbox devices (e.g. emulator-5580, 127.0.0.1:21513).
     """
+    serial = device_serial or getattr(reader, "device_serial", None)
+    if not serial:
+        raise FleetSafetyViolationError("extract_dynamic_encryption_keys requires an authorized sandbox serial.")
+
+    info = EmulatorFleetGuard.identify_device(serial)
+    if not info.authorized_for_experiments or info.is_live_farm_automation or info.is_system_default_protected or info.serial == "emulator-5556":
+        raise FleetSafetyViolationError(
+            f"Fleet Safety Violation: Key extraction refused for device '{serial}'. "
+            "Extraction is only allowed on authorized sandbox serials (e.g. emulator-5580, 127.0.0.1:21513)."
+        )
+
     resolver = ModuleBaseResolver(reader, default_module=module_name)
     dynamic_addr = resolver.rva_to_dynamic(rva, module_name)
 

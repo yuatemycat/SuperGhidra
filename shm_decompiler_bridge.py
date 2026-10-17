@@ -25,6 +25,7 @@ import dataclasses
 import os
 import struct
 import sys
+import threading
 import time
 from multiprocessing import shared_memory
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
@@ -323,6 +324,165 @@ class ShmBinaryView:
 
         return cls(name=name, shm=shm, base_vaddr=base_vaddr, sections=sections, is_creator=False)
 
+    @classmethod
+    def from_elf_bytes(
+        cls,
+        name: Optional[str],
+        elf_bytes: bytes,
+        default_base_vaddr: int = 0x100000,
+    ) -> ShmBinaryView:
+        """
+        Parses an ELF64 binary image and registers its allocated sections (.text, .rodata, .data, etc.)
+        directly into a new shared memory binary view with accurate permission flags and virtual addresses.
+
+        If the binary is not an ELF64 or contains no valid section headers, cleanly falls back to
+        a single .text section at default_base_vaddr.
+        """
+        is_elf64_le = len(elf_bytes) >= 64 and elf_bytes.startswith(b"\x7fELF\x02\x01")
+        if is_elf64_le:
+            try:
+                (
+                    e_ident,
+                    e_type,
+                    e_machine,
+                    e_version,
+                    e_entry,
+                    e_phoff,
+                    e_shoff,
+                    e_flags,
+                    e_ehsize,
+                    e_phentsize,
+                    e_phnum,
+                    e_shentsize,
+                    e_shnum,
+                    e_shstrndx,
+                ) = struct.unpack_from("<16sHHIQQQIHHHHHH", elf_bytes, 0)
+
+                if (
+                    e_shoff > 0
+                    and e_shentsize >= 64
+                    and e_shnum > 0
+                    and e_shstrndx < e_shnum
+                    and (e_shoff + e_shnum * e_shentsize) <= len(elf_bytes)
+                ):
+                    shstrtab_hdr_offset = e_shoff + e_shstrndx * e_shentsize
+                    (
+                        str_name,
+                        str_type,
+                        str_flags,
+                        str_addr,
+                        str_offset,
+                        str_size,
+                        str_link,
+                        str_info,
+                        str_align,
+                        str_entsize,
+                    ) = struct.unpack_from("<IIQQQQIIQQ", elf_bytes, shstrtab_hdr_offset)
+
+                    if str_offset + str_size <= len(elf_bytes):
+                        shstrtab = elf_bytes[str_offset : str_offset + str_size]
+
+                        def get_sec_name(name_idx: int) -> str:
+                            if name_idx >= len(shstrtab):
+                                return ""
+                            null_pos = shstrtab.find(b"\x00", name_idx)
+                            if null_pos == -1:
+                                null_pos = len(shstrtab)
+                            return shstrtab[name_idx:null_pos].decode("utf-8", errors="replace")
+
+                        sections_data: Dict[str, Tuple[int, bytes]] = {}
+                        section_flags: Dict[str, int] = {}
+                        cur_fallback_vaddr = default_base_vaddr
+
+                        for i in range(e_shnum):
+                            shdr_offset = e_shoff + i * e_shentsize
+                            (
+                                sh_name,
+                                sh_type,
+                                sh_flags,
+                                sh_addr,
+                                sh_offset,
+                                sh_size,
+                                sh_link,
+                                sh_info,
+                                sh_align,
+                                sh_entsize,
+                            ) = struct.unpack_from("<IIQQQQIIQQ", elf_bytes, shdr_offset)
+
+                            sec_name = get_sec_name(sh_name)
+                            if not sec_name:
+                                continue
+
+                            is_alloc = bool(sh_flags & 0x2)
+                            is_named = sec_name in (
+                                ".text",
+                                ".rodata",
+                                ".data",
+                                ".data.rel.ro",
+                                ".bss",
+                            )
+
+                            if (is_alloc or is_named) and sh_size > 0:
+                                flags = SEC_READ
+                                if sh_flags & 0x4:
+                                    flags |= SEC_EXEC
+                                if sh_flags & 0x1:
+                                    flags |= SEC_WRITE
+
+                                if sh_addr > 0:
+                                    sec_vaddr = sh_addr
+                                else:
+                                    sec_vaddr = cur_fallback_vaddr
+                                    cur_fallback_vaddr += (sh_size + 0xFFF) & ~0xFFF
+
+                                if sh_type == 8:  # SHT_NOBITS (.bss)
+                                    sec_content = b"\x00" * sh_size
+                                else:
+                                    if sh_offset + sh_size <= len(elf_bytes):
+                                        sec_content = elf_bytes[sh_offset : sh_offset + sh_size]
+                                    else:
+                                        sec_content = elf_bytes[sh_offset:] + b"\x00" * max(
+                                            0, sh_size - (len(elf_bytes) - sh_offset)
+                                        )
+
+                                if sec_name not in sections_data:
+                                    sections_data[sec_name] = (sec_vaddr, sec_content)
+                                    section_flags[sec_name] = flags
+
+                        if sections_data:
+                            base_vaddr = min(vaddr for vaddr, _ in sections_data.values())
+                            return cls.create(
+                                name=name,
+                                base_vaddr=base_vaddr,
+                                sections_data=sections_data,
+                                section_flags=section_flags,
+                            )
+            except Exception:
+                pass
+
+        fallback_data = {".text": (default_base_vaddr, elf_bytes)}
+        fallback_flags = {".text": SEC_READ | SEC_EXEC}
+        return cls.create(
+            name=name,
+            base_vaddr=default_base_vaddr,
+            sections_data=fallback_data,
+            section_flags=fallback_flags,
+        )
+
+    @classmethod
+    def from_elf_file(
+        cls,
+        name: Optional[str],
+        elf_path: str,
+        default_base_vaddr: int = 0x100000,
+    ) -> ShmBinaryView:
+        """
+        Loads an ELF binary from disk and creates a shared memory binary view.
+        """
+        with open(elf_path, "rb") as f:
+            elf_bytes = f.read()
+        return cls.from_elf_bytes(name=name, elf_bytes=elf_bytes, default_base_vaddr=default_base_vaddr)
+
     def vaddr_to_section(self, vaddr: int) -> Optional[SectionInfo]:
         """Finds the section containing the given virtual address."""
         vaddr_int = int(vaddr)
@@ -442,6 +602,9 @@ class ShmRingBuffer:
     """
     Lock-free single-producer single-consumer / multi-producer ring buffer protocol.
     Provides sub-microsecond query/response framing between Python and native workers.
+
+    NOTE: ShmRingBuffer returns copied `bytes` payloads upon pop_message to ensure message isolation.
+    True zero-copy access is provided by ShmBinaryView (via memoryviews and NumPy ndarrays).
     """
 
     def __init__(
@@ -461,6 +624,14 @@ class ShmRingBuffer:
         self._buf = self.shm.buf
         self._mv = memoryview(self._buf)
         self.data_offset = RING_OFFSET_DATA
+        self._thread_lock = threading.Lock()
+        self._mutex_handle = None
+        if os.name == "nt":
+            import ctypes
+            clean_name = (name or "local").replace("/", "_").replace("\\", "_")
+            mutex_name = f"Local\\SG_RingMutex_{clean_name}"
+            self._kernel32 = ctypes.windll.kernel32
+            self._mutex_handle = self._kernel32.CreateMutexW(None, False, mutex_name)
 
     @classmethod
     def create(
@@ -552,22 +723,23 @@ class ShmRingBuffer:
         return self.capacity - (self.head - self.tail)
 
     def _acquire_spin_lock(self, timeout: float = 2.0) -> bool:
-        """Spin-locks for multi-producer coordination."""
-        start = time.perf_counter()
-        while True:
-            cur = struct.unpack_from("<I", self._buf, RING_OFFSET_STAT + 16)[0]
-            if cur == 0:
-                struct.pack_into("<I", self._buf, RING_OFFSET_STAT + 16, 1)
-                # Read back verification
-                if struct.unpack_from("<I", self._buf, RING_OFFSET_STAT + 16)[0] == 1:
-                    return True
-            if time.perf_counter() - start > timeout:
-                return False
-            # Yield briefly
-            time.sleep(0.000001)
+        """Acquires atomic cross-process mutex (or process-local lock) for multi-producer coordination."""
+        if os.name == "nt" and self._mutex_handle:
+            ms = int(max(timeout, 0.0) * 1000)
+            res = self._kernel32.WaitForSingleObject(self._mutex_handle, ms)
+            if res in (0, 0x80):  # WAIT_OBJECT_0 or WAIT_ABANDONED
+                self._thread_lock.acquire(blocking=True)
+                return True
+            return False
+        else:
+            return self._thread_lock.acquire(timeout=max(timeout, 0.0))
 
     def _release_spin_lock(self) -> None:
-        struct.pack_into("<I", self._buf, RING_OFFSET_STAT + 16, 0)
+        """Releases the cross-process mutex and process-local thread lock."""
+        if self._thread_lock.locked():
+            self._thread_lock.release()
+        if os.name == "nt" and self._mutex_handle:
+            self._kernel32.ReleaseMutex(self._mutex_handle)
 
     def push_message(
         self,
@@ -634,7 +806,10 @@ class ShmRingBuffer:
                         self._buf[data_base : data_base + part1] = full_frame[:part1]
                         self._buf[self.data_offset : self.data_offset + part2] = full_frame[part1:]
 
-                    # Update head atomically
+                    # Memory Ordering & Publication Note (SPSC):
+                    # Ensure the full payload and header are completely written before publishing the write index (head).
+                    # On x86/x86_64, hardware Total Store Order (TSO) prevents Store-Store reordering.
+                    # On weakly-ordered architectures (such as ARM64), hardware store-release semantics are assumed.
                     self._set_head(head + total_write_len)
                     return True
             finally:
@@ -691,6 +866,9 @@ class ShmRingBuffer:
                         self._set_tail(tail + 4)
                         continue
 
+                    if payload_len > self.capacity or payload_len < 0:
+                        raise ValueError(f"Corrupt payload_len {payload_len} exceeds ring buffer capacity {self.capacity}")
+
                     total_frame_len = ((FRAME_HDR_SIZE + payload_len + 3) & ~3)
                     if used >= total_frame_len:
                         # Full message available
@@ -739,6 +917,12 @@ class ShmRingBuffer:
             self.shm.close()
         except Exception:
             pass
+        if os.name == "nt" and hasattr(self, "_mutex_handle") and self._mutex_handle:
+            try:
+                self._kernel32.CloseHandle(self._mutex_handle)
+            except Exception:
+                pass
+            self._mutex_handle = None
 
     def unlink(self) -> None:
         """Unlinks/destroys the shared memory segment."""

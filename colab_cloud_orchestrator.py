@@ -52,8 +52,12 @@ except ImportError:
     HfApi = None  # type: ignore
     HAS_HF = False
 
-import evidence_ledger
-import pcode_lifter_bridge
+try:
+    from . import evidence_ledger
+    from . import pcode_lifter_bridge
+except (ImportError, ValueError):
+    import evidence_ledger
+    import pcode_lifter_bridge
 
 logger = logging.getLogger("colab_cloud_orchestrator")
 
@@ -166,7 +170,11 @@ class ColabCloudOrchestrator:
     def stage_binary_to_ram_disk(cls, src_path: str, ram_disk_dir: Optional[str] = None) -> str:
         """
         Stages the target binary into /dev/shm (or fallback RAM disk) for zero-I/O execution.
+        Raises FileNotFoundError if src_path does not exist.
         """
+        if not os.path.exists(src_path):
+            raise FileNotFoundError(f"Source binary does not exist at '{src_path}'")
+
         target_dir = ram_disk_dir or "/dev/shm"
         if not (os.path.exists(target_dir) and os.access(target_dir, os.W_OK)):
             target_dir = tempfile.gettempdir()
@@ -174,16 +182,8 @@ class ColabCloudOrchestrator:
         filename = os.path.basename(src_path) or "libg.so"
         dst_path = os.path.join(target_dir, filename)
 
-        if os.path.exists(src_path):
+        if os.path.abspath(src_path) != os.path.abspath(dst_path):
             shutil.copy2(src_path, dst_path)
-        else:
-            # Generate synthetic binary payload for testing if source does not exist
-            with open(dst_path, "wb") as f:
-                # 64-bit ELF header signature + mock AArch64 code
-                f.write(b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8)
-                # Mock ARM64 instructions: MOV X0, #0; ADD X1, X2, X3; RET
-                f.write(b"\x00\x00\x80\xd2\x41\x00\x03\x8b\xc0\x03\x5f\xd6" * 64)
-
         return dst_path
 
     @classmethod
@@ -209,6 +209,89 @@ class ColabCloudOrchestrator:
         return cmd, env
 
     @classmethod
+    def extract_elf_executable_slice(cls, raw_bytes: bytes) -> Tuple[int, bytes]:
+        """
+        Parses the ELF64 header (\x7fELF\x02\x01), checks Section Headers
+        (e_shoff, e_shentsize, e_shnum, e_shstrndx) for .text (or SHF_EXECINSTR flag 0x4),
+        or Program Headers (e_phoff, PT_LOAD with PF_X), returning (base_vaddr, code_bytes).
+
+        If raw_bytes is a small synthetic test payload where the mock instructions follow
+        the 16-byte ELF header (b"\\x7fELF..." + insns), automatically strips the 16-byte
+        synthetic ELF header so lift_pcode_systolic_tensors() lifts actual ARM64 instructions
+        instead of lifting 0x464c457f (\\x7fELF) as an instruction.
+        """
+        if not raw_bytes.startswith(b"\x7fELF"):
+            return 0x1000, raw_bytes
+
+        # If too small for full ELF64 header (64 bytes), treat as synthetic payload
+        if len(raw_bytes) < 64:
+            return 0x1000, raw_bytes[16:] if len(raw_bytes) >= 16 else b""
+
+        try:
+            # Check for 64-bit little-endian ELF: \x7fELF\x02\x01
+            ei_class = raw_bytes[4]
+            ei_data = raw_bytes[5]
+            if ei_class == 2 and ei_data == 1:  # ELFCLASS64, ELFDATA2LSB
+                e_phoff = struct.unpack_from("<Q", raw_bytes, 0x20)[0]
+                e_shoff = struct.unpack_from("<Q", raw_bytes, 0x28)[0]
+                e_phentsize = struct.unpack_from("<H", raw_bytes, 0x36)[0]
+                e_phnum = struct.unpack_from("<H", raw_bytes, 0x38)[0]
+                e_shentsize = struct.unpack_from("<H", raw_bytes, 0x3A)[0]
+                e_shnum = struct.unpack_from("<H", raw_bytes, 0x3C)[0]
+                e_shstrndx = struct.unpack_from("<H", raw_bytes, 0x3E)[0]
+
+                # 1. Check Section Headers
+                if e_shoff > 0 and e_shentsize >= 64 and e_shnum > 0 and (e_shoff + e_shnum * e_shentsize <= len(raw_bytes)):
+                    shstrtab = b""
+                    if e_shstrndx < e_shnum:
+                        strtab_hdr_off = e_shoff + e_shstrndx * e_shentsize
+                        strtab_sh_offset = struct.unpack_from("<Q", raw_bytes, strtab_hdr_off + 24)[0]
+                        strtab_sh_size = struct.unpack_from("<Q", raw_bytes, strtab_hdr_off + 32)[0]
+                        if strtab_sh_offset + strtab_sh_size <= len(raw_bytes):
+                            shstrtab = raw_bytes[strtab_sh_offset : strtab_sh_offset + strtab_sh_size]
+
+                    text_candidate = None
+                    exec_candidate = None
+
+                    for i in range(e_shnum):
+                        sh_offset_entry = e_shoff + i * e_shentsize
+                        sh_name_idx, sh_type, sh_flags, sh_addr, sh_offset, sh_size = struct.unpack_from(
+                            "<IIQQQQ", raw_bytes, sh_offset_entry
+                        )
+                        if sh_offset + sh_size <= len(raw_bytes) and sh_size > 0:
+                            sec_name = ""
+                            if shstrtab and sh_name_idx < len(shstrtab):
+                                end_idx = shstrtab.find(b"\x00", sh_name_idx)
+                                sec_name = shstrtab[sh_name_idx:end_idx].decode("latin-1", errors="ignore") if end_idx != -1 else ""
+
+                            if sec_name == ".text":
+                                text_candidate = (sh_addr, raw_bytes[sh_offset : sh_offset + sh_size])
+                                break
+                            elif (sh_flags & 0x4) != 0 and exec_candidate is None:  # SHF_EXECINSTR
+                                exec_candidate = (sh_addr, raw_bytes[sh_offset : sh_offset + sh_size])
+
+                    if text_candidate:
+                        return text_candidate
+                    if exec_candidate:
+                        return exec_candidate
+
+                # 2. Check Program Headers (PT_LOAD=1 with PF_X=1)
+                if e_phoff > 0 and e_phentsize >= 56 and e_phnum > 0 and (e_phoff + e_phnum * e_phentsize <= len(raw_bytes)):
+                    for i in range(e_phnum):
+                        ph_offset_entry = e_phoff + i * e_phentsize
+                        p_type, p_flags, p_offset, p_vaddr, _, p_filesz = struct.unpack_from(
+                            "<IIQQQQ", raw_bytes, ph_offset_entry
+                        )
+                        if p_type == 1 and (p_flags & 1) != 0 and p_filesz > 0:  # PT_LOAD and PF_X
+                            if p_offset + p_filesz <= len(raw_bytes):
+                                return p_vaddr, raw_bytes[p_offset : p_offset + p_filesz]
+        except Exception as e:
+            logger.debug(f"ELF header parsing error: {e}")
+
+        # Synthetic test payload fallback: strip 16-byte synthetic ELF header
+        return 0x1000, raw_bytes[16:]
+
+    @classmethod
     def lift_pcode_systolic_tensors(
         cls,
         binary_path: str,
@@ -226,24 +309,65 @@ class ColabCloudOrchestrator:
         with open(binary_path, "rb") as f:
             raw_bytes = f.read()
 
-        # Slice into candidate function blocks
-        if max_functions > 0 and len(raw_bytes) > 0:
-            target_chunk = len(raw_bytes) // max_functions
-            chunk_size = max(16, min(256, target_chunk if target_chunk > 0 else 64))
+        base_vaddr, exec_bytes = cls.extract_elf_executable_slice(raw_bytes)
+
+        # Try GPUFunctionSeeder(backend="cpu") to discover function entry boundaries in exec_bytes
+        seeds = []
+        if len(exec_bytes) >= 4 and HAS_NUMPY:
+            try:
+                from gpu_function_seeder import GPUFunctionSeeder
+                try:
+                    seeder = GPUFunctionSeeder(backend="cpu")
+                except ValueError:
+                    seeder = GPUFunctionSeeder(backend="numpy")
+
+                aligned_len = (len(exec_bytes) // 4) * 4
+                if aligned_len > 0:
+                    insns = np.frombuffer(exec_bytes[:aligned_len], dtype=np.uint32)
+                    discovered_seeds = seeder.seed_functions(insns, text_base_vaddr=base_vaddr)
+                    seeds = sorted(
+                        [s for s in discovered_seeds if base_vaddr <= s.entry_vaddr < base_vaddr + aligned_len],
+                        key=lambda s: s.entry_vaddr
+                    )
+            except Exception as e:
+                logger.debug(f"GPUFunctionSeeder function boundary discovery skipped: {e}")
+                seeds = []
+
+        # Slice function blocks: use discovered seeds if present, else fallback to uniform chunk slicing
+        chunks: List[Tuple[int, bytes]] = []
+        if len(seeds) >= max_functions and max_functions > 0:
+            for idx in range(max_functions):
+                start_off = seeds[idx].entry_vaddr - base_vaddr
+                if idx + 1 < len(seeds):
+                    next_off = seeds[idx + 1].entry_vaddr - base_vaddr
+                    chunk_len = min(256, max(16, next_off - start_off))
+                else:
+                    chunk_len = min(256, max(16, len(exec_bytes) - start_off))
+                code_chunk = exec_bytes[start_off : start_off + chunk_len]
+                pc = base_vaddr + start_off
+                chunks.append((pc, code_chunk))
         else:
-            chunk_size = 64
-        num_chunks = min(max_functions, max(1, len(raw_bytes) // chunk_size))
+            # Fall back to uniform chunk slicing
+            if max_functions > 0 and len(exec_bytes) > 0:
+                target_chunk = len(exec_bytes) // max_functions
+                chunk_size = max(16, min(256, target_chunk if target_chunk > 0 else 64))
+            else:
+                chunk_size = 64
+            num_chunks = min(max_functions, max(1, len(exec_bytes) // chunk_size)) if max_functions > 0 else 0
+            for idx in range(num_chunks):
+                offset = idx * chunk_size
+                code_chunk = exec_bytes[offset : offset + chunk_size]
+                pc = base_vaddr + offset
+                chunks.append((pc, code_chunk))
 
         matrices: List[Any] = []
         total_pcode_ops = 0
 
-        for idx in range(num_chunks):
-            offset = idx * chunk_size
-            code_chunk = raw_bytes[offset:offset + chunk_size]
+        for pc, code_chunk in chunks:
             if len(code_chunk) < 16:
                 code_chunk = code_chunk.ljust(16, b"\x00")
 
-            ops = lifter.lift_block(base_pc=0x1000 + offset, machine_bytes=code_chunk)
+            ops = lifter.lift_block(base_pc=pc, machine_bytes=code_chunk)
             total_pcode_ops += len(ops)
 
             adj, _ = pcode_lifter_bridge.PcodeGraphBuilder.build_adjacency_matrix(
@@ -282,20 +406,44 @@ class ColabCloudOrchestrator:
         cls,
         config: CloudConfig,
         staged_binary: str,
-        dry_run: bool = False
+        dry_run: bool = False,
+        upload: bool = False,
     ) -> Dict[str, Any]:
         """
-        Executes the full pipeline:
+        Executes the reconstruction pipeline:
         1. Lifts P-Code systolic tensors
-        2. Applies EvidenceLedger verification gates
-        3. Emits _ghidra_names.json symbol map
+        2. Applies EvidenceLedger verification gates (unimplemented stages marked not_implemented)
+        3. Emits _ghidra_names.json symbol map (empty if no symbols computed)
         4. Bundles artifacts into zip
-        5. Zero-disk streaming to Hugging Face Hub if configured
+        5. Zero-disk streaming to Hugging Face Hub if configured and upload=True
+        Honors dry_run.
         """
         workspace = Path(config.workspace_dir)
         if not (workspace.exists() and os.access(str(workspace), os.W_OK)):
             workspace = Path(tempfile.gettempdir()) / "superghidra_cloud"
             workspace.mkdir(parents=True, exist_ok=True)
+
+        if dry_run:
+            return {
+                "status": "dry_run",
+                "tensor_metadata": {"dry_run": True},
+                "evidence_ledger_entries": 0,
+                "symbols_reconstructed": 0,
+                "ledger_path": None,
+                "symbols_path": None,
+                "bundle_zip": None,
+                "hf_uploaded": False,
+                "stages": {
+                    "pcode_tensors": "dry_run",
+                    "evidence_ledger": "not_implemented",
+                    "symbol_reconstruction": "not_implemented",
+                    "packaging": "dry_run",
+                    "hf_upload": "skipped",
+                },
+            }
+
+        results_dir = workspace / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. P-Code Lifting & Systolic Array Tensors
         tensors, tensor_meta = cls.lift_pcode_systolic_tensors(
@@ -306,59 +454,33 @@ class ColabCloudOrchestrator:
         )
 
         # 2. EvidenceLedger Gate Verification
-        ledger_file = workspace / "evidence_ledger.json"
+        ledger_file = results_dir / "evidence_ledger.json"
         ledger = evidence_ledger.ReconstructionObligationLedger(ledger_file=str(ledger_file))
-        ob1 = ledger.propose(
-            obligation_type=evidence_ledger.ObligationType.VTABLE_HOOK,
-            target_name="sub_00BF2D84",
-            proposed_name="GameWorld::tick",
-            target_address=0x00BF2D84,
-            evidence={"vtable_slot": 3, "vtable_offset": 24, "pointer_size": 8},
-            obligation_id="obl_vtable_0"
-        )
-        ob2 = ledger.propose(
-            obligation_type=evidence_ledger.ObligationType.STRUCT_FIELD_RENAME,
-            target_name="field_0x20",
-            proposed_name="m_turnTick",
-            target_address=0x00BF2D84,
-            evidence={
-                "struct_size": 0x100,
-                "field_displacements": [{"name": "m_turnTick", "offset": 0x20, "access_size": 4}]
-            },
-            obligation_id="obl_struct_disp_1"
-        )
-        ledger.verify("obl_vtable_0")
-        ledger.verify("obl_struct_disp_1")
-        ledger.commit("obl_vtable_0")
-        ledger.commit("obl_struct_disp_1")
         ledger.save()
 
-        # 3. Reconstructed Symbol Map
-        symbols_map = {
-            "0x00BF2D84": "GameWorld::tick",
-            "0x00BF2E90": "GameWorld::onRender",
-            "0x00BF3100": "PlayerSession::sendPacket",
-            "0x00BF3400": "CombatSystem::executeAttack",
-        }
-        symbols_file = workspace / "_ghidra_names.json"
+        # 3. Reconstructed Symbol Map (only actually computed symbols; no canned names)
+        symbols_map: Dict[str, str] = {}
+        symbols_file = results_dir / "_ghidra_names.json"
         with open(symbols_file, "w", encoding="utf-8") as f:
             json.dump(symbols_map, f, indent=2)
 
         # 4. Packaging Archive
-        bundle_file = workspace / "superghidra_reconstruction_bundle.zip"
+        bundle_file = results_dir / "superghidra_reconstruction_bundle.zip"
         with zipfile.ZipFile(bundle_file, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.write(ledger_file, arcname="evidence_ledger.json")
             zf.write(symbols_file, arcname="_ghidra_names.json")
 
         # 5. User Global Rule: Zero-Disk Duplicate Serialization to HF Hub
+        # Only upload results subdirectory and only if upload=True explicitly passed
         hf_uploaded = False
-        if config.hf_repo_id and os.environ.get("HF_TOKEN") and HAS_HF and HfApi is not None:
+        if upload and config.hf_repo_id and os.environ.get("HF_TOKEN") and HAS_HF and HfApi is not None:
             try:
                 api = HfApi()
                 api.upload_folder(
-                    folder_path=str(workspace),
+                    folder_path=str(results_dir),
                     repo_id=config.hf_repo_id,
-                    repo_type="model"
+                    repo_type="model",
+                    allow_patterns=["*.json", "*.txt", "*.sym", "*.map", "*.pdb", "*.debug", "*.zip"],
                 )
                 hf_uploaded = True
             except Exception as e:
@@ -373,6 +495,13 @@ class ColabCloudOrchestrator:
             "symbols_path": str(symbols_file),
             "bundle_zip": str(bundle_file),
             "hf_uploaded": hf_uploaded,
+            "stages": {
+                "pcode_tensors": "completed",
+                "evidence_ledger": "not_implemented",
+                "symbol_reconstruction": "not_implemented",
+                "packaging": "completed",
+                "hf_upload": "completed" if hf_uploaded else ("skipped" if not upload else "failed"),
+            },
         }
 
     @classmethod
