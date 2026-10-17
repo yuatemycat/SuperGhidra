@@ -8,7 +8,11 @@ Verifies:
 1. Frontier 3: In-Engine Java Extension Layout & Codec
    - Manifest and properties validation
    - Java source file structure and class signatures
-   - Extension packager execution and distribution zip integrity
+   - Storage bug fixes: in-place block reuse on overwrite, sync(), parameter/freeIndex persistence
+   - SuperGhidraExtensionPlugin helper methods and system property initialization
+   - Extension packager execution, lib/SuperGhidraCodec.jar inclusion, and distribution zip integrity
+   - Extension installation lifecycle to Ghidra Extensions directory
+   - Native C++ Decompiler PGO Builder: infinite-loop-safe RuleFoldJniBridgeThunk and non-trivial training corpus
 2. Frontier 4: Cloud Colab Headless TPU v5e / T4 Pipeline Orchestrator
    - Hardware detection and multi-tier environment profiles
    - Global user rule invariants (ambient HF_TOKEN, /content storage, torchao guardrail, zero-disk serialization)
@@ -23,15 +27,24 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 from pathlib import Path
+
+# Ensure SuperGhidra workspace is in sys.path
+SUPERGHIDRA_DIR = os.path.dirname(os.path.abspath(__file__))
+if SUPERGHIDRA_DIR not in sys.path:
+    sys.path.insert(0, SUPERGHIDRA_DIR)
 
 import colab_cloud_orchestrator
 from colab_cloud_orchestrator import CloudConfig, CloudRuntimeTier, ColabCloudOrchestrator
 import ghidra_extension_packager
 from ghidra_extension_packager import GhidraExtensionPackager, ExtensionValidationError
+import native_decompiler_pgo_builder
+from native_decompiler_pgo_builder import DecompilerBuildConfig, NativeDecompilerPGOBuilder
 
 
 class TestFrontier3ExtensionSkeleton(unittest.TestCase):
@@ -84,11 +97,35 @@ class TestFrontier3ExtensionSkeleton(unittest.TestCase):
         self.assertIn("DataBuffer get(DataBuffer", adapter_code)
         self.assertIn("void put(DataBuffer", adapter_code)
 
+        # Append-Only Frame Write & Crash-Safe sync() Persistence
+        self.assertIn("// Append-only write for frames to guarantee crash-safety", adapter_code)
+        self.assertIn("fileOffset = raf.length();", adapter_code)
+        self.assertIn("public synchronized void sync() throws IOException", adapter_code)
+        self.assertIn("FLAG_EXTENDED_METADATA", adapter_code)
+        self.assertIn("writeHeader(dirOffset, dirCount, FLAG_EXTENDED_METADATA)", adapter_code)
+
+        # LRU Block Cache, CRC32 Write-Elision & compact() Defragmentation
+        self.assertIn("DEFAULT_CACHE_CAPACITY = 256", adapter_code)
+        self.assertIn("private final Map<Integer, byte[]> blockCache", adapter_code)
+        self.assertIn("cacheHits", adapter_code)
+        self.assertIn("cacheMisses", adapter_code)
+        self.assertIn("elidedWrites", adapter_code)
+        self.assertIn("public synchronized long compact() throws IOException", adapter_code)
+        self.assertIn("getCacheHits()", adapter_code)
+        self.assertIn("getCacheMisses()", adapter_code)
+        self.assertIn("getElidedWrites()", adapter_code)
+
         # Inspect SuperGhidraExtensionPlugin
         plugin_code = (codec_dir / "SuperGhidraExtensionPlugin.java").read_text(encoding="utf-8")
         self.assertIn("@PluginInfo", plugin_code)
         self.assertIn("SuperGhidraCodec", plugin_code)
         self.assertIn("public class SuperGhidraExtensionPlugin extends ProgramPlugin", plugin_code)
+        self.assertIn("CODEC_ACTIVE_PROPERTY = \"superghidra.codec.active\"", plugin_code)
+        self.assertIn("System.setProperty(CODEC_ACTIVE_PROPERTY, \"true\")", plugin_code)
+        self.assertIn("createCompressedAdapter", plugin_code)
+        self.assertIn("getDefaultAlgorithm", plugin_code)
+        self.assertIn("getCodecDiagnostics", plugin_code)
+        self.assertIn("defaultCacheCapacity", plugin_code)
 
         # Inspect CompressionAlgorithm
         algo_code = (codec_dir / "CompressionAlgorithm.java").read_text(encoding="utf-8")
@@ -99,6 +136,7 @@ class TestFrontier3ExtensionSkeleton(unittest.TestCase):
         self.assertIn("verifyCRC32", algo_code)
         self.assertIn("compressFrame", algo_code)
         self.assertIn("decompressFrame", algo_code)
+        self.assertIn("isZstdAvailable", algo_code)
 
     def test_04_extension_packager_zip_packaging(self):
         """Tests packaging of dist/SuperGhidraCodec-1.0.0.zip and integrity verification."""
@@ -124,14 +162,151 @@ class TestFrontier3ExtensionSkeleton(unittest.TestCase):
                 self.assertIn("SuperGhidraCodec/src/main/java/superghidra/codec/SuperGhidraBufferFileAdapter.java", names)
                 self.assertIn("SuperGhidraCodec/src/main/java/superghidra/codec/SuperGhidraExtensionPlugin.java", names)
                 self.assertIn("SuperGhidraCodec/src/main/java/superghidra/codec/CompressionAlgorithm.java", names)
+                self.assertIn("SuperGhidraCodec/lib/SuperGhidraCodec.jar", names)
 
+    @unittest.skipUnless(
+        (Path(__file__).resolve().parent / "dist" / "SuperGhidraCodec-1.0.0.zip").is_file(),
+        "Requires built distribution zip dist/SuperGhidraCodec-1.0.0.zip",
+    )
     def test_05_zip_integrity_checker(self):
         """Tests verify_zip_integrity on built zip."""
         dist_zip = self.project_root / "dist" / "SuperGhidraCodec-1.0.0.zip"
-        if dist_zip.exists():
-            meta = GhidraExtensionPackager.verify_zip_integrity(dist_zip)
-            self.assertEqual(meta["status"], "valid")
-            self.assertGreater(meta["file_count"], 5)
+        meta = GhidraExtensionPackager.verify_zip_integrity(dist_zip)
+        self.assertEqual(meta["status"], "valid")
+        self.assertGreater(meta["file_count"], 5)
+        self.assertIn("SuperGhidraCodec/lib/SuperGhidraCodec.jar", meta["entries"])
+
+    def test_06_extension_install_lifecycle(self):
+        """Tests install_extension() extracts distribution zip cleanly into target directory."""
+        with tempfile.TemporaryDirectory() as tmp_ext:
+            target_dir = self.packager.install_extension(target_extensions_dir=tmp_ext)
+            self.assertTrue(target_dir.is_dir(), f"Target dir was not created: {target_dir}")
+            self.assertTrue((target_dir / "extension.properties").is_file())
+            self.assertTrue((target_dir / "Module.manifest").is_file())
+            self.assertTrue((target_dir / "build.gradle").is_file())
+            self.assertTrue((target_dir / "lib" / "SuperGhidraCodec.jar").is_file())
+            self.assertTrue((target_dir / "src" / "main" / "java" / "superghidra" / "codec" / "SuperGhidraBufferFileAdapter.java").is_file())
+
+            # Verify the jar itself contains the class entries
+            with zipfile.ZipFile(target_dir / "lib" / "SuperGhidraCodec.jar", "r") as jf:
+                self.assertIsNone(jf.testzip())
+                jnames = jf.namelist()
+                self.assertIn("META-INF/MANIFEST.MF", jnames)
+
+    @unittest.skipUnless(
+        Path("E:/03_Devops/Ghidra/Ghidra/Extensions/SuperGhidraCodec/lib/SuperGhidraCodec.jar").is_file(),
+        "Requires installed SuperGhidraCodec.jar in Ghidra Extensions",
+    )
+    def test_07_buffer_file_adapter_lru_and_elision_and_compact_contract(self):
+        """Verifies SuperGhidraBufferFileAdapter LRU cache, CRC32 write-elision, compact defragmentation, and compiled jar."""
+        installed_jar = Path("E:/03_Devops/Ghidra/Ghidra/Extensions/SuperGhidraCodec/lib/SuperGhidraCodec.jar")
+        self.assertTrue(installed_jar.is_file(), f"Installed jar not found: {installed_jar}")
+
+        with zipfile.ZipFile(installed_jar, "r") as jf:
+            self.assertIsNone(jf.testzip())
+            entries = jf.namelist()
+            self.assertIn("superghidra/codec/SuperGhidraBufferFileAdapter.class", entries)
+            self.assertIn("superghidra/codec/SuperGhidraBufferFileAdapter$1.class", entries)
+            self.assertIn("superghidra/codec/SuperGhidraBufferFileAdapter$SlotEntry.class", entries)
+            self.assertIn("superghidra/codec/SuperGhidraExtensionPlugin.class", entries)
+            self.assertIn("superghidra/codec/CompressionAlgorithm.class", entries)
+
+        # Inspect source contracts
+        codec_dir = self.skeleton_dir / "src" / "main" / "java" / "superghidra" / "codec"
+        adapter_code = (codec_dir / "SuperGhidraBufferFileAdapter.java").read_text(encoding="utf-8")
+
+        # Cache hit check
+        self.assertIn("byte[] cached = blockCache.get(index);", adapter_code)
+        self.assertIn("cacheHits.incrementAndGet();", adapter_code)
+
+        # CRC32 elision check
+        self.assertIn("if (existing != null && existing.crc32 == crc32 && existing.origLen == len)", adapter_code)
+        self.assertIn("elidedWrites.incrementAndGet();", adapter_code)
+
+        # Compact defragmentation check
+        self.assertIn("public synchronized long compact() throws IOException", adapter_code)
+        self.assertIn("entries.sort(Comparator.comparingLong(e -> e.offset));", adapter_code)
+        self.assertIn("raf.setLength(currentOffset);", adapter_code)
+        self.assertIn("sync();", adapter_code)
+
+        # Metrics getters
+        self.assertIn("public long getCacheHits()", adapter_code)
+        self.assertIn("public long getCacheMisses()", adapter_code)
+        self.assertIn("public long getElidedWrites()", adapter_code)
+
+    def test_08_managed_buffer_file_and_repeated_sync_zero_bloat(self):
+        """Verifies ManagedBufferFile implementation and crash-safe append-only sync() directory and header persistence."""
+        codec_dir = self.skeleton_dir / "src" / "main" / "java" / "superghidra" / "codec"
+        adapter_code = (codec_dir / "SuperGhidraBufferFileAdapter.java").read_text(encoding="utf-8")
+        self.assertIn("ManagedBufferFile", adapter_code)
+        self.assertIn("// Write new directory at end of file (append-only)", adapter_code)
+        self.assertIn("writeHeader(dirOffset, dirCount, FLAG_EXTENDED_METADATA);", adapter_code)
+        self.assertIn("raf.getFD().sync();", adapter_code)
+        self.assertIn("public synchronized ManagedBufferFile getSaveFile()", adapter_code)
+        self.assertIn("public synchronized void saveCompleted(boolean commit)", adapter_code)
+
+
+class TestFrontier3NativeDecompilerPGO(unittest.TestCase):
+    """Test suite for Native C++ Decompiler PGO Builder and P-Code Simplification Rules."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = DecompilerBuildConfig(
+            src_dir="E:/03_Devops/Ghidra/Ghidra/Features/Decompiler/src/decompile/cpp",
+            output_bin_dir="E:/03_Devops/Ghidra/Ghidra/Features/Decompiler/os/win64",
+            target_os="windows",
+        )
+        cls.builder = NativeDecompilerPGOBuilder(cls.config)
+
+    def test_01_pcode_rule_patch_mutates_funcdata(self):
+        """Verifies RuleFoldJniBridgeThunk mutates Funcdata before returning 1, preventing infinite loops."""
+        patch_cc = self.builder.generate_custom_pcode_rule_patch()
+        self.assertIn("RuleFoldJniBridgeThunk", patch_cc)
+        self.assertIn("data.opSetInput", patch_cc)
+        self.assertIn("data.opDestroy", patch_cc)
+        self.assertIn("data.opRemoveInput", patch_cc)
+        self.assertIn("return 1;", patch_cc)
+        self.assertIn("return 0;", patch_cc)
+
+    def test_02_pgo_training_harness_non_trivial(self):
+        """Verifies PGO training harness generates non-trivial decompiler command stream."""
+        harness = self.builder.generate_pgo_training_harness()
+        self.assertGreater(len(harness), 50)
+        self.assertIn("decompile", harness)
+        self.assertIn("simplify", harness)
+        self.assertIn("fold_jni_bridge", harness)
+
+    def test_03_pgo_workflow_scripts_feed_training_corpus(self):
+        """Verifies workflow scripts feed pgo_training_input.txt instead of < nul."""
+        win_script = self.builder._generate_windows_batch_script()
+        self.assertIn("pgo_training_input.txt", win_script)
+        self.assertNotIn("< nul", win_script)
+
+        linux_config = DecompilerBuildConfig(
+            src_dir="/opt/ghidra/decompiler",
+            output_bin_dir="/opt/ghidra/bin",
+            target_os="linux"
+        )
+        linux_builder = NativeDecompilerPGOBuilder(linux_config)
+        linux_script = linux_builder._generate_linux_bash_script()
+        self.assertIn("pgo_training_input.txt", linux_script)
+
+    def test_04_live_decompiler_inspection_and_devops_script(self):
+        """Verifies inspect_live_decompiler() and generate_portable_devops_build_script()."""
+        report = self.builder.inspect_live_decompiler(r"E:\03_Devops\Ghidra")
+        self.assertIn(report["status"], ["ready", "found", "not_found"])
+        if report["status"] in ("ready", "found"):
+            self.assertEqual(report["format"], "PE")
+            self.assertEqual(report["machine_name"], "x86_64")
+            self.assertGreater(report["size_bytes"], 100000)
+            self.assertEqual(len(report["sha256"]), 64)
+
+        script = self.builder.generate_portable_devops_build_script(r"E:\03_Devops")
+        self.assertIn(r"E:\03_Devops", script)
+        self.assertIn("env.bat", script)
+        self.assertIn("RuleFoldJniBridgeThunk", script)
+        self.assertIn("ninja decompile", script)
+
 
 
 class TestFrontier4ColabCloudOrchestrator(unittest.TestCase):
@@ -149,41 +324,49 @@ class TestFrontier4ColabCloudOrchestrator(unittest.TestCase):
 
     def test_02_runtime_environment_and_invariants(self):
         """Tests environment variable configuration and user rule invariants."""
-        with tempfile.TemporaryDirectory() as tmp_ws:
-            # Test TPU v5e profile
-            cfg_tpu = CloudConfig(
-                tier=CloudRuntimeTier.TPU_V5E,
-                workspace_dir=tmp_ws,
-                hf_token="hf_mock_token_12345"
-            )
-            env_tpu = ColabCloudOrchestrator.configure_runtime_environment(cfg_tpu)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            with tempfile.TemporaryDirectory() as tmp_ws:
+                # Test TPU v5e profile
+                cfg_tpu = CloudConfig(
+                    tier=CloudRuntimeTier.TPU_V5E,
+                    workspace_dir=tmp_ws,
+                    hf_token="hf_mock_token_12345"
+                )
+                env_tpu = ColabCloudOrchestrator.configure_runtime_environment(cfg_tpu)
 
-            # Invariant: Storage Target Invariant (/content or workspace_dir)
-            self.assertIn("HF_HOME", env_tpu)
-            self.assertTrue(env_tpu["HF_HOME"].startswith(tmp_ws))
+                # Invariant: Storage Target Invariant (/content or workspace_dir)
+                self.assertIn("HF_HOME", env_tpu)
+                self.assertTrue(env_tpu["HF_HOME"].startswith(tmp_ws))
 
-            # Invariant: TPU flags
-            self.assertEqual(env_tpu.get("XLA_PYTHON_CLIENT_PREALLOCATE"), "false")
-            self.assertIn("--xla_dump_to", env_tpu.get("JAX_XLA_FLAGS", ""))
+                # Invariant: TPU flags
+                self.assertEqual(env_tpu.get("XLA_PYTHON_CLIENT_PREALLOCATE"), "false")
+                self.assertIn("--xla_dump_to", env_tpu.get("JAX_XLA_FLAGS", ""))
 
-            # Invariant: Ambient Token Authentication
-            self.assertEqual(os.environ.get("HF_TOKEN"), "hf_mock_token_12345")
+                # Invariant: Ambient Token Authentication
+                self.assertEqual(os.environ.get("HF_TOKEN"), "hf_mock_token_12345")
 
-            # Test T4 GPU profile
-            cfg_gpu = CloudConfig(tier=CloudRuntimeTier.T4_GPU, workspace_dir=tmp_ws)
-            env_gpu = ColabCloudOrchestrator.configure_runtime_environment(cfg_gpu)
-            self.assertEqual(env_gpu.get("PYTORCH_CUDA_ALLOC_CONF"), "expandable_segments:True")
-            self.assertEqual(env_gpu.get("CUDA_DEVICE_ORDER"), "PCI_BUS_ID")
+                # Test T4 GPU profile
+                cfg_gpu = CloudConfig(tier=CloudRuntimeTier.T4_GPU, workspace_dir=tmp_ws)
+                env_gpu = ColabCloudOrchestrator.configure_runtime_environment(cfg_gpu)
+                self.assertEqual(env_gpu.get("PYTORCH_CUDA_ALLOC_CONF"), "expandable_segments:True")
+                self.assertEqual(env_gpu.get("CUDA_DEVICE_ORDER"), "PCI_BUS_ID")
 
     def test_03_ram_disk_staging(self):
         """Tests staging binary into zero-I/O RAM disk mount."""
         with tempfile.TemporaryDirectory() as tmp_ram:
+            src_dir = os.path.join(tmp_ram, "src")
+            os.makedirs(src_dir, exist_ok=True)
+            src_file = os.path.join(src_dir, "source_libg.so")
+            with open(src_file, "wb") as f:
+                f.write(b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8)
+                f.write(b"\x00\x00\x80\xd2\x41\x00\x03\x8b\xc0\x03\x5f\xd6" * 64)
+
             staged = ColabCloudOrchestrator.stage_binary_to_ram_disk(
-                src_path="non_existent_libg.so",
+                src_path=src_file,
                 ram_disk_dir=tmp_ram
             )
             self.assertTrue(os.path.isfile(staged), "Staged binary was not created")
-            self.assertTrue(staged.endswith("non_existent_libg.so"))
+            self.assertTrue(staged.endswith("source_libg.so"))
 
             # Check ELF header
             with open(staged, "rb") as f:
@@ -245,12 +428,13 @@ class TestFrontier4ColabCloudOrchestrator(unittest.TestCase):
             results = ColabCloudOrchestrator.run_reconstruction_pipeline(
                 config=config,
                 staged_binary=dummy_bin,
-                dry_run=True
+                dry_run=False
             )
 
             self.assertEqual(results["status"], "success")
-            self.assertGreater(results["evidence_ledger_entries"], 0)
-            self.assertGreater(results["symbols_reconstructed"], 0)
+            self.assertEqual(results["evidence_ledger_entries"], 0)
+            self.assertEqual(results["symbols_reconstructed"], 0)
+            self.assertEqual(results["stages"]["symbol_reconstruction"], "not_implemented")
 
             # Check that files were written
             self.assertTrue(os.path.isfile(results["ledger_path"]))
@@ -263,6 +447,16 @@ class TestFrontier4ColabCloudOrchestrator(unittest.TestCase):
                 names = zf.namelist()
                 self.assertIn("evidence_ledger.json", names)
                 self.assertIn("_ghidra_names.json", names)
+
+            # Test that dry_run is honored
+            dry_results = ColabCloudOrchestrator.run_reconstruction_pipeline(
+                config=config,
+                staged_binary=dummy_bin,
+                dry_run=True
+            )
+            self.assertEqual(dry_results["status"], "dry_run")
+            self.assertEqual(dry_results["stages"]["pcode_tensors"], "dry_run")
+            self.assertIsNone(dry_results["bundle_zip"])
 
     def test_07_colab_notebook_nbformat_v4_validity(self):
         """Tests that colab_cloud_orchestrator.ipynb is a valid Jupyter Notebook (nbformat v4)."""
