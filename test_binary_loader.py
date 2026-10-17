@@ -12,12 +12,16 @@ import binary_loader as B
 # ----------------------------------------------------------------------------------
 
 
-def build_pe(bits=64, machine=0x8664, dll=True):
-    """Minimal PE with .text (code), .rdata (exports, imports, debug), .pdata."""
+def build_pe(bits=64, machine=0x8664, dll=True, text=None):
+    """Minimal PE with .text (code), .rdata (exports, imports, debug), .pdata.
+
+    Exports FuncA at .text+0 and FuncB at .text+0x10; `text` overrides the code bytes.
+    """
     image_base = 0x180000000 if bits == 64 else 0x10000000
-    file_align = sect_align = 0x200
+    file_align = 0x200
     text_rva, rdata_rva, pdata_rva = 0x1000, 0x2000, 0x3000
-    text = bytes([0x48, 0x31, 0xC0, 0xC3]) + b"\xCC" * 12 + bytes([0x31, 0xC0, 0xC3]) + b"\xCC" * 13
+    if text is None:
+        text = bytes([0x48, 0x31, 0xC0, 0xC3]) + b"\xCC" * 12 + bytes([0x31, 0xC0, 0xC3]) + b"\xCC" * 13
     text = text.ljust(file_align, b"\xCC")
 
     rdata = bytearray(0x400)

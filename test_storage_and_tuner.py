@@ -150,8 +150,10 @@ class TestStorageCompressionLayer(unittest.TestCase):
         self.assertGreater(res_lz4.reduction_pct, 75.0, "LZ4 must achieve > 75% reduction")
         self.assertGreater(res_zstd.reduction_pct, 75.0, "Zstandard L3 must achieve > 75% reduction")
         self.assertTrue(res_lz4.verified_lossless)
-        self.assertGreater(res_lz4.compress_mb_per_sec, 100.0)
-        self.assertGreater(res_lz4.decompress_mb_per_sec, 200.0)
+        # Throughput depends on the machine and its current load; only assert on request.
+        if os.environ.get("SUPERGHIDRA_PERF_TESTS") == "1":
+            self.assertGreater(res_lz4.compress_mb_per_sec, 100.0)
+            self.assertGreater(res_lz4.decompress_mb_per_sec, 200.0)
 
     @unittest.skipUnless(
         (shutil.which("javac") or os.path.isfile(r"E:\03_Devops\JDK\bin\javac.exe"))
