@@ -130,6 +130,14 @@ from dwarf_pdb_preindexer import (
     benchmark_preindexer,
 )
 
+from synthetic_symbol_exporter import (
+    DWARF5Exporter,
+    ExportField,
+    ExportStruct,
+    ExportSymbol,
+    PDBExporter,
+)
+
 
 # ==============================================================================
 # Suite 1: Shared-Memory Decompiler Bridge Tests
@@ -276,7 +284,7 @@ class TestGPUFunctionSeeder(unittest.TestCase):
 
         np_seeder = GPUFunctionSeeder(backend="numpy")
         res_np = np_seeder.classify_instructions(insns)
-        kinds_np = sorted(int((x >> 28) & 0xF) for x in res_np)
+        kinds_np = sorted(GPUFunctionSeeder.unpack_seeder_match(int(x))[1] for x in res_np)
         self.assertEqual(kinds_np, [KIND_PACIASP, KIND_STP_FP_LR, KIND_SUB_SP, KIND_BL, KIND_RET, KIND_BTI])
 
     def test_data_pointer_scanner(self):
@@ -600,6 +608,347 @@ class TestDwarfPdbPreindexer(unittest.TestCase):
 
         store.close()
 
+    def test_off_heap_dwarf5_elf_ingestion(self):
+        """Validates ingestion of full DWARF 5 ELF64 container into OffHeapTypeStore."""
+        symbols = [
+            ExportSymbol(name="Engine::Init", address=0x100410000, size=0x120, symbol_type="FUNC"),
+            ExportSymbol(name="Engine::Shutdown", address=0x100410200, size=0x80, symbol_type="FUNC"),
+            ExportSymbol(name="g_EngineState", address=0x100500000, size=0x400, symbol_type="OBJECT"),
+        ]
+        structs = [
+            ExportStruct(
+                name="Vector3",
+                size=12,
+                fields=[
+                    ExportField(name="x", offset=0, size=4, type_name="float"),
+                    ExportField(name="y", offset=4, size=4, type_name="float"),
+                    ExportField(name="z", offset=8, size=4, type_name="float"),
+                ],
+            ),
+            ExportStruct(
+                name="Transform",
+                size=32,
+                fields=[
+                    ExportField(name="position", offset=0, size=12, type_name="Vector3"),
+                    ExportField(name="scale", offset=16, size=12, type_name="Vector3"),
+                    ExportField(name="flags", offset=28, size=4, type_name="uint32_t"),
+                ],
+            ),
+        ]
+
+        exporter = DWARF5Exporter(symbols=symbols, structs=structs, base_address=0x100400000)
+        elf_bytes = exporter.build_elf()
+
+        store = OffHeapTypeStore(":memory:")
+        stats = store.ingest_dwarf5_elf(elf_bytes)
+
+        self.assertGreaterEqual(stats["types"], 2)
+        self.assertEqual(stats["structs"], 2)
+        self.assertEqual(stats["members"], 6)
+        self.assertGreaterEqual(stats["symbols"], 2)
+
+        # Lookup Transform struct and verify layout
+        t_transform = store.find_type_by_name("Transform")
+        self.assertIsNotNone(t_transform)
+        self.assertEqual(t_transform.byte_size, 32)
+        self.assertEqual(len(t_transform.members), 3)
+
+        layout = store.get_struct_layout("Transform")
+        self.assertEqual(len(layout), 3)
+        self.assertEqual(layout[0]["name"], "position")
+        self.assertEqual(layout[0]["offset"], 0)
+        self.assertEqual(layout[1]["name"], "scale")
+        self.assertEqual(layout[1]["offset"], 16)
+        self.assertEqual(layout[2]["name"], "flags")
+        self.assertEqual(layout[2]["offset"], 28)
+
+        # Lookup symbols
+        s_init = store.lookup_symbol_by_address(0x100410000)
+        self.assertIsNotNone(s_init)
+        self.assertEqual(s_init.name, "Engine::Init")
+
+        s_obj = store.lookup_symbol_by_address(0x100500000)
+        self.assertIsNotNone(s_obj)
+        self.assertEqual(s_obj.name, "g_EngineState")
+
+        # Render C declaration
+        c_decl = store.render_c_declaration("Transform")
+        self.assertIn("struct Transform", c_decl)
+        self.assertIn("flags;", c_decl)
+
+        store.close()
+
+    def test_off_heap_pdb_msf700_ingestion(self):
+        """Validates ingestion of binary MSF 7.00 PDB container into OffHeapTypeStore."""
+        symbols = [
+            ExportSymbol(name="Player::TakeDamage", address=0x140010000, size=0x80, symbol_type="FUNC"),
+            ExportSymbol(name="Player::Heal", address=0x140010200, size=0x60, symbol_type="FUNC"),
+            ExportSymbol(name="g_GameConfig", address=0x140020000, size=0x100, symbol_type="OBJECT"),
+        ]
+        structs = [
+            ExportStruct(
+                name="WeaponData",
+                size=16,
+                fields=[
+                    ExportField(name="damage", offset=0, size=4, type_name="float"),
+                    ExportField(name="fire_rate", offset=4, size=4, type_name="float"),
+                    ExportField(name="ammo", offset=8, size=4, type_name="int32_t"),
+                    ExportField(name="flags", offset=12, size=4, type_name="uint32_t"),
+                ],
+            ),
+            ExportStruct(
+                name="PlayerData",
+                size=32,
+                fields=[
+                    ExportField(name="id", offset=0, size=8, type_name="uint64_t"),
+                    ExportField(name="health", offset=8, size=4, type_name="int32_t"),
+                    ExportField(name="weapon", offset=16, size=16, type_name="WeaponData"),
+                ],
+            ),
+        ]
+
+        exporter = PDBExporter(symbols=symbols, structs=structs, base_address=0x140000000)
+        pdb_bytes = exporter.build_pdb()
+
+        store = OffHeapTypeStore(":memory:")
+        stats = store.ingest_pdb(pdb_bytes, base_address=0x140000000)
+
+        self.assertGreaterEqual(stats["structs"], 2)
+        self.assertGreaterEqual(stats["members"], 7)
+        self.assertGreaterEqual(stats["symbols"], 3)
+
+        # Lookup PlayerData struct
+        t_player = store.find_type_by_name("PlayerData")
+        self.assertIsNotNone(t_player)
+        self.assertEqual(t_player.byte_size, 32)
+        self.assertEqual(len(t_player.members), 3)
+
+        # Verify struct layout
+        layout = store.get_struct_layout("PlayerData")
+        self.assertEqual(len(layout), 3)
+        self.assertEqual(layout[0]["name"], "id")
+        self.assertEqual(layout[0]["offset"], 0)
+        self.assertEqual(layout[1]["name"], "health")
+        self.assertEqual(layout[1]["offset"], 8)
+
+        # Lookup symbol by address
+        sym = store.lookup_symbol_by_address(0x140010000)
+        self.assertIsNotNone(sym)
+        self.assertEqual(sym.name, "Player::TakeDamage")
+
+        store.close()
+
+    def test_off_heap_dwarf5_rich_tags_ingestion(self):
+        """Validates ingestion of full DWARF 5 tags: enums, unions, typedefs, pointers, and subprograms with formal parameters."""
+        def encode_u128(val: int) -> bytes:
+            res = bytearray()
+            while True:
+                b = val & 0x7F
+                val >>= 7
+                if val != 0:
+                    b |= 0x80
+                res.append(b)
+                if val == 0:
+                    break
+            return bytes(res)
+
+        def encode_s128(val: int) -> bytes:
+            res = bytearray()
+            more = True
+            while more:
+                b = val & 0x7F
+                val >>= 7
+                sign = (b & 0x40) != 0
+                if (val == 0 and not sign) or (val == -1 and sign):
+                    more = False
+                else:
+                    b |= 0x80
+                res.append(b)
+            return bytes(res)
+
+        debug_str = bytearray(b"\x00")
+        str_map: Dict[str, int] = {"": 0}
+
+        def add_s(s: str) -> int:
+            if s not in str_map:
+                off = len(debug_str)
+                debug_str.extend(s.encode("utf-8") + b"\x00")
+                str_map[s] = off
+            return str_map[s]
+
+        s_cu = add_s("network_packet.c")
+        s_int = add_s("int32_t")
+        s_status = add_s("StatusCode")
+        s_ok = add_s("STATUS_OK")
+        s_err = add_s("STATUS_ERR")
+        s_packet = add_s("PacketData")
+        s_raw = add_s("raw_bytes")
+        s_val = add_s("int_value")
+        s_handle = add_s("PacketHandle")
+        s_func = add_s("DispatchPacket")
+        s_arg0 = add_s("packet_ptr")
+
+        # Build .debug_abbrev
+        abbrev = bytearray()
+        # 1: CU (DW_TAG_compile_unit = 0x11, children=yes)
+        abbrev.extend(encode_u128(1) + encode_u128(0x11) + b"\x01")
+        abbrev.extend(encode_u128(0x03) + encode_u128(0x0E))  # DW_AT_name, strp
+        abbrev.extend(b"\x00\x00")
+
+        # 2: base_type (DW_TAG_base_type = 0x24)
+        abbrev.extend(encode_u128(2) + encode_u128(0x24) + b"\x00")
+        abbrev.extend(encode_u128(0x03) + encode_u128(0x0E))  # name
+        abbrev.extend(encode_u128(0x0B) + encode_u128(0x0B))  # byte_size (data1)
+        abbrev.extend(b"\x00\x00")
+
+        # 3: pointer_type (DW_TAG_pointer_type = 0x0F)
+        abbrev.extend(encode_u128(3) + encode_u128(0x0F) + b"\x00")
+        abbrev.extend(encode_u128(0x49) + encode_u128(0x13))  # DW_AT_type (ref4)
+        abbrev.extend(encode_u128(0x0B) + encode_u128(0x0B))  # byte_size
+        abbrev.extend(b"\x00\x00")
+
+        # 4: typedef (DW_TAG_typedef = 0x16)
+        abbrev.extend(encode_u128(4) + encode_u128(0x16) + b"\x00")
+        abbrev.extend(encode_u128(0x03) + encode_u128(0x0E))  # name
+        abbrev.extend(encode_u128(0x49) + encode_u128(0x13))  # type
+        abbrev.extend(b"\x00\x00")
+
+        # 5: enumeration_type (DW_TAG_enumeration_type = 0x04, children=yes)
+        abbrev.extend(encode_u128(5) + encode_u128(0x04) + b"\x01")
+        abbrev.extend(encode_u128(0x03) + encode_u128(0x0E))  # name
+        abbrev.extend(encode_u128(0x0B) + encode_u128(0x0B))  # byte_size
+        abbrev.extend(b"\x00\x00")
+
+        # 6: enumerator (DW_TAG_enumerator = 0x28)
+        abbrev.extend(encode_u128(6) + encode_u128(0x28) + b"\x00")
+        abbrev.extend(encode_u128(0x03) + encode_u128(0x0E))  # name
+        abbrev.extend(encode_u128(0x1C) + encode_u128(0x0D))  # const_value (sdata)
+        abbrev.extend(b"\x00\x00")
+
+        # 7: union_type (DW_TAG_union_type = 0x17, children=yes)
+        abbrev.extend(encode_u128(7) + encode_u128(0x17) + b"\x01")
+        abbrev.extend(encode_u128(0x03) + encode_u128(0x0E))  # name
+        abbrev.extend(encode_u128(0x0B) + encode_u128(0x0B))  # byte_size
+        abbrev.extend(b"\x00\x00")
+
+        # 8: member (DW_TAG_member = 0x0D)
+        abbrev.extend(encode_u128(8) + encode_u128(0x0D) + b"\x00")
+        abbrev.extend(encode_u128(0x03) + encode_u128(0x0E))  # name
+        abbrev.extend(encode_u128(0x49) + encode_u128(0x13))  # type
+        abbrev.extend(encode_u128(0x38) + encode_u128(0x0F))  # data_member_location (udata)
+        abbrev.extend(encode_u128(0x0B) + encode_u128(0x0B))  # byte_size
+        abbrev.extend(b"\x00\x00")
+
+        # 9: subprogram (DW_TAG_subprogram = 0x2E, children=yes)
+        abbrev.extend(encode_u128(9) + encode_u128(0x2E) + b"\x01")
+        abbrev.extend(encode_u128(0x03) + encode_u128(0x0E))  # name
+        abbrev.extend(encode_u128(0x11) + encode_u128(0x01))  # low_pc (addr)
+        abbrev.extend(encode_u128(0x12) + encode_u128(0x07))  # high_pc (data8)
+        abbrev.extend(encode_u128(0x49) + encode_u128(0x13))  # return type (ref4)
+        abbrev.extend(b"\x00\x00")
+
+        # 10: formal_parameter (DW_TAG_formal_parameter = 0x05)
+        abbrev.extend(encode_u128(10) + encode_u128(0x05) + b"\x00")
+        abbrev.extend(encode_u128(0x03) + encode_u128(0x0E))  # name
+        abbrev.extend(encode_u128(0x49) + encode_u128(0x13))  # type
+        abbrev.extend(b"\x00\x00")
+
+        abbrev.append(0x00)
+
+        # Build .debug_info
+        cu_body = bytearray()
+        cu_body.extend(encode_u128(1) + struct.pack("<I", s_cu))
+
+        # DIE: base_type int32_t
+        off_int = len(cu_body) + 12
+        cu_body.extend(encode_u128(2) + struct.pack("<I", s_int) + bytes([4]))
+
+        # DIE: pointer_type int32_t*
+        off_ptr = len(cu_body) + 12
+        cu_body.extend(encode_u128(3) + struct.pack("<I", off_int) + bytes([8]))
+
+        # DIE: typedef PacketHandle -> int32_t*
+        off_td = len(cu_body) + 12
+        cu_body.extend(encode_u128(4) + struct.pack("<I", s_handle) + struct.pack("<I", off_ptr))
+
+        # DIE: enum StatusCode
+        off_enum = len(cu_body) + 12
+        cu_body.extend(encode_u128(5) + struct.pack("<I", s_status) + bytes([4]))
+        cu_body.extend(encode_u128(6) + struct.pack("<I", s_ok) + encode_s128(0))
+        cu_body.extend(encode_u128(6) + struct.pack("<I", s_err) + encode_s128(-1))
+        cu_body.append(0x00)
+
+        # DIE: union PacketData
+        off_union = len(cu_body) + 12
+        cu_body.extend(encode_u128(7) + struct.pack("<I", s_packet) + bytes([4]))
+        cu_body.extend(encode_u128(8) + struct.pack("<I", s_raw) + struct.pack("<I", off_int) + encode_u128(0) + bytes([4]))
+        cu_body.extend(encode_u128(8) + struct.pack("<I", s_val) + struct.pack("<I", off_int) + encode_u128(0) + bytes([4]))
+        cu_body.append(0x00)
+
+        # DIE: subprogram DispatchPacket
+        off_func = len(cu_body) + 12
+        cu_body.extend(encode_u128(9) + struct.pack("<I", s_func) + struct.pack("<Q", 0x10001000) + struct.pack("<Q", 0x100) + struct.pack("<I", off_enum))
+        cu_body.extend(encode_u128(10) + struct.pack("<I", s_arg0) + struct.pack("<I", off_union))
+        cu_body.append(0x00)
+
+        cu_body.append(0x00)  # end CU
+
+        unit_len = len(cu_body) + 8
+        cu_hdr = struct.pack("<IHBB I", unit_len, 5, 1, 8, 0)
+        debug_info = cu_hdr + bytes(cu_body)
+
+        exp = DWARF5Exporter([], [])
+        elf_bytes = exp._assemble_elf64(
+            text_data=b"\x90" * 64,
+            symtab_data=b"\x00" * 24,
+            strtab_data=b"\x00",
+            debug_str=bytes(debug_str),
+            debug_abbrev=bytes(abbrev),
+            debug_info=debug_info,
+            debug_line=b"",
+            low_pc=0x10001000,
+        )
+
+        dedup = TypeDeduplicator()
+        stats = dedup.ingest_dwarf5_elf_bytes(elf_bytes)
+
+        self.assertEqual(stats["enums"], 1)
+        self.assertEqual(stats["unions"], 1)
+        self.assertEqual(stats["typedefs"], 1)
+        self.assertEqual(stats["pointers"], 1)
+        self.assertEqual(stats["functions"], 1)
+        self.assertGreaterEqual(stats["symbols"], 1)
+
+        # Verify enum
+        types_by_name = {t.name: t for t in dedup.canonical_types.values()}
+        self.assertIn("StatusCode", types_by_name)
+        t_enum = types_by_name["StatusCode"]
+        self.assertEqual(t_enum.kind, TypeKind.ENUM)
+        self.assertEqual(len(t_enum.variants), 2)
+
+        # Verify union
+        types_by_name = {t.name: t for t in dedup.canonical_types.values()}
+        self.assertIn("PacketData", types_by_name)
+        self.assertEqual(types_by_name["PacketData"].kind, TypeKind.UNION)
+        self.assertEqual(len(types_by_name["PacketData"].members), 2)
+
+        # Verify typedef
+        self.assertIn("PacketHandle", types_by_name)
+        self.assertEqual(types_by_name["PacketHandle"].kind, TypeKind.TYPEDEF)
+
+        # Verify function prototype
+        self.assertIn("fn_DispatchPacket", types_by_name)
+        fn_type = types_by_name["fn_DispatchPacket"]
+        self.assertEqual(fn_type.kind, TypeKind.FUNCTION)
+        self.assertEqual(fn_type.function_proto.return_type_id, t_enum.type_id)
+        self.assertEqual(len(fn_type.function_proto.parameters), 1)
+        self.assertEqual(fn_type.function_proto.parameters[0].name, "packet_ptr")
+
+        # Verify symbol linked with function prototype type_id
+        sym = dedup.symbols.get("sym_10001000_DispatchPacket")
+        self.assertIsNotNone(sym)
+        self.assertEqual(sym.type_id, fn_type.type_id)
+
 
 # ==============================================================================
 # Consolidated Phase-2 Performance Benchmarks & Report Generator
@@ -732,7 +1081,7 @@ def run_phase2_benchmarks() -> Dict[str, Any]:
     print(f"    Query Latency (Symbol): {dwarf_bench['q3_sym_lookup_us']:.2f} us (< 100 us)")
 
     # 6. Generate Consolidated Text Report
-    report_path = os.path.join(SUPERGHIDRA_DIR, "PHASE2_BENCHMARK_REPORT.txt")
+    report_path = os.environ.get("SUPERGHIDRA_BENCHMARK_REPORT") or os.path.join(tempfile.gettempdir(), "PHASE2_BENCHMARK_REPORT.txt")
     generate_report_file(report_path, results)
     print(f"\n[+] Consolidated report written to: {report_path}")
     print("=" * 78 + "\n")

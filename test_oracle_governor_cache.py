@@ -45,12 +45,17 @@ from ghidra_oracle import (
     DEFAULT_IMAGE_BASE,
     DEFAULT_PORT,
     GhidraOracleSession,
+    GhidraDaemonServer,
     L2SQLiteCache,
     WriteOverlay,
     client_send_request,
     main,
     normalize_address_pair,
+    DependencyCacheDAG,
+    SemanticDeltaLog,
+    DeltaEventType,
 )
+
 
 
 class TestL2SQLiteCache(unittest.TestCase):
@@ -591,8 +596,342 @@ class TestCLIArgumentParsingAndFastPath(unittest.TestCase):
                     self.assertEqual(actual_args, expected_req_args)
 
 
+
+class TestOracleDAGDeltaAndOverlayIntegration(unittest.TestCase):
+    """Verifies WriteOverlay C-code rewrite, selective 1-hop DAG invalidation, and SemanticDeltaLog."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.overlay_path = os.path.join(self.temp_dir.name, "test_overlay.json")
+        self.delta_log_path = os.path.join(self.temp_dir.name, "test_delta.jsonl")
+        self.db_path = os.path.join(self.temp_dir.name, "test_cache.db")
+
+        self.overlay = WriteOverlay(filepath=self.overlay_path)
+        self.cache = L2SQLiteCache(db_path=self.db_path)
+        self.session = GhidraOracleSession(
+            overlay=self.overlay,
+            l2_cache=self.cache,
+        )
+        # Point session delta log to temp dir
+        self.session.delta_log = SemanticDeltaLog(self.delta_log_path)
+
+    def tearDown(self):
+        self.cache.close()
+        try:
+            self.temp_dir.cleanup()
+        except Exception:
+            pass
+
+    def test_write_overlay_apply_to_c_code(self):
+        """Verifies replacing FUN_<va_hex> or FUN_<rva_hex> and known symbols inside C code."""
+        # 0x00101234 (VA) -> RVA 0x00001234 (image_base = 0x100000)
+        self.overlay.set_rename("0x00101234", "Player_TakeDamage")
+        self.overlay.set_rename("0x00105678", "Enemy_Spawn")
+        self.overlay.set_rename("sub_custom", "Helper_Func")
+
+        sample_c = (
+            "void FUN_00101234(int damage) {\n"
+            "    FUN_00001234(damage);\n"
+            "    fun_00105678();\n"
+            "    sub_custom();\n"
+            "    FUN_00999999(); // Unmodified callee\n"
+            "}"
+        )
+
+        transformed = self.overlay.apply_to_c_code(sample_c, image_base=DEFAULT_IMAGE_BASE)
+
+        self.assertIn("void Player_TakeDamage(int damage)", transformed)
+        self.assertIn("Player_TakeDamage(damage);", transformed)
+        self.assertIn("Enemy_Spawn();", transformed)
+        self.assertIn("Helper_Func();", transformed)
+        self.assertIn("FUN_00999999();", transformed)
+        self.assertNotIn("FUN_00101234", transformed)
+        self.assertNotIn("FUN_00001234", transformed)
+        self.assertNotIn("fun_00105678", transformed)
+        self.assertNotIn("sub_custom();", transformed)
+
+    def test_l2_cache_invalidate_address(self):
+        """Verifies selective invalidation of decompile entries by virtual address."""
+        # Add 3 separate decompile entries in L2 cache
+        payload_1 = {"status": "ok", "results": [{"va": "0x00101000", "code": "void f1() {}"}]}
+        payload_2 = {"status": "ok", "results": [{"va": "0x00102000", "code": "void f2() {}"}]}
+        payload_3 = {"status": "ok", "results": [{"va": "0x00103000", "code": "void f3() {}"}]}
+
+        # Test both direct key format and JSON targets format
+        self.cache.put("decompile", "0x00101000", payload_1)
+        self.cache.put("decompile", '{"targets": ["0x00102000"]}', payload_2)
+        self.cache.put("decompile", "0x00103000", payload_3)
+
+        self.assertIsNotNone(self.cache.get("decompile", "0x00101000"))
+        self.assertIsNotNone(self.cache.get("decompile", '{"targets": ["0x00102000"]}'))
+        self.assertIsNotNone(self.cache.get("decompile", "0x00103000"))
+
+        # Invalidate 0x00102000
+        evicted = self.cache.invalidate_address(0x00102000)
+        self.assertGreaterEqual(evicted, 1)
+
+        # 0x00102000 is gone, 0x00101000 and 0x00103000 remain
+        self.assertIsNone(self.cache.get("decompile", '{"targets": ["0x00102000"]}'))
+        self.assertIsNotNone(self.cache.get("decompile", "0x00101000"))
+        self.assertIsNotNone(self.cache.get("decompile", "0x00103000"))
+
+        # Invalidate 0x00101000 by hex string
+        evicted_direct = self.cache.invalidate_address("0x00101000")
+        self.assertGreaterEqual(evicted_direct, 1)
+        self.assertIsNone(self.cache.get("decompile", "0x00101000"))
+        self.assertIsNotNone(self.cache.get("decompile", "0x00103000"))
+
+    def test_1hop_dag_invalidation_on_rename(self):
+        """Verifies 1-hop selective cache invalidation on rename (callees & unrelated remain cached)."""
+        # Graph:
+        # func_caller (0x00101000) -> func_target (0x00102000) -> func_callee (0x00103000)
+        # func_unrelated (0x00104000)
+        fid_caller = "0x00101000"
+        fid_target = "0x00102000"
+        fid_callee = "0x00103000"
+        fid_unrelated = "0x00104000"
+
+        self.session.dep_dag.add_function(fid_caller, address=0x00101000, name="caller")
+        self.session.dep_dag.add_function(fid_target, address=0x00102000, name="target")
+        self.session.dep_dag.add_function(fid_callee, address=0x00103000, name="callee")
+        self.session.dep_dag.add_function(fid_unrelated, address=0x00104000, name="unrelated")
+
+        self.session.dep_dag.add_call_edge(fid_caller, fid_target)
+        self.session.dep_dag.add_call_edge(fid_target, fid_callee)
+
+        # Pre-populate L1 decompile cache
+        self.session.decompile_cache.put(0x00101000, {"code": "caller() { target(); }"})
+        self.session.decompile_cache.put(0x00102000, {"code": "target() { callee(); }"})
+        self.session.decompile_cache.put(0x00103000, {"code": "callee() {}"})
+        self.session.decompile_cache.put(0x00104000, {"code": "unrelated() {}"})
+
+        # Pre-populate L2 SQLite cache
+        for addr_int in [0x00101000, 0x00102000, 0x00103000, 0x00104000]:
+            self.session.l2_cache.put("decompile", f"0x{addr_int:08x}", {"status": "ok", "addr": addr_int})
+
+        # Rename func_target
+        res = self.session.set_rename(0x00102000, "target_renamed")
+        self.assertEqual(res["status"], "ok")
+
+        # Selective 1-hop:
+        # func_target (0x00102000) and caller (0x00101000) must be evicted!
+        self.assertIsNone(self.session.decompile_cache.get(0x00102000))
+        self.assertIsNone(self.session.decompile_cache.get(0x00101000))
+        self.assertIsNone(self.session.l2_cache.get("decompile", "0x00102000"))
+        self.assertIsNone(self.session.l2_cache.get("decompile", "0x00101000"))
+
+        # Callee (0x00103000) and unrelated (0x00104000) must REMAIN CACHED!
+        self.assertIsNotNone(self.session.decompile_cache.get(0x00103000))
+        self.assertIsNotNone(self.session.decompile_cache.get(0x00104000))
+        self.assertIsNotNone(self.session.l2_cache.get("decompile", "0x00103000"))
+        self.assertIsNotNone(self.session.l2_cache.get("decompile", "0x00104000"))
+
+    def test_semantic_delta_log_integration(self):
+        """Verifies mutations are recorded in SemanticDeltaLog with cryptographic proof hashes."""
+        res_rename = self.session.set_rename(0x00102000, "Hero_Attack")
+        self.assertEqual(res_rename["status"], "ok")
+
+        res_comment = self.session.set_comment(0x00102000, "Critical attack logic")
+        self.assertEqual(res_comment["status"], "ok")
+
+        # Verify events recorded in delta log
+        self.assertEqual(len(self.session.delta_log.events), 2)
+        evt0 = self.session.delta_log.events[0]
+        evt1 = self.session.delta_log.events[1]
+
+        self.assertEqual(evt0.event_type, DeltaEventType.RENAME_SYMBOL)
+        self.assertEqual(evt0.payload["new_name"], "Hero_Attack")
+        self.assertEqual(evt0.target_address, 0x00102000)
+
+        self.assertEqual(evt1.event_type, DeltaEventType.SET_COMMENT)
+        self.assertEqual(evt1.payload["comment_text"], "Critical attack logic")
+        self.assertEqual(evt1.target_address, 0x00102000)
+
+        # Audit cryptographic proof hashes
+        valid, violations = self.session.delta_log.verify_integrity()
+        self.assertTrue(valid, f"Delta log proof violations: {violations}")
+
+    def test_off_heap_type_store_integration(self):
+        """Verifies registering deduplicated structs and querying layout & C decl off-heap."""
+        # 1. Direct session call: register_struct
+        members = [
+            {"name": "m_health", "type_id": "int32_t", "offset": 0, "size": 4},
+            {"name": "m_mana", "type_id": "int32_t", "offset": 4, "size": 4},
+            {"name": "m_speed", "type_id": "float", "offset": 8, "size": 4},
+        ]
+        reg_res = self.session.register_struct("PlayerEntity", 0x20, members)
+        self.assertEqual(reg_res["status"], "ok")
+        self.assertEqual(reg_res["name"], "PlayerEntity")
+        self.assertEqual(reg_res["byte_size"], 0x20)
+        self.assertEqual(reg_res["members_count"], 3)
+        self.assertIn("struct PlayerEntity", reg_res["c_decl"])
+        self.assertEqual(len(reg_res["layout"]), 3)
+        self.assertEqual(reg_res["layout"][0]["name"], "m_health")
+        self.assertEqual(reg_res["layout"][0]["offset"], 0)
+
+        # 2. Query type by name
+        query_res = self.session.query_type("PlayerEntity")
+        self.assertEqual(query_res["status"], "ok")
+        self.assertEqual(query_res["type"]["name"], "PlayerEntity")
+        self.assertEqual(len(query_res["layout"]), 3)
+        self.assertIn("struct PlayerEntity", query_res["c_decl"])
+
+        # 3. Query non-existent type
+        missing_res = self.session.query_type("NonExistentType_123")
+        self.assertEqual(missing_res["status"], "not_found")
+
+        # 4. Daemon Server _dispatch_command verification
+        server = GhidraDaemonServer(self.session)
+        dispatch_reg = server._dispatch_command(
+            json.dumps({
+                "cmd": "register_struct",
+                "args": {
+                    "name": "EnemyEntity",
+                    "byte_size": 16,
+                    "members": [{"name": "dmg", "type_id": "int", "offset": 0, "size": 4}],
+                },
+            })
+        )
+        self.assertEqual(dispatch_reg["status"], "ok")
+        self.assertEqual(dispatch_reg["name"], "EnemyEntity")
+
+        dispatch_query = server._dispatch_command(
+            json.dumps({"cmd": "type", "args": {"name": "EnemyEntity"}})
+        )
+        self.assertEqual(dispatch_query["status"], "ok")
+        self.assertEqual(dispatch_query["type"]["name"], "EnemyEntity")
+        self.assertEqual(dispatch_query["layout"][0]["name"], "dmg")
+
+    def test_client_send_request_l2_cache_overlay_rewriting(self):
+        """Verifies WriteOverlay renames and comments are applied to decompile results from L2 cache."""
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "test_l2.db")
+        overlay_path = os.path.join(temp_dir.name, "test_overlay.json")
+        try:
+            l2 = L2SQLiteCache(db_path=db_path)
+            overlay = WriteOverlay(filepath=overlay_path)
+            overlay.set_rename(0x00101000, "Logic_Process")
+            overlay.set_comment(0x00101000, "Core game loop")
+
+            decompile_data = {
+                "status": "ok",
+                "results": [
+                    {
+                        "target": "0x00101000",
+                        "va": "0x00101000",
+                        "rva": "0x00001000",
+                        "name": "FUN_00101000",
+                        "code": "void FUN_00101000(void) { FUN_00101000(); }",
+                        "comment": None,
+                        "style": "normalize",
+                    }
+                ]
+            }
+            l2.put("decompile", "0x00101000", decompile_data)
+
+            with patch("ghidra_oracle.WriteOverlay", lambda *args, **kwargs: overlay):
+                resp = client_send_request(
+                    "decompile",
+                    {"targets": ["0x00101000"]},
+                    auto_spawn=False,
+                    l2_cache=l2,
+                )
+
+            self.assertTrue(resp.get("l2_cached"))
+            res_item = resp["results"][0]
+            self.assertEqual(res_item["name"], "Logic_Process")
+            self.assertEqual(res_item["comment"], "Core game loop")
+            self.assertIn("Logic_Process();", res_item["code"])
+        finally:
+            l2.close()
+            temp_dir.cleanup()
+
+    def test_multi_segment_fast_index_scan(self):
+        """Verifies _build_fast_indexes accumulates opcode gates across multiple executable/large segments."""
+        session = GhidraOracleSession()
+        mock_prog = MagicMock()
+        mock_mem = MagicMock()
+        session.program = mock_prog
+        session.flat_api = MagicMock()
+        mock_prog.getMemory.return_value = mock_mem
+
+        # Segment 1: executable, contains mov w0, #10; ret -> imm=10
+        # ARM64: [0x40, 0x01, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6]
+        gate_10 = bytes([0x40, 0x01, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6])
+        blk1 = MagicMock()
+        blk1.isExecute.return_value = True
+        blk1.getSize.return_value = 8
+        blk1.getStart().getOffset.return_value = 0x100000
+
+        # Segment 2: large block > 4096, contains mov w0, #20; ret -> imm=20
+        # ARM64: [0x80, 0x02, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6]
+        gate_20 = bytes([0x80, 0x02, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6]) + b"\x00" * 4096
+        blk2 = MagicMock()
+        blk2.isExecute.return_value = False
+        blk2.getSize.return_value = len(gate_20)
+        blk2.getStart().getOffset.return_value = 0x200000
+
+        mock_mem.getBlocks.return_value = [blk1, blk2]
+
+        import sys
+        mock_java = MagicMock()
+        mock_array = MagicMock()
+        mock_array.newInstance.side_effect = lambda t, sz: bytearray(sz)
+        mock_java.lang.reflect.Array = mock_array
+        mock_java.lang.Byte.TYPE = "byte"
+
+        def mock_getBytes(start, jb):
+            if len(jb) == 8:
+                jb[:] = gate_10
+            elif len(jb) == len(gate_20):
+                jb[:] = gate_20
+        mock_mem.getBytes.side_effect = mock_getBytes
+
+        with patch.dict(sys.modules, {"java.lang.reflect": mock_java.lang.reflect, "java.lang": mock_java.lang}):
+            session._build_fast_indexes()
+
+        self.assertGreaterEqual(len(session._opcode_gates), 2)
+        imms = [g[0] for g in session._opcode_gates]
+        self.assertIn(10, imms)
+        self.assertIn(20, imms)
+
+    def test_query_decompile_complexity_downshifting(self):
+        """Verifies query_decompile dynamically downshifts simplification style for megafunctions (>16KB)."""
+        session = GhidraOracleSession(resource_mode="balanced")
+        mock_prog = MagicMock()
+        mock_decompiler = MagicMock()
+        mock_flat = MagicMock()
+        session.program = mock_prog
+        session.decompiler = mock_decompiler
+        session.flat_api = mock_flat
+        session.monitor = MagicMock()
+
+        # Mock function with body size 20000 (> 16384 bytes, Tier 3 Megafunction)
+        mock_func = MagicMock()
+        mock_func.getBody().getNumAddresses.return_value = 20000
+        mock_func.getEntryPoint().getOffset.return_value = 0x00101000
+        mock_func.getName.return_value = "MegaDispatcher"
+
+        fm = mock_prog.getFunctionManager()
+        fm.getFunctionAt.return_value = mock_func
+        fm.getFunctionContaining.return_value = mock_func
+
+        mock_res = MagicMock()
+        mock_res.decompileCompleted.return_value = True
+        mock_res.getDecompiledFunction().getC.return_value = "void MegaDispatcher(void) {}"
+        mock_decompiler.decompileFunction.return_value = mock_res
+
+        res = session.query_decompile(targets=["0x00101000"], style=None)
+
+        self.assertEqual(res["status"], "ok")
+        item = res["results"][0]
+        # In balanced mode, Tier 3 downshifts to 'jumptable'
+        self.assertEqual(item["style"], "jumptable")
+
+
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
     sys.exit(0 if result.wasSuccessful() else 1)
+
