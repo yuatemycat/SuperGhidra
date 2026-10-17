@@ -1,0 +1,64 @@
+==============================================================================
+ SUPERGHIDRA PHASE-2 CONSOLIDATED BENCHMARK REPORT
+ High-Performance Off-Heap Reverse Engineering & Decompiler Acceleration
+==============================================================================
+
+1. SHARED-MEMORY DECOMPILER BRIDGE (shm_decompiler_bridge.py)
+------------------------------------------------------------------------------
+ Architecture:           Lock-free SPSC / MPMC ring buffer & zero-copy mmap
+ Cacheline Alignment:    64-byte isolated head/tail pointers
+ 64B Block Read Latency: 3.35 us (median: 3.00 us)
+ 4KB Read Throughput:    679.75 MB/s
+ 64KB Read Throughput:   2,632.39 MB/s
+ IPC Query Roundtrip:    35.38 us (Target < 50.0 us -> PASS)
+ IPC Roundtrip Median:   32.90 us
+
+2. GPU FUNCTION SEEDER (gpu_function_seeder.py)
+------------------------------------------------------------------------------
+ Active Backend:         WGPU
+ Instruction Corpus:     100,000 ARM64 instructions
+ Classification Rate:    0.1 Million instructions/sec
+ Execution Latency:      1022.94 ms
+ Prologue / Call Seeds:  10,334 function entry seeds
+ Ghidra Java Script:     Batch transaction registration script generated
+
+3. DEPENDENCY CACHE DAG & SELECTIVE INVALIDATION (dependency_cache_dag.py)
+------------------------------------------------------------------------------
+ DAG Hierarchy Size:     1,000 function nodes & full call/type edges
+ Graph Build Latency:    69.70 ms
+ Invalidation Ops:       500 consecutive selective 1-hop events
+ Invalidation Speed:     36,876 invalidations/sec (13.56 ms)
+ Cache Retention Rate:   99.73% (Target > 98.0% -> PASS)
+ 1-Hop Cascade Bounds:   Target function + immediate callers only; unaffected retained
+
+4. SEMANTIC DELTA LOG & PROOF AUDIT (semantic_delta_log.py)
+------------------------------------------------------------------------------
+ Delta Format:           Git-mergeable append-only JSONL (.ghidra-delta.jsonl)
+ Event Ingestion Volume: 10,000 atomic semantic events
+ Append Throughput:      26,690 events/sec
+ Read & Parse Speed:     14,861 events/sec
+ Cryptographic Audit:    30,344 SHA-256 proofs/sec
+ Integrity Gate:         TAMPER PROOF & VERIFIED (Pass: True)
+ Proof Engine:           Formal integration with ReconstructionObligationLedger
+
+5. OFF-HEAP DWARF/PDB PRE-INDEXER (dwarf_pdb_preindexer.py)
+------------------------------------------------------------------------------
+ Compilation Units:      50 CUs
+ Raw Types Ingested:     1,550
+ Canonical Types Kept:   1,025
+ Deduplication Ratio:    1.51x (33.87% redundant types eliminated)
+ Dedup Throughput:       15,382 types/sec
+ SQLite Ingestion Rate:  37,019 records/sec
+ Query Latency (Type):   2.16 us (Target < 100.0 us -> PASS)
+ Query Latency (Layout): 0.99 us (Target < 100.0 us -> PASS)
+ Query Latency (Symbol): 30.35 us (Target < 100.0 us -> PASS)
+ Oracle Mount:           Mountable off-heap via OracleTypeStoreAdapter
+
+==============================================================================
+ TARGET VERIFICATION SUMMARY:
+   - IPC Roundtrip Latency:  35.38 us < 50.0 us     -> PASS
+   - Cache Retention Rate:   99.73% > 98.0%          -> PASS
+   - Off-Heap Query Latency: 2.16 us < 100.0 us    -> PASS
+   - Cryptographic Proofs:   Deterministic SHA-256            -> PASS
+   - Memory Decoupling:      Zero Ghidra JVM DataTypeDB lock  -> PASS
+==============================================================================

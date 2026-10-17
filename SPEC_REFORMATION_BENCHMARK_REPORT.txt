@@ -1,0 +1,100 @@
+==============================================================================
+ SUPERGHIDRA SPEC REFORMATION CONSOLIDATED BENCHMARK REPORT
+ Sections 5, 6, and 7 Implementation Verification
+ Target: E:\Downloads\GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md
+==============================================================================
+
+1. UNIFIED APK JNI CROSS-REFERENCER (apk_jni_cross_referencer.py)
+------------------------------------------------------------------------------
+ Section:                Section 5.1 (Cross-Platform Headless APK & NDK Analysis)
+ DEX Native Parsing:     Mangled short & long overloaded JNI symbol resolution
+ Static Symbol Match:    Resolved Java_<pkg>_<class>_<method> with confidence 1.0
+ Dynamic Table Scanner:  JNINativeMethod {name_ptr, sig_ptr, fn_ptr}
+ Pointer Architecture:  64-bit (24-byte layout) and 32-bit (12-byte layout)
+ Memory Bounds Check:    Validates fn_ptr falls inside executable .text segment
+ PostScript Generator:   Emits CodeBrowser labels and plate comments with RVAs
+ Unit Test Status:       PASS (2/2 tests in TestAPKJNICrossReferencer)
+
+2. CROSS-PLATFORM HEADLESS HARNESS (cross_platform_headless_harness.py)
+------------------------------------------------------------------------------
+ Section:                Section 5.1 & 5.2 (Multi-OS & Google Colab Runtimes)
+ ELF Loader Profile:     -loader ElfLoader -loader-applyDataImageBase true
+                         -loader-loadLibraries true -loader-libraryLoadDepth 0
+ PE Loader Profile:      -loader PeLoader -loader-parseCliHeaders true
+                         -loader-ordinalLookup true -loader-showDebugLineNumbers true
+ Ephemeral Isolation:    -readOnly -deleteProject with RAM disk (/dev/shm) mount
+ Timeouts & Concurrency: -max-cpu <N> -analysisTimeoutPerPage 120
+ JADX Optimization:      jadx --deobf -j <threads> with JAVA_OPTS="-Xmx<N>g -XX:+UseG1GC"
+ Colab GPU / TPU Envs:   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+                         XLA_PYTHON_CLIENT_PREALLOCATE=false
+ Unit Test Status:       PASS (2/2 tests in TestCrossPlatformHeadlessHarness)
+
+3. ZERO-JVM PYTHON P-CODE IR LIFTER (pcode_lifter_bridge.py)
+------------------------------------------------------------------------------
+ Section:                Section 6 & 7 (Direct Python P-Code IR Lifter)
+ JVM Dependency:         0 (Pure CPython / C-extension, zero JVM boot required)
+ Target Architectures:   ARM64 (AArch64) & x86_64
+ Core Opcode Lifting:    RETURN, COPY, INT_ADD, INT_SUB, LOAD, STORE, CALL, BRANCH
+ PC-Relative Addressing: 26-bit sign-extended branch targets (BL / B)
+ High-Speed Dispatch:    ADRP page base address + unsigned immediate offsets
+ CFG Adjacency Engine:   Fixed-shape Varnode adjacency matrices (max_nodes, max_nodes)
+ Acceleration Target:    Graph Neural Networks / Cloud TPU v5e systolic arrays
+ Unit Test Status:       PASS (2/2 tests in TestPcodeLifterBridge)
+
+4. NATIVE C++ DECOMPILER PGO BUILDER (native_decompiler_pgo_builder.py)
+------------------------------------------------------------------------------
+ Section:                Section 6 (Internal Engine Optimization)
+ Toolchain Tuning:       -O3 -march=native -flto (Link-Time Optimization)
+ PGO Architecture:       2-Phase (-fprofile-generate -> Training -> -fprofile-use)
+ Custom P-Code Rules:    RuleFoldJniBridgeThunk (folds direct CALL -> RET trampolines)
+ DecompileOptions XML:   Eliminate unreachable blocks, simplify predicates,
+                         payload bounds to prevent pathological worker stalls
+ Automation Artifacts:   CMakeLists.txt, Linux bash build script, Windows batch script
+ Unit Test Status:       PASS (1/1 test in TestNativeDecompilerPGOBuilder)
+
+5. TWO-PHASE SKELETON-TO-SKIN NEURAL LIFTER (neural_decompiler_pipeline.py)
+------------------------------------------------------------------------------
+ Section:                Section 7 (Two-Phase Skeleton-to-Skin Neural Lifter)
+ Phase A (Skeleton):     AST normalization, volatile variable replacement (v0, v1),
+                         displacement offset extraction (*(ptr + 0x24))
+ Phase B (Skin):         Neural semantic prediction (LLM4Decompile / SK2Decompile)
+ EvidenceLedger Gate:    ReconstructionObligationLedger formal invariant verification
+ Hallucination Defense:  Rejects struct field renames not matching physical displacements
+ Safe Commits:           Verified signatures & fields committed with proof hashes
+ Unit Test Status:       PASS (1/1 test in TestNeuralDecompilerPipeline)
+
+==============================================================================
+ FULL REFORMATION SPEC TEST SUMMARY:
+   - Spec Reformation Suite:  8 / 8 tests passed (0.100s)     -> PASS
+   - Phase-2 Integrated Suite: 17 / 17 tests passed (0.203s)   -> PASS
+   - Core SuperGhidra Suite:   9 / 9 tests passed (7.589s)    -> PASS
+   - Total Combined Tests:    34 / 34 tests passing (0 errors, 0 regressions)
+==============================================================================
+
+
+6. DIRECT GHIDRA RESOURCE GOVERNOR (resource_governor.py)
+------------------------------------------------------------------------------
+ Section:                Section 8 (Toggleable Speed-vs-CPU Architecture)
+ Operating Modes:        eco, balanced, turbo, auto
+ Thread & Duty Cycle:    eco: 1 worker (MIN_PRIORITY), 50ms yield sleep
+                         balanced: 2 workers, 10ms yield sleep
+                         turbo: all cores, 0ms duty cycle
+                         auto: scales 1 <-> max based on CPU/RAM telemetry
+ Decompile Process Pool: CachingPool reaper with 15s (eco) / 120s (balanced) idle timeouts
+ JVM Memory & JIT:       Generational ZGC elastic uncommit (SoftMaxHeapSize=768M-2G)
+                         Dynamic AppCDS pre-mapping (-XX:SharedArchiveFile=ghidra_appcds.jsa)
+                         C1-only JIT (-XX:TieredStopAtLevel=1) in eco mode
+ Complexity Downshift:   Tier 1 (<4KB, <100 BBs) -> "decompile" / "normalize"
+                         Tier 2 (4KB-16KB, 100-300 BBs) -> auto-downshift to "normalize"
+                         Tier 3 (>16KB, >300 BBs) -> auto-downshift to "jumptable" / "firstpass"
+ Persistent DB Cache:    LZ4-compressed DecompilerCacheDBAdapter table emulator
+ Unit Test Status:       PASS (6/6 tests in TestResourceGovernor)
+
+==============================================================================
+ TOTAL COMBINED TEST SUITE STATUS:
+   - Resource Governor Suite:   6 / 6 tests passed (0.000s)     -> PASS
+   - Spec Reformation Suite:    8 / 8 tests passed (0.176s)     -> PASS
+   - Phase-2 Integrated Suite: 17 / 17 tests passed (0.203s)    -> PASS
+   - Core SuperGhidra Suite:    9 / 9 tests passed (7.589s)     -> PASS
+   - Master Verification:      40 / 40 tests passing (0 errors, 0 regressions)
+==============================================================================

@@ -126,6 +126,12 @@ def parse_addr_int(addr_input: Any) -> int:
         return int(s, 16)
 
 
+def normalize_hex_key(addr_input: Any) -> str:
+    """Returns canonical '0x00123456' format string for address keys."""
+    val = parse_addr_int(addr_input)
+    return f"0x{val:08X}"
+
+
 def va_to_rva(va: int, base: int = DEFAULT_IMAGE_BASE) -> int:
     """Translates Ghidra VA to runtime RVA."""
     return va - base if va >= base else va
@@ -133,7 +139,7 @@ def va_to_rva(va: int, base: int = DEFAULT_IMAGE_BASE) -> int:
 
 def rva_to_va(rva: int, base: int = DEFAULT_IMAGE_BASE) -> int:
     """Translates runtime RVA to Ghidra VA."""
-    return rva + base if rva < base else rva
+    return rva + base
 
 
 def normalize_address_pair(addr_input: Any, base: int = DEFAULT_IMAGE_BASE) -> Tuple[int, int]:
@@ -224,8 +230,8 @@ class WriteOverlay:
                 try:
                     with open(self.filepath, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        self.renames = data.get("renames", {})
-                        self.comments = data.get("comments", {})
+                        self.renames = {normalize_hex_key(k): v for k, v in data.get("renames", {}).items()}
+                        self.comments = {normalize_hex_key(k): v for k, v in data.get("comments", {}).items()}
                 except Exception as e:
                     logger.warning(f"Failed to load write-overlay from {self.filepath}: {e}")
 
@@ -246,26 +252,28 @@ class WriteOverlay:
             except Exception as e:
                 logger.error(f"Failed to save write-overlay to {self.filepath}: {e}")
 
-    def set_rename(self, addr_key: str, name: str) -> None:
+    def set_rename(self, addr_input: Any, name: str) -> None:
+        key = normalize_hex_key(addr_input)
         with self._lock:
-            self.renames[addr_key.upper()] = name
+            self.renames[key] = name
         self.save()
 
-    def set_comment(self, addr_key: str, comment: str) -> None:
+    def set_comment(self, addr_input: Any, comment: str) -> None:
+        key = normalize_hex_key(addr_input)
         with self._lock:
-            self.comments[addr_key.upper()] = comment
+            self.comments[key] = comment
         self.save()
 
     def get_rename(self, va: int, rva: int) -> Optional[str]:
         with self._lock:
-            for k in [f"0x{va:08X}", f"0x{rva:08X}", hex(va).upper(), hex(rva).upper()]:
+            for k in [normalize_hex_key(va), normalize_hex_key(rva)]:
                 if k in self.renames:
                     return self.renames[k]
         return None
 
     def get_comment(self, va: int, rva: int) -> Optional[str]:
         with self._lock:
-            for k in [f"0x{va:08X}", f"0x{rva:08X}", hex(va).upper(), hex(rva).upper()]:
+            for k in [normalize_hex_key(va), normalize_hex_key(rva)]:
                 if k in self.comments:
                     return self.comments[k]
         return None
@@ -1009,17 +1017,13 @@ class GhidraDaemonServer:
             elif cmd == "rename":
                 addr = args.get("addr")
                 name = args.get("name")
-                va, rva = normalize_address_pair(addr, self.session.image_base)
-                key = f"0x{va:08X}"
-                self.session.overlay.set_rename(key, name)
-                return {"status": "ok", "message": f"Renamed {key} to '{name}'"}
+                self.session.overlay.set_rename(addr, name)
+                return {"status": "ok", "message": f"Renamed {normalize_hex_key(addr)} to '{name}'"}
             elif cmd == "comment":
                 addr = args.get("addr")
                 comment = args.get("comment")
-                va, rva = normalize_address_pair(addr, self.session.image_base)
-                key = f"0x{va:08X}"
-                self.session.overlay.set_comment(key, comment)
-                return {"status": "ok", "message": f"Set comment on {key}"}
+                self.session.overlay.set_comment(addr, comment)
+                return {"status": "ok", "message": f"Set comment on {normalize_hex_key(addr)}"}
             elif cmd == "overlay":
                 action = args.get("action", "list")
                 if action == "clear":
@@ -1058,18 +1062,28 @@ def spawn_background_daemon(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) 
     log_path = os.path.join(os.path.dirname(script_path), DAEMON_LOG_FILENAME)
 
     cmd = [sys.executable, script_path, "serve", "--host", host, "--port", str(port)]
-    print(f"[*] Spawning background Ghidra daemon on {host}:{port}...")
+    print(f"[*] Spawning background Ghidra daemon on {host}:{port}...", file=sys.stderr)
 
     if os.name == "nt":
-        creationflags = (
+        base_flags = (
             subprocess.CREATE_NEW_PROCESS_GROUP
             | subprocess.DETACHED_PROCESS
             | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
         )
-        with open(log_path, "a", encoding="utf-8") as log_f:
+        log_f = open(log_path, "a", encoding="utf-8")
+        try:
+            # 0x01000000: CREATE_BREAKAWAY_FROM_JOB allows daemon to survive task runner exit
             subprocess.Popen(
                 cmd,
-                creationflags=creationflags,
+                creationflags=base_flags | 0x01000000,
+                stdout=log_f,
+                stderr=log_f,
+                close_fds=True,
+            )
+        except OSError:
+            subprocess.Popen(
+                cmd,
+                creationflags=base_flags,
                 stdout=log_f,
                 stderr=log_f,
                 close_fds=True,
@@ -1088,14 +1102,14 @@ def spawn_background_daemon(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) 
 def wait_for_daemon_ready(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: float = DAEMON_STARTUP_TIMEOUT) -> bool:
     """Waits for the daemon to boot OpenJDK + PyGhidra and accept TCP connections."""
     t0 = time.time()
-    print("[*] Warming up JVM & Ghidra project (this takes ~10-15s on first boot)", end="", flush=True)
+    print("[*] Warming up JVM & Ghidra project (this takes ~10-15s on first boot)", end="", flush=True, file=sys.stderr)
     while time.time() - t0 < timeout:
         if is_daemon_online(host, port):
-            print(" [OK]")
+            print(" [OK]", file=sys.stderr)
             return True
-        print(".", end="", flush=True)
+        print(".", end="", flush=True, file=sys.stderr)
         time.sleep(1.0)
-    print(" [TIMEOUT]")
+    print(" [TIMEOUT]", file=sys.stderr)
     return False
 
 
