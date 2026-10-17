@@ -18,6 +18,8 @@ import dataclasses
 import enum
 import json
 import math
+import os
+import struct
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
@@ -58,12 +60,21 @@ OPCODE_MAP = {
     "neg": InsnCategory.ARITHMETIC, "negs": InsnCategory.ARITHMETIC,
     "and": InsnCategory.LOGICAL, "ands": InsnCategory.LOGICAL,
     "orr": InsnCategory.LOGICAL, "eor": InsnCategory.LOGICAL,
+    "bic": InsnCategory.LOGICAL, "bics": InsnCategory.LOGICAL,
+    "orn": InsnCategory.LOGICAL, "eon": InsnCategory.LOGICAL,
     "lsl": InsnCategory.LOGICAL, "lsr": InsnCategory.LOGICAL,
     "asr": InsnCategory.LOGICAL, "mvn": InsnCategory.LOGICAL,
+    "mov": InsnCategory.ARITHMETIC, "movz": InsnCategory.ARITHMETIC,
+    "movn": InsnCategory.ARITHMETIC, "movk": InsnCategory.ARITHMETIC,
+    "adr": InsnCategory.ARITHMETIC, "adrp": InsnCategory.ARITHMETIC,
     "ldr": InsnCategory.MEMORY_LOAD, "ldp": InsnCategory.MEMORY_LOAD,
     "ldrb": InsnCategory.MEMORY_LOAD, "ldrh": InsnCategory.MEMORY_LOAD,
+    "ldur": InsnCategory.MEMORY_LOAD, "ldurb": InsnCategory.MEMORY_LOAD,
+    "ldurh": InsnCategory.MEMORY_LOAD, "ldursw": InsnCategory.MEMORY_LOAD,
     "str": InsnCategory.MEMORY_STORE, "stp": InsnCategory.MEMORY_STORE,
     "strb": InsnCategory.MEMORY_STORE, "strh": InsnCategory.MEMORY_STORE,
+    "stur": InsnCategory.MEMORY_STORE, "sturb": InsnCategory.MEMORY_STORE,
+    "sturh": InsnCategory.MEMORY_STORE,
     "b": InsnCategory.BRANCH_UNCOND, "br": InsnCategory.BRANCH_UNCOND,
     "b.eq": InsnCategory.BRANCH_COND, "b.ne": InsnCategory.BRANCH_COND,
     "b.lt": InsnCategory.BRANCH_COND, "b.gt": InsnCategory.BRANCH_COND,
@@ -76,15 +87,26 @@ OPCODE_MAP = {
     "fadd": InsnCategory.VECTOR_FP, "fsub": InsnCategory.VECTOR_FP,
     "fmul": InsnCategory.VECTOR_FP, "fdiv": InsnCategory.VECTOR_FP,
     "fmov": InsnCategory.VECTOR_FP,
+    "nop": InsnCategory.OTHER, "hint": InsnCategory.OTHER,
+    "svc": InsnCategory.SYSTEM, "brk": InsnCategory.SYSTEM,
+    "mrs": InsnCategory.SYSTEM, "msr": InsnCategory.SYSTEM,
     
     # x86_64
     "mov": InsnCategory.MEMORY_LOAD, "lea": InsnCategory.ARITHMETIC,
     "push": InsnCategory.MEMORY_STORE, "pop": InsnCategory.MEMORY_LOAD,
     "jmp": InsnCategory.BRANCH_UNCOND, "je": InsnCategory.BRANCH_COND,
-    "jne": InsnCategory.BRANCH_COND, "jl": InsnCategory.BRANCH_COND,
+    "jne": InsnCategory.BRANCH_COND, "jz": InsnCategory.BRANCH_COND,
+    "jnz": InsnCategory.BRANCH_COND, "jl": InsnCategory.BRANCH_COND,
     "jle": InsnCategory.BRANCH_COND, "jg": InsnCategory.BRANCH_COND,
-    "jge": InsnCategory.BRANCH_COND, "call": InsnCategory.CALL,
+    "jge": InsnCategory.BRANCH_COND, "jb": InsnCategory.BRANCH_COND,
+    "jae": InsnCategory.BRANCH_COND, "jbe": InsnCategory.BRANCH_COND,
+    "ja": InsnCategory.BRANCH_COND, "js": InsnCategory.BRANCH_COND,
+    "jns": InsnCategory.BRANCH_COND, "jo": InsnCategory.BRANCH_COND,
+    "jno": InsnCategory.BRANCH_COND, "jp": InsnCategory.BRANCH_COND,
+    "jnp": InsnCategory.BRANCH_COND, "call": InsnCategory.CALL,
     "test": InsnCategory.COMPARE, "xor": InsnCategory.LOGICAL,
+    "or": InsnCategory.LOGICAL, "imul": InsnCategory.ARITHMETIC,
+    "endbr64": InsnCategory.OTHER, "leave": InsnCategory.OTHER,
 }
 
 
@@ -100,6 +122,246 @@ class InstructionInfo:
         mnem_clean = mnemonic.lower().strip()
         cat = OPCODE_MAP.get(mnem_clean, InsnCategory.OTHER)
         return cls(address=address, mnemonic=mnem_clean, op_str=op_str, category=cat)
+
+
+def decode_arm64_instruction(pc: int, insn: int) -> InstructionInfo:
+    """
+    Decodes an ARM64 32-bit machine word into an InstructionInfo instance,
+    resolving mnemonic, immediate operands/targets, and semantic category.
+    """
+    # 1. RET: (insn & 0xFFFFFC1F) == 0xD65F0000
+    if (insn & 0xFFFFFC1F) == 0xD65F0000:
+        rn = (insn >> 5) & 0x1F
+        op_str = "" if rn == 30 else f"x{rn}"
+        return InstructionInfo(address=pc, mnemonic="ret", op_str=op_str, category=InsnCategory.RETURN)
+
+    # 2. Unconditional Branch Immediate (B): (insn & 0xFC000000) == 0x14000000
+    if (insn & 0xFC000000) == 0x14000000:
+        imm26 = insn & 0x03FFFFFF
+        if imm26 & 0x02000000:
+            imm26 -= 0x04000000
+        target = pc + (imm26 << 2)
+        return InstructionInfo(address=pc, mnemonic="b", op_str=f"#{hex(target)}", category=InsnCategory.BRANCH_UNCOND)
+
+    # 3. Branch with Link (BL - Call): (insn & 0xFC000000) == 0x94000000
+    if (insn & 0xFC000000) == 0x94000000:
+        imm26 = insn & 0x03FFFFFF
+        if imm26 & 0x02000000:
+            imm26 -= 0x04000000
+        target = pc + (imm26 << 2)
+        return InstructionInfo(address=pc, mnemonic="bl", op_str=f"#{hex(target)}", category=InsnCategory.CALL)
+
+    # 4. Conditional Branch Immediate (B.cond): (insn & 0xFF000010) == 0x54000000
+    if (insn & 0xFF000010) == 0x54000000:
+        cond = insn & 0x0F
+        cond_names = ["eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "al", "nv"]
+        cond_str = cond_names[cond] if cond < len(cond_names) else "cond"
+        imm19 = (insn >> 5) & 0x7FFFF
+        if imm19 & 0x40000:
+            imm19 -= 0x80000
+        target = pc + (imm19 << 2)
+        return InstructionInfo(address=pc, mnemonic=f"b.{cond_str}", op_str=f"#{hex(target)}", category=InsnCategory.BRANCH_COND)
+
+    # 5. Compare and Branch (CBZ / CBNZ): (insn & 0x7E000000) == 0x34000000
+    if (insn & 0x7E000000) == 0x34000000:
+        is_cbnz = bool((insn >> 24) & 1)
+        sf = (insn >> 31) & 1
+        rt = insn & 0x1F
+        imm19 = (insn >> 5) & 0x7FFFF
+        if imm19 & 0x40000:
+            imm19 -= 0x80000
+        target = pc + (imm19 << 2)
+        mnem = "cbnz" if is_cbnz else "cbz"
+        r_prefix = "x" if sf else "w"
+        return InstructionInfo(address=pc, mnemonic=mnem, op_str=f"{r_prefix}{rt}, #{hex(target)}", category=InsnCategory.BRANCH_COND)
+
+    # 6. Test and Branch (TBZ / TBNZ): (insn & 0x7E000000) == 0x36000000
+    if (insn & 0x7E000000) == 0x36000000:
+        is_tbnz = bool((insn >> 24) & 1)
+        b5 = (insn >> 31) & 1
+        b40 = (insn >> 19) & 0x1F
+        bit = (b5 << 5) | b40
+        rt = insn & 0x1F
+        imm14 = (insn >> 5) & 0x3FFF
+        if imm14 & 0x2000:
+            imm14 -= 0x4000
+        target = pc + (imm14 << 2)
+        mnem = "tbnz" if is_tbnz else "tbz"
+        return InstructionInfo(address=pc, mnemonic=mnem, op_str=f"x{rt}, #{bit}, #{hex(target)}", category=InsnCategory.BRANCH_COND)
+
+    # 7. Register Branch (BR / BLR)
+    if (insn & 0xFFFFFC1F) == 0xD61F0000:
+        rn = (insn >> 5) & 0x1F
+        return InstructionInfo(address=pc, mnemonic="br", op_str=f"x{rn}", category=InsnCategory.BRANCH_UNCOND)
+    if (insn & 0xFFFFFC1F) == 0xD63F0000:
+        rn = (insn >> 5) & 0x1F
+        return InstructionInfo(address=pc, mnemonic="blr", op_str=f"x{rn}", category=InsnCategory.CALL)
+
+    # 8. Load / Store Unsigned Immediate
+    if (insn & 0x3B000000) == 0x39000000:
+        size = (insn >> 30) & 0x03
+        is_load = bool((insn >> 22) & 0x01)
+        imm12 = (insn >> 10) & 0xFFF
+        offset = imm12 << size
+        rn = (insn >> 5) & 0x1F
+        rt = insn & 0x1F
+        mnem = "ldr" if is_load else "str"
+        if size == 0:
+            mnem += "b"
+        elif size == 1:
+            mnem += "h"
+        cat = InsnCategory.MEMORY_LOAD if is_load else InsnCategory.MEMORY_STORE
+        reg = f"x{rt}" if size == 3 else f"w{rt}"
+        base = "sp" if rn == 31 else f"x{rn}"
+        return InstructionInfo(address=pc, mnemonic=mnem, op_str=f"{reg}, [{base}, #{hex(offset)}]", category=cat)
+
+    # 9. Load / Store Pair (LDP / STP)
+    if (insn & 0x3B800000) == 0x28000000:
+        is_load = bool((insn >> 22) & 0x01)
+        mnem = "ldp" if is_load else "stp"
+        cat = InsnCategory.MEMORY_LOAD if is_load else InsnCategory.MEMORY_STORE
+        return InstructionInfo(address=pc, mnemonic=mnem, op_str="", category=cat)
+
+    # 10. Load / Store Unscaled (LDUR / STUR)
+    if (insn & 0x3B200C00) == 0x38000000:
+        is_load = bool((insn >> 22) & 0x01)
+        mnem = "ldur" if is_load else "stur"
+        cat = InsnCategory.MEMORY_LOAD if is_load else InsnCategory.MEMORY_STORE
+        return InstructionInfo(address=pc, mnemonic=mnem, op_str="", category=cat)
+
+    # 11. ADRP / ADR
+    if (insn & 0x9F000000) == 0x90000000:
+        immhi = (insn >> 5) & 0x7FFFF
+        immlo = (insn >> 29) & 0x03
+        imm = (immhi << 2) | immlo
+        if imm & 0x100000:
+            imm -= 0x200000
+        target = (pc & ~0xFFF) + (imm << 12)
+        rd = insn & 0x1F
+        return InstructionInfo(address=pc, mnemonic="adrp", op_str=f"x{rd}, #{hex(target)}", category=InsnCategory.ARITHMETIC)
+    if (insn & 0x9F000000) == 0x10000000:
+        immhi = (insn >> 5) & 0x7FFFF
+        immlo = (insn >> 29) & 0x03
+        imm = (immhi << 2) | immlo
+        if imm & 0x100000:
+            imm -= 0x200000
+        target = pc + imm
+        rd = insn & 0x1F
+        return InstructionInfo(address=pc, mnemonic="adr", op_str=f"x{rd}, #{hex(target)}", category=InsnCategory.ARITHMETIC)
+
+    # 12. Add/Sub Immediate
+    if (insn & 0x1F000000) == 0x11000000:
+        is_sub = bool((insn >> 30) & 1)
+        is_s = bool((insn >> 29) & 1)
+        rd = insn & 0x1F
+        if is_sub and is_s and rd == 31:
+            return InstructionInfo(address=pc, mnemonic="cmp", op_str="", category=InsnCategory.COMPARE)
+        mnem = ("subs" if is_s else "sub") if is_sub else ("adds" if is_s else "add")
+        return InstructionInfo(address=pc, mnemonic=mnem, op_str="", category=InsnCategory.ARITHMETIC)
+
+    # 13. Move Wide (MOVZ / MOVN / MOVK)
+    if (insn & 0x7F800000) == 0x52800000:
+        imm16 = (insn >> 5) & 0xFFFF
+        rd = insn & 0x1F
+        return InstructionInfo(address=pc, mnemonic="movz", op_str=f"r{rd}, #{hex(imm16)}", category=InsnCategory.ARITHMETIC)
+    if (insn & 0x7F800000) == 0x12800000:
+        imm16 = (insn >> 5) & 0xFFFF
+        rd = insn & 0x1F
+        return InstructionInfo(address=pc, mnemonic="movn", op_str=f"r{rd}, #{hex(imm16)}", category=InsnCategory.ARITHMETIC)
+    if (insn & 0x7F800000) == 0x72800000:
+        imm16 = (insn >> 5) & 0xFFFF
+        rd = insn & 0x1F
+        return InstructionInfo(address=pc, mnemonic="movk", op_str=f"r{rd}, #{hex(imm16)}", category=InsnCategory.ARITHMETIC)
+
+    # 14. Logical (AND, ORR, EOR, BIC, ORN, EON)
+    if ((insn & 0x1F000000) == 0x0A000000) or ((insn & 0x1F800000) == 0x12000000):
+        # Register MOV alias (orr rd, xzr, rm)
+        if (insn & 0x7FE0FFE0) == 0x2A0003E0:
+            return InstructionInfo(address=pc, mnemonic="mov", op_str="", category=InsnCategory.ARITHMETIC)
+        opc = (insn >> 29) & 3
+        n = (insn >> 21) & 1
+        log_mnems = {
+            (0, 0): "and", (0, 1): "bic",
+            (1, 0): "orr", (1, 1): "orn",
+            (2, 0): "eor", (2, 1): "eon",
+            (3, 0): "ands", (3, 1): "bics"
+        }
+        mnem = log_mnems.get((opc, n), "orr")
+        return InstructionInfo(address=pc, mnemonic=mnem, op_str="", category=InsnCategory.LOGICAL)
+
+    # 15. Floating Point / Vector
+    if ((insn & 0x5E000000) == 0x1E000000) or ((insn & 0x1E400000) == 0x0E000000):
+        return InstructionInfo(address=pc, mnemonic="fmov", op_str="", category=InsnCategory.VECTOR_FP)
+
+    # 16. NOP / Hints
+    if insn == 0xD503201F:
+        return InstructionInfo(address=pc, mnemonic="nop", op_str="", category=InsnCategory.OTHER)
+    if (insn & 0xFFFFF01F) == 0xD503201F:
+        return InstructionInfo(address=pc, mnemonic="hint", op_str="", category=InsnCategory.OTHER)
+
+    # 17. System (SVC, BRK)
+    if (insn & 0xFFE0001F) == 0xD4000001:
+        return InstructionInfo(address=pc, mnemonic="svc", op_str="", category=InsnCategory.SYSTEM)
+    if (insn & 0xFFE0001F) == 0xD4200000:
+        return InstructionInfo(address=pc, mnemonic="brk", op_str="", category=InsnCategory.SYSTEM)
+
+    # Default fallback
+    return InstructionInfo(address=pc, mnemonic="unknown", op_str="", category=InsnCategory.OTHER)
+
+
+def get_arm64_branch_info(pc: int, insn: int) -> Tuple[str, Optional[int], bool]:
+    """
+    Returns (branch_type, target_address, is_conditional) for an ARM64 instruction.
+    branch_type is one of: 'ret', 'b', 'b.cond', 'cbz', 'tbz', 'bl', 'blr', 'br', 'none'.
+    """
+    # RET
+    if (insn & 0xFFFFFC1F) == 0xD65F0000:
+        return ("ret", None, False)
+
+    # Unconditional B
+    if (insn & 0xFC000000) == 0x14000000:
+        imm26 = insn & 0x03FFFFFF
+        if imm26 & 0x02000000:
+            imm26 -= 0x04000000
+        return ("b", pc + (imm26 << 2), False)
+
+    # BL
+    if (insn & 0xFC000000) == 0x94000000:
+        imm26 = insn & 0x03FFFFFF
+        if imm26 & 0x02000000:
+            imm26 -= 0x04000000
+        return ("bl", pc + (imm26 << 2), False)
+
+    # B.cond
+    if (insn & 0xFF000010) == 0x54000000:
+        imm19 = (insn >> 5) & 0x7FFFF
+        if imm19 & 0x40000:
+            imm19 -= 0x80000
+        return ("b.cond", pc + (imm19 << 2), True)
+
+    # CBZ / CBNZ
+    if (insn & 0x7E000000) == 0x34000000:
+        imm19 = (insn >> 5) & 0x7FFFF
+        if imm19 & 0x40000:
+            imm19 -= 0x80000
+        return ("cbz", pc + (imm19 << 2), True)
+
+    # TBZ / TBNZ
+    if (insn & 0x7E000000) == 0x36000000:
+        imm14 = (insn >> 5) & 0x3FFF
+        if imm14 & 0x2000:
+            imm14 -= 0x4000
+        return ("tbz", pc + (imm14 << 2), True)
+
+    # BR
+    if (insn & 0xFFFFFC1F) == 0xD61F0000:
+        return ("br", None, False)
+
+    # BLR
+    if (insn & 0xFFFFFC1F) == 0xD63F0000:
+        return ("blr", None, False)
+
+    return ("none", None, False)
 
 
 @dataclasses.dataclass
@@ -425,6 +687,639 @@ class BatchedBinaryMatcher:
             avg_similarity=avg_sim,
             match_rate_pct=match_rate,
         )
+
+
+# ==============================================================================
+# Direct Binary & ARM64 Machine Code CFG Extraction
+# ==============================================================================
+
+def extract_cfgs_from_arm64_bytes(
+    code_bytes: bytes,
+    base_vaddr: int = 0x100000,
+) -> List[FunctionCFG]:
+    """
+    Directly extracts FunctionCFGs from raw ARM64 machine bytes.
+    Partitions functions using GPUFunctionSeeder(backend="numpy") and RET (0xD65F03C0) boundaries,
+    then parses BasicBlocks, control flow edges, branch targets, and call sites.
+    """
+    num_insns = len(code_bytes) // 4
+    if num_insns == 0:
+        return []
+
+    insns = np.frombuffer(code_bytes[: num_insns * 4], dtype=np.uint32)
+
+    # Discover function entry points
+    entry_addrs: Set[int] = {base_vaddr}
+
+    # 1. GPUFunctionSeeder discovery
+    try:
+        from gpu_function_seeder import GPUFunctionSeeder
+        seeder = GPUFunctionSeeder(backend="numpy")
+        seeds = seeder.seed_functions(insns, text_base_vaddr=base_vaddr)
+        for s in seeds:
+            if base_vaddr <= s.entry_vaddr < base_vaddr + num_insns * 4:
+                entry_addrs.add(s.entry_vaddr)
+    except Exception:
+        pass
+
+    # 2. RET boundary partitioning (0xD65F03C0 or (insn & 0xFFFFFC1F) == 0xD65F0000)
+    for i in range(num_insns):
+        insn_val = int(insns[i])
+        if (insn_val & 0xFFFFFC1F) == 0xD65F0000:  # RET
+            # Next valid instruction after padding is a candidate function start
+            next_idx = i + 1
+            while next_idx < num_insns and insns[next_idx] in (0xD503201F, 0x00000000):
+                next_idx += 1
+            if next_idx < num_insns:
+                entry_addrs.add(base_vaddr + next_idx * 4)
+
+    sorted_entries = sorted(list(entry_addrs))
+    cfgs: List[FunctionCFG] = []
+
+    for k, start_pc in enumerate(sorted_entries):
+        end_pc = sorted_entries[k + 1] if k + 1 < len(sorted_entries) else (base_vaddr + num_insns * 4)
+        if start_pc >= end_pc:
+            continue
+
+        start_idx = (start_pc - base_vaddr) // 4
+        end_idx = (end_pc - base_vaddr) // 4
+        func_insns = insns[start_idx:end_idx]
+        if len(func_insns) == 0:
+            continue
+
+        # Look for the last RET within this function range to exclude trailing padding
+        actual_end_pc = end_pc
+        for cur_idx in range(len(func_insns) - 1, -1, -1):
+            if (int(func_insns[cur_idx]) & 0xFFFFFC1F) == 0xD65F0000:
+                actual_end_pc = start_pc + (cur_idx + 1) * 4
+                break
+
+        cfg = FunctionCFG(
+            func_id=f"func_{start_pc:08x}",
+            address=start_pc,
+            name=f"sub_{start_pc:08x}",
+        )
+
+        # 3. Identify BasicBlock leaders within [start_pc, actual_end_pc)
+        leaders: Set[int] = {start_pc}
+        cur_pc = start_pc
+        for insn_val_raw in func_insns:
+            if cur_pc >= actual_end_pc:
+                break
+            insn_val = int(insn_val_raw)
+            btype, target, is_cond = get_arm64_branch_info(cur_pc, insn_val)
+
+            if target is not None and start_pc <= target < actual_end_pc:
+                leaders.add(target)
+
+            if is_cond:
+                fallthrough = cur_pc + 4
+                if fallthrough < actual_end_pc:
+                    leaders.add(fallthrough)
+            elif btype in ("b", "ret", "br"):
+                fallthrough = cur_pc + 4
+                if fallthrough < actual_end_pc:
+                    leaders.add(fallthrough)
+
+            cur_pc += 4
+
+        sorted_leaders = sorted(list(leaders))
+
+        # 4. Construct BasicBlocks
+        for idx, leader_pc in enumerate(sorted_leaders):
+            limit_bb_pc = sorted_leaders[idx + 1] if idx + 1 < len(sorted_leaders) else actual_end_pc
+            bb = BasicBlock(start_addr=leader_pc, end_addr=limit_bb_pc)
+
+            bb_cur_pc = leader_pc
+            while bb_cur_pc < limit_bb_pc:
+                insn_idx = (bb_cur_pc - base_vaddr) // 4
+                if insn_idx >= num_insns:
+                    break
+                insn_val = int(insns[insn_idx])
+                info = decode_arm64_instruction(bb_cur_pc, insn_val)
+                bb.instructions.append(info)
+
+                # Record constants if immediate
+                if info.mnemonic in ("movz", "movk", "movn"):
+                    imm16 = (insn_val >> 5) & 0xFFFF
+                    cfg.constants.add(imm16)
+                elif info.mnemonic in ("adrp", "adr"):
+                    cfg.constants.add(info.address)
+
+                btype, target, is_cond = get_arm64_branch_info(bb_cur_pc, insn_val)
+                if btype == "bl" and target is not None:
+                    cfg.callees.append(hex(target))
+
+                bb_cur_pc += 4
+
+                # Terminator instruction ends the basic block
+                if btype in ("b", "ret", "br") or is_cond:
+                    bb.end_addr = bb_cur_pc
+                    break
+
+            cfg.add_block(bb)
+
+        # 5. Wire edges between basic blocks
+        for bb in cfg.blocks.values():
+            if not bb.instructions:
+                continue
+            last_insn = bb.instructions[-1]
+            insn_idx = (last_insn.address - base_vaddr) // 4
+            insn_val = int(insns[insn_idx])
+            btype, target, is_cond = get_arm64_branch_info(last_insn.address, insn_val)
+
+            if is_cond:
+                if target is not None and start_pc <= target < actual_end_pc:
+                    cfg.add_edge(bb.start_addr, target)
+                fallthrough = last_insn.address + 4
+                if fallthrough < actual_end_pc and fallthrough in cfg.blocks:
+                    cfg.add_edge(bb.start_addr, fallthrough)
+            elif btype == "b":
+                if target is not None and start_pc <= target < actual_end_pc:
+                    cfg.add_edge(bb.start_addr, target)
+            elif btype == "ret":
+                pass  # Function return: exit block, no outgoing edge within function
+            elif btype == "br":
+                pass  # Indirect branch
+            else:
+                # Fallthrough to subsequent block
+                fallthrough = bb.end_addr
+                if fallthrough in cfg.blocks:
+                    cfg.add_edge(bb.start_addr, fallthrough)
+
+        cfgs.append(cfg)
+
+    return cfgs
+
+
+_X86_JCC_NAMES = (
+    "jo", "jno", "jb", "jae", "je", "jne", "jbe", "ja",
+    "js", "jns", "jp", "jnp", "jl", "jge", "jle", "jg",
+)
+
+
+def decode_x86_64_instruction(
+    code_bytes: bytes,
+    offset: int,
+    base_vaddr: int = 0x401000,
+) -> Tuple[InstructionInfo, int, str, Optional[int], bool, Optional[int]]:
+    """
+    Decodes a single x86_64 instruction starting at `offset` in `code_bytes`.
+    Returns (insn_info, byte_length, branch_type, branch_target, is_cond, immediate_const).
+    branch_type is one of: 'ret', 'jmp', 'jcc', 'call', 'none'.
+    """
+    n = len(code_bytes)
+    pc = base_vaddr + offset
+    if offset >= n:
+        return InstructionInfo(pc, "unknown", "", InsnCategory.OTHER), 1, "none", None, False, None
+
+    # 1. ENDBR64 (F3 0F 1E FA)
+    if offset + 4 <= n and code_bytes[offset : offset + 4] == b"\xf3\x0f\x1e\xfa":
+        return InstructionInfo(pc, "endbr64", "", InsnCategory.OTHER), 4, "none", None, False, None
+
+    cur = offset
+    has_66 = False
+    if cur < n and code_bytes[cur] in (0x66, 0xF2, 0xF3):
+        if code_bytes[cur] == 0x66:
+            has_66 = True
+        cur += 1
+
+    rex = 0
+    if cur < n and 0x40 <= code_bytes[cur] <= 0x4F:
+        rex = code_bytes[cur]
+        cur += 1
+
+    if cur >= n:
+        return InstructionInfo(pc, "nop", "", InsnCategory.OTHER), max(1, cur - offset), "none", None, False, None
+
+    op = code_bytes[cur]
+    rex_w = bool((rex >> 3) & 1)
+
+    # Single-byte opcodes
+    if op == 0x90:
+        return InstructionInfo(pc, "nop", "", InsnCategory.OTHER), (cur + 1 - offset), "none", None, False, None
+    if op == 0xC3:
+        return InstructionInfo(pc, "ret", "", InsnCategory.RETURN), (cur + 1 - offset), "ret", None, False, None
+    if op == 0xC2 and cur + 3 <= n:
+        return InstructionInfo(pc, "ret", "", InsnCategory.RETURN), (cur + 3 - offset), "ret", None, False, None
+    if op == 0xC9:
+        return InstructionInfo(pc, "leave", "", InsnCategory.OTHER), (cur + 1 - offset), "none", None, False, None
+    if op == 0xCC:
+        return InstructionInfo(pc, "int3", "", InsnCategory.SYSTEM), (cur + 1 - offset), "none", None, False, None
+    if 0x50 <= op <= 0x57:
+        return InstructionInfo(pc, "push", "", InsnCategory.MEMORY_STORE), (cur + 1 - offset), "none", None, False, None
+    if 0x58 <= op <= 0x5F:
+        return InstructionInfo(pc, "pop", "", InsnCategory.MEMORY_LOAD), (cur + 1 - offset), "none", None, False, None
+
+    # Direct CALL rel32 (E8)
+    if op == 0xE8 and cur + 5 <= n:
+        rel32 = struct.unpack_from("<i", code_bytes, cur + 1)[0]
+        length = cur + 5 - offset
+        target = pc + length + rel32
+        return InstructionInfo(pc, "call", f"#{hex(target)}", InsnCategory.CALL), length, "call", target, False, None
+
+    # Direct JMP rel32 (E9)
+    if op == 0xE9 and cur + 5 <= n:
+        rel32 = struct.unpack_from("<i", code_bytes, cur + 1)[0]
+        length = cur + 5 - offset
+        target = pc + length + rel32
+        return InstructionInfo(pc, "jmp", f"#{hex(target)}", InsnCategory.BRANCH_UNCOND), length, "jmp", target, False, None
+
+    # Short JMP rel8 (EB)
+    if op == 0xEB and cur + 2 <= n:
+        rel8 = struct.unpack_from("<b", code_bytes, cur + 1)[0]
+        length = cur + 2 - offset
+        target = pc + length + rel8
+        return InstructionInfo(pc, "jmp", f"#{hex(target)}", InsnCategory.BRANCH_UNCOND), length, "jmp", target, False, None
+
+    # Short Jcc rel8 (70..7F)
+    if 0x70 <= op <= 0x7F and cur + 2 <= n:
+        mnem = _X86_JCC_NAMES[op - 0x70]
+        rel8 = struct.unpack_from("<b", code_bytes, cur + 1)[0]
+        length = cur + 2 - offset
+        target = pc + length + rel8
+        return InstructionInfo(pc, mnem, f"#{hex(target)}", InsnCategory.BRANCH_COND), length, "jcc", target, True, None
+
+    # Two-byte opcodes (0F xx)
+    if op == 0x0F and cur + 2 <= n:
+        op2 = code_bytes[cur + 1]
+        if 0x80 <= op2 <= 0x8F and cur + 6 <= n:
+            mnem = _X86_JCC_NAMES[op2 - 0x80]
+            rel32 = struct.unpack_from("<i", code_bytes, cur + 2)[0]
+            length = cur + 6 - offset
+            target = pc + length + rel32
+            return InstructionInfo(pc, mnem, f"#{hex(target)}", InsnCategory.BRANCH_COND), length, "jcc", target, True, None
+        if op2 in (0x1F, 0xB6, 0xB7, 0xBE, 0xBF, 0xAF) and cur + 3 <= n:
+            modrm = code_bytes[cur + 2]
+            mod = (modrm >> 6) & 3
+            rm_low = modrm & 7
+            pos = cur + 3 + (1 if (mod != 3 and rm_low == 4) else 0)
+            if mod == 1:
+                pos += 1
+            elif mod == 2 or (mod == 0 and rm_low == 5):
+                pos += 4
+            length = min(n - offset, max(1, pos - offset))
+            if op2 == 0x1F:
+                return InstructionInfo(pc, "nop", "", InsnCategory.OTHER), length, "none", None, False, None
+            if op2 == 0xAF:
+                return InstructionInfo(pc, "imul", "", InsnCategory.ARITHMETIC), length, "none", None, False, None
+            return InstructionInfo(pc, "mov", "", InsnCategory.MEMORY_LOAD), length, "none", None, False, None
+
+    # MOV reg, imm (B8..BF)
+    if 0xB8 <= op <= 0xBF:
+        imm_len = 8 if rex_w else (2 if has_66 else 4)
+        if cur + 1 + imm_len <= n:
+            fmt = "<Q" if imm_len == 8 else ("<H" if imm_len == 2 else "<I")
+            imm_val = int(struct.unpack_from(fmt, code_bytes, cur + 1)[0])
+            length = cur + 1 + imm_len - offset
+            return InstructionInfo(pc, "mov", f"#{hex(imm_val)}", InsnCategory.ARITHMETIC), length, "none", None, False, imm_val
+
+    # Accumulator immediate instructions (ADD/SUB/CMP rax/eax, imm32)
+    if op in (0x05, 0x2D, 0x3D) and cur + 5 <= n:
+        imm_val = int(struct.unpack_from("<i", code_bytes, cur + 1)[0])
+        length = cur + 5 - offset
+        mnem = "add" if op == 0x05 else ("sub" if op == 0x2D else "cmp")
+        cat = InsnCategory.COMPARE if op == 0x3D else InsnCategory.ARITHMETIC
+        return InstructionInfo(pc, mnem, f"#{hex(imm_val)}", cat), length, "none", None, False, imm_val
+
+    # ModRM-encoded instructions
+    modrm_ops = {
+        0x89: ("mov", InsnCategory.MEMORY_STORE),
+        0x88: ("mov", InsnCategory.MEMORY_STORE),
+        0x8B: ("mov", InsnCategory.MEMORY_LOAD),
+        0x8A: ("mov", InsnCategory.MEMORY_LOAD),
+        0x8D: ("lea", InsnCategory.ARITHMETIC),
+        0x01: ("add", InsnCategory.ARITHMETIC),
+        0x03: ("add", InsnCategory.ARITHMETIC),
+        0x29: ("sub", InsnCategory.ARITHMETIC),
+        0x2B: ("sub", InsnCategory.ARITHMETIC),
+        0x31: ("xor", InsnCategory.LOGICAL),
+        0x33: ("xor", InsnCategory.LOGICAL),
+        0x21: ("and", InsnCategory.LOGICAL),
+        0x23: ("and", InsnCategory.LOGICAL),
+        0x09: ("or", InsnCategory.LOGICAL),
+        0x0B: ("or", InsnCategory.LOGICAL),
+        0x39: ("cmp", InsnCategory.COMPARE),
+        0x3B: ("cmp", InsnCategory.COMPARE),
+        0x85: ("test", InsnCategory.COMPARE),
+        0x84: ("test", InsnCategory.COMPARE),
+        0x83: ("grp1_imm8", InsnCategory.ARITHMETIC),
+        0x81: ("grp1_imm32", InsnCategory.ARITHMETIC),
+        0x80: ("grp1_imm8", InsnCategory.ARITHMETIC),
+        0xC7: ("mov_imm32", InsnCategory.MEMORY_STORE),
+        0xC6: ("mov_imm8", InsnCategory.MEMORY_STORE),
+    }
+
+    if op in modrm_ops and cur + 2 <= n:
+        mnem, cat = modrm_ops[op]
+        modrm = code_bytes[cur + 1]
+        mod = (modrm >> 6) & 3
+        reg_op = (modrm >> 3) & 7
+        rm_low = modrm & 7
+
+        pos = cur + 2 + (1 if (mod != 3 and rm_low == 4) else 0)
+        if mod == 1:
+            pos += 1
+        elif mod == 2 or (mod == 0 and rm_low == 5):
+            pos += 4
+
+        imm_const: Optional[int] = None
+        if mnem == "grp1_imm8":
+            grp_table = {
+                0: ("add", InsnCategory.ARITHMETIC),
+                1: ("or", InsnCategory.LOGICAL),
+                4: ("and", InsnCategory.LOGICAL),
+                5: ("sub", InsnCategory.ARITHMETIC),
+                6: ("xor", InsnCategory.LOGICAL),
+                7: ("cmp", InsnCategory.COMPARE),
+            }
+            mnem, cat = grp_table.get(reg_op, ("add", InsnCategory.ARITHMETIC))
+            if pos < n:
+                imm_const = int(struct.unpack_from("<b", code_bytes, pos)[0])
+            pos += 1
+        elif mnem == "grp1_imm32":
+            grp_table = {
+                0: ("add", InsnCategory.ARITHMETIC),
+                1: ("or", InsnCategory.LOGICAL),
+                4: ("and", InsnCategory.LOGICAL),
+                5: ("sub", InsnCategory.ARITHMETIC),
+                6: ("xor", InsnCategory.LOGICAL),
+                7: ("cmp", InsnCategory.COMPARE),
+            }
+            mnem, cat = grp_table.get(reg_op, ("add", InsnCategory.ARITHMETIC))
+            if pos + 4 <= n:
+                imm_const = int(struct.unpack_from("<i", code_bytes, pos)[0])
+            pos += 4
+        elif mnem == "mov_imm32":
+            mnem = "mov"
+            cat = InsnCategory.ARITHMETIC if mod == 3 else InsnCategory.MEMORY_STORE
+            if pos + 4 <= n:
+                imm_const = int(struct.unpack_from("<i", code_bytes, pos)[0])
+            pos += 4
+        elif mnem == "mov_imm8":
+            mnem = "mov"
+            cat = InsnCategory.ARITHMETIC if mod == 3 else InsnCategory.MEMORY_STORE
+            if pos < n:
+                imm_const = int(code_bytes[pos])
+            pos += 1
+        elif mnem == "mov" and mod == 3:
+            cat = InsnCategory.ARITHMETIC
+
+        length = min(n - offset, max(1, pos - offset))
+        return InstructionInfo(pc, mnem, "", cat), length, "none", None, False, imm_const
+
+    return InstructionInfo(pc, "unknown", "", InsnCategory.OTHER), max(1, cur + 1 - offset), "none", None, False, None
+
+
+def extract_cfgs_from_x86_64_bytes(
+    code_bytes: bytes,
+    base_vaddr: int = 0x401000,
+) -> List[FunctionCFG]:
+    """
+    Directly extracts FunctionCFGs from raw x86_64 machine bytes.
+    Splits functions on RET (0xC3), ENDBR64 (F3 0F 1E FA), PUSH rbp; MOV rbp, rsp (55 48 89 E5),
+    and CALL rel32 targets, decodes instructions, builds BasicBlocks and control-flow edges,
+    and populates FunctionCFG objects.
+    """
+    n = len(code_bytes)
+    if n == 0:
+        return []
+
+    # 1. Decode linear instruction stream
+    decoded_stream: List[Tuple[int, int, InstructionInfo, str, Optional[int], bool, Optional[int]]] = []
+    valid_addrs: Set[int] = set()
+    off = 0
+    while off < n:
+        info, length, btype, target, is_cond, imm_const = decode_x86_64_instruction(
+            code_bytes, off, base_vaddr=base_vaddr
+        )
+        decoded_stream.append((off, length, info, btype, target, is_cond, imm_const))
+        valid_addrs.add(info.address)
+        off += length
+
+    if not decoded_stream:
+        return []
+
+    # 2. Discover function entry points
+    entry_addrs: Set[int] = {base_vaddr}
+
+    try:
+        from gpu_function_seeder import GPUFunctionSeeder
+        seeder = GPUFunctionSeeder(backend="numpy")
+        seeds = seeder.seed_x86_64_functions(code_bytes, text_base_vaddr=base_vaddr)
+        for s in seeds:
+            if s.entry_vaddr in valid_addrs:
+                entry_addrs.add(s.entry_vaddr)
+    except Exception:
+        pass
+
+    for idx_s, (i_off, i_len, info, btype, target, is_cond, _) in enumerate(decoded_stream):
+        # Explicit prologue starts
+        if i_off + 4 <= n and code_bytes[i_off : i_off + 4] == b"\xf3\x0f\x1e\xfa":
+            entry_addrs.add(info.address)
+        elif i_off + 4 <= n and code_bytes[i_off : i_off + 4] in (b"\x55\x48\x89\xe5", b"\x55\x48\x8b\xec"):
+            if i_off < 4 or code_bytes[i_off - 4 : i_off] != b"\xf3\x0f\x1e\xfa":
+                entry_addrs.add(info.address)
+
+        # Call targets
+        if btype == "call" and target is not None and target in valid_addrs:
+            entry_addrs.add(target)
+
+        # Post-RET boundary
+        if btype == "ret":
+            next_s = idx_s + 1
+            while next_s < len(decoded_stream) and decoded_stream[next_s][2].mnemonic in ("nop", "int3"):
+                next_s += 1
+            if next_s < len(decoded_stream):
+                entry_addrs.add(decoded_stream[next_s][2].address)
+
+    sorted_entries = sorted(list(entry_addrs))
+    cfgs: List[FunctionCFG] = []
+
+    for k, start_pc in enumerate(sorted_entries):
+        end_pc = sorted_entries[k + 1] if k + 1 < len(sorted_entries) else (base_vaddr + n)
+        if start_pc >= end_pc:
+            continue
+
+        func_insns = [item for item in decoded_stream if start_pc <= item[2].address < end_pc]
+        # Strip trailing padding (nop/int3) after the last ret
+        while len(func_insns) > 1 and func_insns[-1][2].mnemonic in ("nop", "int3"):
+            func_insns.pop()
+
+        if not func_insns:
+            continue
+
+        actual_end_pc = func_insns[-1][2].address + func_insns[-1][1]
+        func_addr_set = {item[2].address for item in func_insns}
+
+        cfg = FunctionCFG(
+            func_id=f"func_{start_pc:08x}",
+            address=start_pc,
+            name=f"sub_{start_pc:08x}",
+        )
+
+        # 3. Identify BasicBlock leaders within [start_pc, actual_end_pc)
+        leaders: Set[int] = {start_pc}
+        for i_off, i_len, info, btype, target, is_cond, _ in func_insns:
+            if btype in ("jmp", "jcc") and target is not None and target in func_addr_set:
+                leaders.add(target)
+            if is_cond or btype in ("jmp", "ret"):
+                fallthrough = info.address + i_len
+                if fallthrough in func_addr_set:
+                    leaders.add(fallthrough)
+
+        sorted_leaders = sorted(list(leaders))
+
+        # 4. Construct BasicBlocks
+        last_branch_map: Dict[int, Tuple[str, Optional[int], bool, int]] = {}
+        for idx, leader_pc in enumerate(sorted_leaders):
+            limit_bb_pc = sorted_leaders[idx + 1] if idx + 1 < len(sorted_leaders) else actual_end_pc
+            bb = BasicBlock(start_addr=leader_pc, end_addr=limit_bb_pc)
+
+            for i_off, i_len, info, btype, target, is_cond, imm_const in func_insns:
+                if info.address < leader_pc:
+                    continue
+                if info.address >= limit_bb_pc:
+                    break
+
+                bb.instructions.append(info)
+                if imm_const is not None:
+                    cfg.constants.add(imm_const)
+                if btype == "call" and target is not None:
+                    cfg.callees.append(hex(target))
+
+                next_pc = info.address + i_len
+                last_branch_map[bb.start_addr] = (btype, target, is_cond, next_pc)
+
+                if btype in ("jmp", "ret") or is_cond:
+                    bb.end_addr = next_pc
+                    break
+
+            if bb.instructions:
+                cfg.add_block(bb)
+
+        # 5. Wire control-flow edges
+        for bb_addr, bb in cfg.blocks.items():
+            btype, target, is_cond, fallthrough = last_branch_map.get(
+                bb_addr, ("none", None, False, bb.end_addr)
+            )
+            if is_cond:
+                if target is not None and target in cfg.blocks:
+                    cfg.add_edge(bb_addr, target)
+                if fallthrough in cfg.blocks:
+                    cfg.add_edge(bb_addr, fallthrough)
+            elif btype == "jmp":
+                if target is not None and target in cfg.blocks:
+                    cfg.add_edge(bb_addr, target)
+            elif btype == "ret":
+                pass
+            else:
+                if fallthrough in cfg.blocks:
+                    cfg.add_edge(bb_addr, fallthrough)
+
+        cfgs.append(cfg)
+
+    return cfgs
+
+
+def extract_cfgs_from_binary(
+    path_or_bytes: Union[str, bytes],
+    base_vaddr: int = 0x100000,
+) -> List[FunctionCFG]:
+    """
+    Loads raw binary, ELF64 (ARM64 or x86_64), or PE32+/PE64 (x86_64 or ARM64) file/buffer,
+    extracts executable .text section, and returns disassembled FunctionCFG objects.
+    """
+    if isinstance(path_or_bytes, str):
+        if not os.path.exists(path_or_bytes):
+            return []
+        with open(path_or_bytes, "rb") as f:
+            raw = f.read()
+    else:
+        raw = path_or_bytes
+
+    if not raw:
+        return []
+
+    # 1. Check for ELF
+    if raw.startswith(b"\x7fELF"):
+        is_x86_64 = False
+        if len(raw) >= 20:
+            e_machine = struct.unpack_from("<H", raw, 18)[0]
+            is_x86_64 = e_machine == 0x3E
+
+        if len(raw) >= 64:
+            try:
+                # 64-bit ELF parser
+                e_shoff = struct.unpack_from("<Q", raw, 40)[0]
+                e_shentsize = struct.unpack_from("<H", raw, 58)[0]
+                e_shnum = struct.unpack_from("<H", raw, 60)[0]
+                e_shstrndx = struct.unpack_from("<H", raw, 62)[0]
+
+                if e_shoff > 0 and e_shnum > 0 and e_shstrndx < e_shnum:
+                    shstr_hdr = e_shoff + (e_shstrndx * e_shentsize)
+                    shstr_offset = struct.unpack_from("<Q", raw, shstr_hdr + 24)[0]
+                    shstr_size = struct.unpack_from("<Q", raw, shstr_hdr + 32)[0]
+                    shstrtab = raw[shstr_offset : shstr_offset + shstr_size]
+
+                    for i in range(e_shnum):
+                        sh_entry = e_shoff + (i * e_shentsize)
+                        sh_name_idx, sh_type, sh_flags, sh_addr, sh_offset, sh_size = struct.unpack_from(
+                            "<IIQQQQ", raw, sh_entry
+                        )
+                        end_idx = shstrtab.find(b"\x00", sh_name_idx)
+                        sec_name = shstrtab[sh_name_idx:end_idx].decode("latin-1", errors="ignore") if end_idx != -1 else ""
+                        if sec_name == ".text" and sh_size > 0:
+                            text_bytes = raw[sh_offset : sh_offset + sh_size]
+                            if is_x86_64:
+                                return extract_cfgs_from_x86_64_bytes(
+                                    text_bytes, base_vaddr=sh_addr or (base_vaddr if base_vaddr != 0x100000 else 0x401000)
+                                )
+                            return extract_cfgs_from_arm64_bytes(text_bytes, base_vaddr=sh_addr or base_vaddr)
+            except Exception:
+                pass
+        if len(raw) > 16:
+            if is_x86_64:
+                hdr_len = 64 if (len(raw) > 64 and raw[20:64] == b"\x00" * 44) else (20 if len(raw) > 20 else 16)
+                return extract_cfgs_from_x86_64_bytes(
+                    raw[hdr_len:], base_vaddr=base_vaddr if base_vaddr != 0x100000 else 0x401000
+                )
+            return extract_cfgs_from_arm64_bytes(raw[16:], base_vaddr=base_vaddr)
+
+    # 2. Check for PE32+/PE64 ("MZ")
+    if raw.startswith(b"MZ") and len(raw) >= 0x40:
+        try:
+            e_lfanew = struct.unpack_from("<I", raw, 0x3C)[0]
+            if e_lfanew + 24 <= len(raw) and raw[e_lfanew : e_lfanew + 4] == b"PE\x00\x00":
+                machine, num_sections, _, _, _, size_opt_hdr, _ = struct.unpack_from(
+                    "<HHIIIHH", raw, e_lfanew + 4
+                )
+                image_base = 0x140000000 if machine in (0x8664, 0xAA64) else base_vaddr
+                if size_opt_hdr >= 32 and (e_lfanew + 24 + size_opt_hdr) <= len(raw):
+                    opt_magic = struct.unpack_from("<H", raw, e_lfanew + 24)[0]
+                    if opt_magic == 0x20B and size_opt_hdr >= 32:
+                        image_base = struct.unpack_from("<Q", raw, e_lfanew + 24 + 24)[0]
+                    elif opt_magic == 0x10B and size_opt_hdr >= 32:
+                        image_base = struct.unpack_from("<I", raw, e_lfanew + 24 + 28)[0]
+
+                sec_table_off = e_lfanew + 24 + size_opt_hdr
+                for i in range(num_sections):
+                    sh_off = sec_table_off + i * 40
+                    if sh_off + 40 > len(raw):
+                        break
+                    sec_name = raw[sh_off : sh_off + 8].rstrip(b"\x00").decode("latin-1", errors="ignore")
+                    vsize, vaddr, raw_size, raw_ptr = struct.unpack_from("<IIII", raw, sh_off + 8)
+                    if sec_name == ".text":
+                        actual_size = vsize if (0 < vsize <= raw_size) else (raw_size if raw_size > 0 else vsize)
+                        text_bytes = raw[raw_ptr : raw_ptr + actual_size]
+                        sec_vaddr = (image_base + vaddr) if vaddr else base_vaddr
+                        if machine == 0xAA64:
+                            return extract_cfgs_from_arm64_bytes(text_bytes, base_vaddr=sec_vaddr)
+                        return extract_cfgs_from_x86_64_bytes(text_bytes, base_vaddr=sec_vaddr)
+        except Exception:
+            pass
+
+    return extract_cfgs_from_arm64_bytes(raw, base_vaddr=base_vaddr)
 
 
 # --- Synthetic Binary Generator for Testing & Diff Verification ---

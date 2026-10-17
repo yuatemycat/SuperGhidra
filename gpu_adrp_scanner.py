@@ -19,10 +19,13 @@ Features:
 from __future__ import annotations
 
 import dataclasses
+import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+
+logger = logging.getLogger("gpu_adrp_scanner")
 
 # Optional GPU backends
 try:
@@ -117,15 +120,45 @@ def decode_add_imm(insn: int) -> Tuple[int, int, int]:
 def decode_ldr_imm(insn: int) -> Tuple[int, int, int]:
     """
     Decodes ARM64 LDR (immediate, unsigned offset):
-    LDR <Xt>, [<Xn>, #<pimm>]
+    LDR <Xt>, [<Xn>, #<pimm>] or SIMD LDR <Qt/Dt/St/Ht/Bt>, [<Xn>, #<pimm>]
     Returns (Rt, Rn, offset).
     """
     rt = insn & 0x1F
     rn = (insn >> 5) & 0x1F
     size = (insn >> 30) & 0x03
+    v = (insn >> 26) & 1
+    opc = (insn >> 22) & 3
+    if v and (opc & 2) and size == 0:
+        scale = 16  # Q vector (128-bit)
+    elif v and size == 3:
+        scale = 8   # D vector
+    elif v and size == 2:
+        scale = 4   # S vector
+    elif v and size == 1:
+        scale = 2   # H vector
+    else:
+        scale = 1 << size
     imm12 = (insn >> 10) & 0xFFF
-    offset = imm12 << size
+    offset = imm12 * scale
     return rt, rn, offset
+
+def pack_gpu_match(idx: int, mask: int) -> int:
+    """
+    Packs instruction index (29-bit, up to 2.14 GB / 536,870,911 instructions)
+    and step mask (3-bit: bits 1..3) into a single 32-bit unsigned integer.
+    """
+    return int((((mask >> 1) & 0x7) << 29) | (idx & 0x1FFFFFFF))
+
+
+def unpack_gpu_match(packed: int) -> Tuple[int, int]:
+    """
+    Unpacks packed uint32 into (adrp_idx, step_mask).
+    adrp_idx: 29-bit instruction index (0 .. 0x1FFFFFFF)
+    step_mask: reconstructed bitmask where bits 1, 2, 3 correspond to +1, +2, +3 steps.
+    """
+    adrp_idx = int(packed & 0x1FFFFFFF)
+    mask = int(((packed >> 29) & 0x7) << 1)
+    return adrp_idx, mask
 
 
 # WGSL Compute Shader Source (4-instruction parallel unrolling)
@@ -152,7 +185,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             for (var step = 1u; step <= 3u; step = step + 1u) {
                 let next_insn = instructions[idx + step];
                 let is_add = (next_insn & 0xFF800000u) == 0x91000000u;
-                let is_ldr = (next_insn & 0x3B000000u) == 0x39000000u;
+                // GPR LDR: V=0, opc=01
+                let is_gpr_ldr = (next_insn & 0x3FC00000u) == 0x39400000u;
+                // SIMD LDR: V=1, opc=01 (B/H/S/D) or (V=1, opc=11, size=00 for Q)
+                let is_simd_ldr = ((next_insn & 0x3FC00000u) == 0x3D400000u) || ((next_insn & 0xFFC00000u) == 0x3DC00000u);
+                let is_ldr = is_gpr_ldr || is_simd_ldr;
                 if (is_add || is_ldr) {
                     mask = mask | (1u << step);
                 }
@@ -161,8 +198,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             if (mask != 0u) {
                 let slot = atomicAdd(&counter, 1u);
                 if (slot < arrayLength(&match_data)) {
-                    // High 8 bits = step mask, Low 24 bits = adrp instruction index
-                    match_data[slot] = (mask << 24u) | (idx & 0x00FFFFFFu);
+                    // High 3 bits = step mask (bits 1..3 shifted), Low 29 bits = adrp instruction index (up to 2.14 GB)
+                    match_data[slot] = ((mask >> 1u) << 29u) | (idx & 0x1FFFFFFFu);
                 }
             }
         }
@@ -252,7 +289,7 @@ class WGPUAdrpEngine:
         self.b_readback_counter.map_sync(wgpu.MapMode.READ)
         match_count = int(np.frombuffer(self.b_readback_counter.read_mapped(), dtype=np.uint32)[0])
         self.b_readback_counter.unmap()
-        return min(match_count, self.max_matches)
+        return match_count
 
     def scan(self, instructions: np.ndarray) -> np.ndarray:
         """Uploads instructions and returns packed match data uint32 array."""
@@ -260,6 +297,13 @@ class WGPUAdrpEngine:
         match_count = self.run_sweep(bind_group, num_insns)
         if match_count == 0:
             return np.empty(0, dtype=np.uint32)
+
+        if match_count > self.max_matches:
+            logger.warning(
+                f"[WGPUAdrpEngine] GPU match count ({match_count}) exceeded max_matches ({self.max_matches}). "
+                f"Falling back to NumPy engine to prevent dropped hits."
+            )
+            return NumPyAdrpEngine.scan(instructions)
 
         encoder = self.device.create_command_encoder()
         encoder.copy_buffer_to_buffer(self.b_out, 0, self.b_readback_data, 0, match_count * 4)
@@ -269,6 +313,8 @@ class WGPUAdrpEngine:
         mapped_bytes = self.b_readback_data.read_mapped()
         res = np.frombuffer(mapped_bytes, dtype=np.uint32, count=match_count).copy()
         self.b_readback_data.unmap()
+        # Sort results deterministically by instruction index
+        res = res[np.argsort(res & 0x1FFFFFFF)]
         return res
 
 
@@ -324,7 +370,7 @@ class TorchAdrpEngine:
         m3 = (((c3 & self.m_add_mask) == self.m_add_val) | ((c3 & self.m_ldr_mask) == self.m_ldr_val)).to(torch.int32)
 
         mask = (m1 << 1) | (m2 << 2) | (m3 << 3)
-        packed = (mask << 24) | (idx.to(torch.int32) & 0x00FFFFFF)
+        packed = (((mask.to(torch.int64) >> 1) & 0x7) << 29) | (idx.to(torch.int64) & 0x1FFFFFFF)
         torch.cuda.synchronize()
         return packed.cpu().numpy().astype(np.uint32)
 
@@ -351,9 +397,15 @@ class NumPyAdrpEngine:
         c2 = instructions[adrp_idx + 2]
         c3 = instructions[adrp_idx + 3]
 
-        m1 = ((c1 & 0xFF800000) == 0x91000000) | ((c1 & 0x3B000000) == 0x39000000)
-        m2 = ((c2 & 0xFF800000) == 0x91000000) | ((c2 & 0x3B000000) == 0x39000000)
-        m3 = ((c3 & 0xFF800000) == 0x91000000) | ((c3 & 0x3B000000) == 0x39000000)
+        def _is_match(c):
+            is_add = (c & 0xFF800000) == 0x91000000
+            is_gpr_ldr = (c & 0x3FC00000) == 0x39400000
+            is_simd_ldr = ((c & 0x3FC00000) == 0x3D400000) | ((c & 0xFFC00000) == 0x3DC00000)
+            return is_add | is_gpr_ldr | is_simd_ldr
+
+        m1 = _is_match(c1)
+        m2 = _is_match(c2)
+        m3 = _is_match(c3)
 
         any_match = m1 | m2 | m3
         if not np.any(any_match):
@@ -365,8 +417,9 @@ class NumPyAdrpEngine:
         mask3 = m3[any_match].astype(np.uint32)
         combined_mask = (mask1 << 1) | (mask2 << 2) | (mask3 << 3)
 
-        packed = (combined_mask << 24) | (matched_idx & 0x00FFFFFF)
-        return packed
+        packed = (((combined_mask >> 1) & 0x7) << 29) | (matched_idx & 0x1FFFFFFF)
+        order = np.argsort(matched_idx)
+        return packed[order]
 
 
 class GPUAdrpScanner:
@@ -375,40 +428,52 @@ class GPUAdrpScanner:
     and vectorized NumPy engines.
     """
 
-    def __init__(self, backend: str = "auto"):
+    pack_gpu_match = staticmethod(pack_gpu_match)
+    unpack_gpu_match = staticmethod(unpack_gpu_match)
+
+    def __init__(self, backend: str = "auto", max_matches: Optional[int] = None):
         self.backend = backend
+        self.max_matches = max_matches
         self._wgpu_engine: Optional[WGPUAdrpEngine] = None
         self._torch_engine: Optional[TorchAdrpEngine] = None
 
         if backend == "auto":
             if HAS_WGPU:
                 try:
-                    self._wgpu_engine = WGPUAdrpEngine()
+                    self._wgpu_engine = WGPUAdrpEngine(max_matches=max_matches) if max_matches else WGPUAdrpEngine()
                     self.active_backend = "wgpu"
-                except Exception:
-                    self._fallback_backend()
+                    logger.info("GPUAdrpScanner: initialized 'wgpu' backend")
+                except Exception as e:
+                    logger.warning(f"GPUAdrpScanner: wgpu init failed ({e}), falling back")
+                    self._fallback_backend(reason=f"wgpu init failed: {e}")
             else:
-                self._fallback_backend()
+                self._fallback_backend(reason="HAS_WGPU is False")
         elif backend == "wgpu":
-            self._wgpu_engine = WGPUAdrpEngine()
+            self._wgpu_engine = WGPUAdrpEngine(max_matches=max_matches) if max_matches else WGPUAdrpEngine()
             self.active_backend = "wgpu"
+            logger.info("GPUAdrpScanner: active backend is 'wgpu'")
         elif backend == "cuda":
             self._torch_engine = TorchAdrpEngine()
             self.active_backend = "cuda"
+            logger.info("GPUAdrpScanner: active backend is 'cuda'")
         elif backend == "numpy":
             self.active_backend = "numpy"
+            logger.info("GPUAdrpScanner: active backend is 'numpy'")
         else:
             raise ValueError(f"Unknown backend: {backend}")
 
-    def _fallback_backend(self) -> None:
+    def _fallback_backend(self, reason: str = "") -> None:
         if HAS_CUDA:
             try:
                 self._torch_engine = TorchAdrpEngine()
                 self.active_backend = "cuda"
+                logger.info(f"GPUAdrpScanner: fell back to 'cuda' (reason: {reason})")
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"GPUAdrpScanner: cuda init failed ({e})")
+                reason = f"{reason}; cuda init failed: {e}"
         self.active_backend = "numpy"
+        logger.info(f"GPUAdrpScanner: fell back to 'numpy' (reason: {reason})")
 
     def scan_raw(self, instructions: np.ndarray) -> np.ndarray:
         """Runs fast sweep over instruction array and returns packed matches."""
@@ -418,6 +483,16 @@ class GPUAdrpScanner:
             return self._torch_engine.scan(instructions)
         else:
             return NumPyAdrpEngine.scan(instructions)
+
+    def _scan_wgpu(self, instructions: np.ndarray) -> List[Tuple[int, int]]:
+        """
+        Executes WGPU sweep and decodes raw hits using unpack_gpu_match.
+        Returns list of (adrp_idx, mask) tuples.
+        """
+        if self._wgpu_engine is None:
+            self._wgpu_engine = WGPUAdrpEngine()
+        raw_hits = self._wgpu_engine.scan(instructions)
+        return [self.unpack_gpu_match(int(p)) for p in raw_hits]
 
     def scan_matches(
         self,
@@ -451,8 +526,7 @@ class GPUAdrpScanner:
         total_insns = len(instructions)
 
         for val in packed_results:
-            idx = int(val & 0x00FFFFFF)
-            step_mask = int((val >> 24) & 0xFF)
+            idx, step_mask = self.unpack_gpu_match(int(val))
 
             if idx >= total_insns:
                 continue
@@ -473,7 +547,9 @@ class GPUAdrpScanner:
                 p_pc = base_pc + (paired_idx * 4)
 
                 is_add = (p_insn & 0xFF800000) == 0x91000000
-                is_ldr = (p_insn & 0x3B000000) == 0x39000000
+                is_gpr_ldr = (p_insn & 0x3FC00000) == 0x39400000
+                is_simd_ldr = ((p_insn & 0x3FC00000) == 0x3D400000) or ((p_insn & 0xFFC00000) == 0x3DC00000)
+                is_ldr = is_gpr_ldr or is_simd_ldr
 
                 if not (is_add or is_ldr):
                     continue
@@ -510,6 +586,7 @@ class GPUAdrpScanner:
                     )
                 )
 
+        matches.sort(key=lambda m: (m.adrp_index, m.paired_index))
         return matches
 
 
