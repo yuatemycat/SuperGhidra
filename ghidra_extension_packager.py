@@ -5,8 +5,9 @@ ghidra_extension_packager.py
 SuperGhidra Official Ghidra Extension Packager & Manifest Validator.
 
 Validates the SuperGhidraCodec extension layout, compiles Java source files
-using JDK 21 and Ghidra framework libraries, and packages the official
-dist/SuperGhidraCodec-1.0.0.zip distribution archive.
+using JDK 21 and Ghidra framework libraries, packages the official
+dist/SuperGhidraCodec-1.0.0.zip distribution archive including lib/SuperGhidraCodec.jar,
+and installs the extension into Ghidra's Extensions directory.
 """
 
 from __future__ import annotations
@@ -182,6 +183,27 @@ class GhidraExtensionPackager:
 
         root_prefix = ext_name
 
+        # Build lib/SuperGhidraCodec.jar containing compiled classes & manifest
+        build_lib_dir = self.skeleton_dir / "build" / "lib"
+        build_lib_dir.mkdir(parents=True, exist_ok=True)
+        jar_path = build_lib_dir / "SuperGhidraCodec.jar"
+        classes_root = self.skeleton_dir / "build" / "classes"
+
+        with zipfile.ZipFile(jar_path, "w", compression=zipfile.ZIP_DEFLATED) as jf:
+            manifest_data = (
+                "Manifest-Version: 1.0\r\n"
+                f"Implementation-Title: {ext_name}\r\n"
+                f"Implementation-Version: {ext_version}\r\n"
+                "Created-By: SuperGhidra Extension Packager\r\n\r\n"
+            )
+            jf.writestr("META-INF/MANIFEST.MF", manifest_data)
+            if classes_root.exists():
+                for root, _, files in os.walk(classes_root):
+                    for file in files:
+                        fp = Path(root) / file
+                        rel_path = fp.relative_to(classes_root)
+                        jf.write(fp, arcname=rel_path.as_posix())
+
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             # Add extension.properties
             zf.write(
@@ -208,8 +230,11 @@ class GhidraExtensionPackager:
                         rel_path = fp.relative_to(self.skeleton_dir)
                         zf.write(fp, arcname=f"{root_prefix}/{rel_path.as_posix()}")
 
-            # Add compiled classes if present
-            classes_root = self.skeleton_dir / "build" / "classes"
+            # Add lib/SuperGhidraCodec.jar
+            if jar_path.exists():
+                zf.write(jar_path, arcname=f"{root_prefix}/lib/SuperGhidraCodec.jar")
+
+            # Add compiled classes if present (preserving compatibility)
             if classes_root.exists():
                 for root, _, files in os.walk(classes_root):
                     for file in files:
@@ -221,6 +246,48 @@ class GhidraExtensionPackager:
         verification = self.verify_zip_integrity(zip_path)
 
         return zip_path, verification
+
+    def install_extension(self, target_extensions_dir: Optional[Path | str] = None) -> Path:
+        """
+        Installs the packaged extension into Ghidra's Extensions directory.
+        Extracts dist/SuperGhidraCodec-1.0.0.zip into E:\\03_Devops\\Ghidra\\Ghidra\\Extensions\\SuperGhidraCodec.
+        """
+        props = self.parse_extension_properties()
+        ext_name = props["name"]
+        ext_version = props["version"]
+
+        if target_extensions_dir is None:
+            dest_dir = self.ghidra_install_dir / "Ghidra" / "Extensions" / ext_name
+        else:
+            p = Path(target_extensions_dir)
+            if p.name == ext_name:
+                dest_dir = p
+            else:
+                dest_dir = p / ext_name
+
+        zip_filename = f"{ext_name}-{ext_version}.zip"
+        zip_path = self.output_dir / zip_filename
+        if not zip_path.exists():
+            zip_path, _ = self.package_extension_zip(compile_first=True)
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        prefix = f"{ext_name}/"
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            for member in zf.infolist():
+                if member.filename.startswith(prefix):
+                    rel = member.filename[len(prefix):]
+                    if not rel:
+                        continue
+                    target_file = dest_dir / rel
+                    if member.is_dir() or member.filename.endswith("/"):
+                        target_file.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target_file.parent.mkdir(parents=True, exist_ok=True)
+                        with zf.open(member) as src, open(target_file, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+
+        return dest_dir
 
     @staticmethod
     def verify_zip_integrity(zip_path: Path) -> Dict[str, Any]:
@@ -248,6 +315,7 @@ class GhidraExtensionPackager:
             "SuperGhidraCodec/src/main/java/superghidra/codec/SuperGhidraBufferFileAdapter.java",
             "SuperGhidraCodec/src/main/java/superghidra/codec/SuperGhidraExtensionPlugin.java",
             "SuperGhidraCodec/src/main/java/superghidra/codec/CompressionAlgorithm.java",
+            "SuperGhidraCodec/lib/SuperGhidraCodec.jar",
         ]
         for entry in expected_entries:
             if entry not in file_list:
@@ -269,6 +337,7 @@ def main():
     parser.add_argument("--output-dir", type=str, help="Destination directory for distribution zip")
     parser.add_argument("--no-compile", action="store_true", help="Skip Java compilation")
     parser.add_argument("--verify-only", type=str, help="Verify an existing zip file")
+    parser.add_argument("--no-install", action="store_true", help="Skip installing to Ghidra Extensions")
     args = parser.parse_args()
 
     packager = GhidraExtensionPackager(
@@ -290,6 +359,11 @@ def main():
     print(f"Package created successfully: {zip_path}")
     print(f"Size: {meta['size_bytes']} bytes, SHA-256: {meta['sha256']}")
     print(f"Total files in archive: {meta['file_count']}")
+
+    if not args.no_install:
+        print("Installing extension into Ghidra...")
+        install_path = packager.install_extension()
+        print(f"Extension installed successfully at: {install_path}")
 
 
 if __name__ == "__main__":

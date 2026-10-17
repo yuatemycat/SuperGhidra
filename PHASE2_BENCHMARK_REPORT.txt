@@ -7,27 +7,27 @@
 ------------------------------------------------------------------------------
  Architecture:           Lock-free SPSC / MPMC ring buffer & zero-copy mmap
  Cacheline Alignment:    64-byte isolated head/tail pointers
- 64B Block Read Latency: 3.48 us (median: 3.00 us)
- 4KB Read Throughput:    704.92 MB/s
- 64KB Read Throughput:   3,402.91 MB/s
- IPC Query Roundtrip:    33.30 us (Target < 50.0 us -> PASS)
- IPC Roundtrip Median:   32.60 us
+ 64B Block Read Latency: 4.18 us (median: 3.00 us)
+ 4KB Read Throughput:    514.40 MB/s
+ 64KB Read Throughput:   3,560.58 MB/s
+ IPC Query Roundtrip:    35.82 us (Target < 50.0 us -> PASS)
+ IPC Roundtrip Median:   32.10 us
 
 2. GPU FUNCTION SEEDER (gpu_function_seeder.py)
 ------------------------------------------------------------------------------
  Active Backend:         WGPU
  Instruction Corpus:     100,000 ARM64 instructions
  Classification Rate:    0.11 Million instructions/sec
- Execution Latency:      905.34 ms
+ Execution Latency:      924.62 ms
  Prologue / Call Seeds:  10,334 function entry seeds
  Ghidra Java Script:     Batch transaction registration script generated
 
 3. DEPENDENCY CACHE DAG & SELECTIVE INVALIDATION (dependency_cache_dag.py)
 ------------------------------------------------------------------------------
  DAG Hierarchy Size:     1,000 function nodes & full call/type edges
- Graph Build Latency:    61.90 ms
+ Graph Build Latency:    77.71 ms
  Invalidation Ops:       500 consecutive selective 1-hop events
- Invalidation Speed:     44,229 invalidations/sec (11.30 ms)
+ Invalidation Speed:     50,634 invalidations/sec (9.87 ms)
  Cache Retention Rate:   99.73% (Target > 98.0% -> PASS)
  1-Hop Cascade Bounds:   Target function + immediate callers only; unaffected retained
 
@@ -35,9 +35,9 @@
 ------------------------------------------------------------------------------
  Delta Format:           Git-mergeable append-only JSONL (.ghidra-delta.jsonl)
  Event Ingestion Volume: 10,000 atomic semantic events
- Append Throughput:      27,882 events/sec
- Read & Parse Speed:     17,669 events/sec
- Cryptographic Audit:    40,082 SHA-256 proofs/sec
+ Append Throughput:      26,415 events/sec
+ Read & Parse Speed:     19,437 events/sec
+ Cryptographic Audit:    31,389 SHA-256 proofs/sec
  Integrity Gate:         TAMPER PROOF & VERIFIED (Pass: True)
  Proof Engine:           Formal integration with ReconstructionObligationLedger
 
@@ -47,18 +47,18 @@
  Raw Types Ingested:     1,550
  Canonical Types Kept:   1,025
  Deduplication Ratio:    1.51x (33.87% redundant types eliminated)
- Dedup Throughput:       16,227 types/sec
- SQLite Ingestion Rate:  39,345 records/sec
- Query Latency (Type):   1.85 us (Target < 100.0 us -> PASS)
- Query Latency (Layout): 0.79 us (Target < 100.0 us -> PASS)
- Query Latency (Symbol): 26.30 us (Target < 100.0 us -> PASS)
+ Dedup Throughput:       15,659 types/sec
+ SQLite Ingestion Rate:  36,342 records/sec
+ Query Latency (Type):   1.70 us (Target < 100.0 us -> PASS)
+ Query Latency (Layout): 1.32 us (Target < 100.0 us -> PASS)
+ Query Latency (Symbol): 37.83 us (Target < 100.0 us -> PASS)
  Oracle Mount:           Mountable off-heap via OracleTypeStoreAdapter
 
 ==============================================================================
  TARGET VERIFICATION SUMMARY:
-   - IPC Roundtrip Latency:  33.30 us < 50.0 us     -> PASS
+   - IPC Roundtrip Latency:  35.82 us < 50.0 us     -> PASS
    - Cache Retention Rate:   99.73% > 98.0%          -> PASS
-   - Off-Heap Query Latency: 1.85 us < 100.0 us    -> PASS
+   - Off-Heap Query Latency: 1.70 us < 100.0 us    -> PASS
    - Cryptographic Proofs:   Deterministic SHA-256            -> PASS
    - Memory Decoupling:      Zero Ghidra JVM DataTypeDB lock  -> PASS
 ==============================================================================

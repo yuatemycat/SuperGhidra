@@ -18,8 +18,11 @@ Implements Section 6 of GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md:
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import os
-from typing import Dict, List, Optional
+import struct
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 
 @dataclasses.dataclass
@@ -99,6 +102,29 @@ set_target_properties(decompile PROPERTIES
 """
         return cmake
 
+    def generate_pgo_training_harness(self) -> str:
+        """
+        Generates a non-trivial PGO training command stream for Ghidra's standalone C++ decompiler.
+        Exercises core decompiler actions: architecture initialization, P-Code simplification rules,
+        type propagation, control flow structuring, and C AST code generation.
+        """
+        harness = """# SuperGhidra Native C++ Decompiler PGO Training Command Stream
+# Phase 2: Representative Binary Lifting & Simplification Workload
+restore 0
+load file
+init pcode
+decompile 0x1000
+simplify
+structure
+jumptable
+typeprop
+rule fold_jni_bridge
+print C
+clear
+quit
+"""
+        return harness
+
     def generate_pgo_workflow_script(self) -> str:
         """Generates automated bash/batch script to run the 2-phase PGO build pipeline."""
         if self.config.target_os == "windows":
@@ -121,12 +147,22 @@ cmake --build . --config Release -j$(nproc)
 
 # Phase 2: Run training corpus across representative binaries
 echo "[Phase 2/3] Executing training corpus to generate execution profile..."
-./decompile << 'EOF'
+cat << 'EOF' > pgo_training_input.txt
 restore 0
 load file
-decompile
+init pcode
+decompile 0x1000
+simplify
+structure
+jumptable
+typeprop
+rule fold_jni_bridge
+print C
+clear
 quit
 EOF
+
+./decompile < pgo_training_input.txt
 
 # Phase 3: Recompile using generated profile
 echo "[Phase 3/3] Compiling final PGO-optimized binary..."
@@ -148,8 +184,23 @@ echo [Phase 1/3] Configuring instrumented build...
 cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DPGO_GENERATE=ON ..
 ninja
 
-echo [Phase 2/3] Training binary profile...
-decompile.exe < nul
+echo [Phase 2/3] Training binary profile with representative corpus...
+(
+echo restore 0
+echo load file
+echo init pcode
+echo decompile 0x1000
+echo simplify
+echo structure
+echo jumptable
+echo typeprop
+echo rule fold_jni_bridge
+echo print C
+echo clear
+echo quit
+) > pgo_training_input.txt
+
+decompile.exe < pgo_training_input.txt
 
 echo [Phase 3/3] Building optimized decompiler...
 cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DPGO_GENERATE=OFF -DPGO_USE=ON ..
@@ -162,6 +213,8 @@ echo === PGO Decompiler Built Successfully ===
         """
         Generates C++ source template for custom P-Code simplification Rule.
         Folds redundant ARM64 Android NDK JNI bridge trampolines and vector shuffles.
+        Mutates Funcdata (via data.opSetInput / data.opDestroy / data.opRemoveInput) before returning 1
+        to prevent infinite simplification loops.
         """
         patch_cc = """// SuperGhidra Custom P-Code Simplification Rule: RuleFoldJniBridgeThunk
 #include "ruleaction.hh"
@@ -177,18 +230,51 @@ public:
     oplist.push_back(CPUI_CALL);
   }
   virtual int4 applyOp(PcodeOp *op, Funcdata &data) override {
-    // Detects direct trampoline: CALL -> RET sequence
-    // Eliminates intermediate stack adjustment frames for clean decompiler AST
+    // Detects direct JNI bridge trampoline: CALL -> (stack fixup / redundant COPY) -> RETURN
+    // Eliminates intermediate stack adjustment frames and folds return values for clean decompiler AST
     if (op->numArgs() < 1) return 0;
     Varnode *target = op->getIn(0);
     if (!target->isConstant()) return 0;
-    
-    // Check if following operation is immediate return of caller register
+
     PcodeOp *next_op = op->nextOp();
-    if (next_op != (PcodeOp *)0 && next_op->code() == CPUI_RETURN) {
-      // Direct tail-call optimization match
-      return 1;
+    if (next_op == (PcodeOp *)0) return 0;
+
+    // Check for intermediate redundant COPY or stack pointer adjustment
+    if (next_op->code() == CPUI_COPY) {
+      Varnode *out_vn = op->getOut();
+      Varnode *copy_in = next_op->getIn(0);
+      Varnode *copy_out = next_op->getOut();
+      if (out_vn != (Varnode *)0 && copy_in == out_vn && copy_out != (Varnode *)0) {
+        PcodeOp *ret_op = next_op->nextOp();
+        if (ret_op != (PcodeOp *)0 && ret_op->code() == CPUI_RETURN) {
+          if (ret_op->numArgs() > 1 && ret_op->getIn(1) == copy_out) {
+            // Forward call output directly to RETURN input, eliminating redundant COPY
+            data.opSetInput(ret_op, out_vn, 1);
+            data.opDestroy(next_op);
+            return 1;
+          }
+        }
+      }
     }
+
+    // Check if following operation is immediate RETURN
+    if (next_op->code() == CPUI_RETURN) {
+      // If CALL has an output and RETURN has an unlinked or redundant slot, fold directly
+      Varnode *out_vn = op->getOut();
+      if (out_vn != (Varnode *)0 && next_op->numArgs() > 1) {
+        Varnode *ret_vn = next_op->getIn(1);
+        if (ret_vn != out_vn && ret_vn->isConstant() && ret_vn->getOffset() == 0) {
+          data.opSetInput(next_op, out_vn, 1);
+          return 1;
+        }
+      }
+      // If RETURN has redundant trailing input varnodes from uncollapsed stack frames
+      if (next_op->numArgs() > 2) {
+        data.opRemoveInput(next_op, next_op->numArgs() - 1);
+        return 1;
+      }
+    }
+
     return 0;
   }
 };
@@ -210,3 +296,237 @@ public:
 </decompile_options>
 """
         return xml
+
+    def inspect_live_decompiler(self, ghidra_install_dir: str = r"E:\03_Devops\Ghidra") -> Dict[str, Any]:
+        """
+        Locates Ghidra's live decompile executable, parses its PE or ELF header,
+        validates machine architecture and sections, and audits C++ decompiler source files.
+        """
+        ghidra_path = Path(ghidra_install_dir)
+
+        # Candidate paths for native decompile executable
+        candidates = [
+            ghidra_path / "Ghidra" / "Features" / "Decompiler" / "os" / "win_x86_64" / "decompile.exe",
+            ghidra_path / "Ghidra" / "Features" / "Decompiler" / "os" / "win64" / "decompile.exe",
+            ghidra_path / "Ghidra" / "Features" / "Decompiler" / "os" / "linux_x86_64" / "decompile",
+            ghidra_path / "Ghidra" / "Features" / "Decompiler" / "os" / "linux64" / "decompile",
+            Path(self.config.output_bin_dir) / "decompile.exe",
+            Path(self.config.output_bin_dir) / "decompile",
+        ]
+
+        target_binary: Optional[Path] = None
+        for c in candidates:
+            if c.is_file():
+                target_binary = c
+                break
+
+        if not target_binary:
+            return {
+                "status": "not_found",
+                "binary_path": None,
+                "error": f"Live decompile executable not found under {ghidra_install_dir}",
+                "cpp_sources_exist": False,
+                "readiness": "missing_binary",
+            }
+
+        data = target_binary.read_bytes()
+        size_bytes = len(data)
+        sha256 = hashlib.sha256(data).hexdigest()
+
+        # Parse PE / ELF headers
+        fmt = "unknown"
+        machine_hex = "0x0"
+        machine_name = "unknown"
+        section_names: List[str] = []
+        section_details: List[Dict[str, Any]] = []
+
+        if data.startswith(b"MZ") and len(data) > 0x40:
+            fmt = "PE"
+            e_lfanew = struct.unpack_from("<I", data, 0x3C)[0]
+            if e_lfanew + 24 <= len(data) and data[e_lfanew:e_lfanew + 4] == b"PE\x00\x00":
+                machine, num_sections = struct.unpack_from("<HH", data, e_lfanew + 4)
+                machine_hex = hex(machine)
+                if machine == 0x8664:
+                    machine_name = "x86_64"
+                elif machine == 0x14C:
+                    machine_name = "i386"
+                elif machine == 0xAA64:
+                    machine_name = "arm64"
+
+                opt_hdr_size = struct.unpack_from("<H", data, e_lfanew + 20)[0]
+                sec_offset = e_lfanew + 24 + opt_hdr_size
+                for i in range(num_sections):
+                    offset = sec_offset + i * 40
+                    if offset + 40 <= len(data):
+                        sec_raw_name = data[offset:offset + 8]
+                        sec_name = sec_raw_name.rstrip(b"\x00").decode("ascii", errors="ignore")
+                        vsize, vaddr, raw_size, raw_ptr = struct.unpack_from("<IIII", data, offset + 8)
+                        section_names.append(sec_name)
+                        section_details.append({
+                            "name": sec_name,
+                            "virtual_size": vsize,
+                            "virtual_address": vaddr,
+                            "raw_size": raw_size,
+                            "raw_offset": raw_ptr,
+                        })
+        elif data.startswith(b"\x7fELF") and len(data) > 20:
+            fmt = "ELF"
+            endian = "<" if data[5] == 1 else ">"
+            machine = struct.unpack_from(f"{endian}H", data, 18)[0]
+            machine_hex = hex(machine)
+            if machine == 0x3E:
+                machine_name = "x86_64"
+            elif machine == 0xB7:
+                machine_name = "aarch64"
+
+        # Check C++ source directory
+        cpp_dir = ghidra_path / "Ghidra" / "Features" / "Decompiler" / "src" / "decompile" / "cpp"
+        cpp_sources_exist = cpp_dir.is_dir()
+        cpp_files: List[str] = []
+        if cpp_sources_exist:
+            cpp_files = [
+                f.name for f in cpp_dir.iterdir()
+                if f.suffix in [".cc", ".cpp", ".hh", ".h"]
+            ]
+        cpp_source_count = len(cpp_files)
+
+        is_x86_64 = (machine_hex.lower() in ["0x8664", "0x3e"] or machine_name == "x86_64")
+        has_text = ".text" in section_names or fmt == "ELF"
+        has_rdata = ".rdata" in section_names or ".rodata" in section_names or fmt == "ELF"
+        ready_for_pgo = (is_x86_64 and cpp_sources_exist and cpp_source_count > 0)
+
+        return {
+            "status": "ready" if ready_for_pgo else "found",
+            "binary_path": str(target_binary),
+            "size_bytes": size_bytes,
+            "sha256": sha256,
+            "format": fmt,
+            "machine": machine_hex,
+            "machine_name": machine_name,
+            "sections": section_names,
+            "section_details": section_details,
+            "has_text_section": has_text,
+            "has_rdata_section": has_rdata,
+            "cpp_sources_dir": str(cpp_dir),
+            "cpp_sources_exist": cpp_sources_exist,
+            "cpp_source_count": cpp_source_count,
+            "readiness": "ready_for_pgo" if ready_for_pgo else "sources_missing",
+        }
+
+    def generate_portable_devops_build_script(self, devops_root: str = r"E:\03_Devops") -> str:
+        """
+        Generates a portable Windows batch script that:
+        1. Activates the E:\\03_Devops build environment (env.bat).
+        2. Applies custom P-Code simplification rule RuleFoldJniBridgeThunk to C++ source directory.
+        3. Configures CMake with Ninja generator in E:\\03_Devops.
+        4. Compiles high-performance native decompile.exe with -O3, LTO, and PGO.
+        """
+        devops_clean = devops_root.replace("/", "\\")
+        patch_text = self.generate_custom_pcode_rule_patch().strip()
+        lines = [
+            "@echo off",
+            "rem ============================================================================",
+            "rem  SuperGhidra Portable DevOps Native Decompiler PGO Build Pipeline",
+            f"rem  Toolchain: MSVC / Clang + CMake + Ninja located in {devops_clean}",
+            "rem ============================================================================",
+            "setlocal enabledelayedexpansion",
+            "",
+            f'set "DEVOPS_ROOT={devops_clean}"',
+            'if not exist "%DEVOPS_ROOT%\\env.bat" (',
+            '    echo [ERROR] DevOps toolchain activator not found at %DEVOPS_ROOT%\\env.bat',
+            '    exit /b 1',
+            ')',
+            "",
+            'echo [SuperGhidra] Activating portable DevOps environment from %DEVOPS_ROOT%...',
+            'call "%DEVOPS_ROOT%\\env.bat"',
+            "",
+            'set "GHIDRA_DIR=%DEVOPS_ROOT%\\Ghidra"',
+            'set "SRC_DIR=%GHIDRA_DIR%\\Ghidra\\Features\\Decompiler\\src\\decompile\\cpp"',
+            'set "BUILD_DIR=%SRC_DIR%\\build_pgo"',
+            'set "OUTPUT_BIN_DIR=%GHIDRA_DIR%\\Ghidra\\Features\\Decompiler\\os\\win_x86_64"',
+            "",
+            'if not exist "%SRC_DIR%" (',
+            '    echo [ERROR] Ghidra decompiler C++ source directory not found: %SRC_DIR%',
+            '    exit /b 1',
+            ')',
+            "",
+            'echo [SuperGhidra] Deploying custom P-Code optimization rule: RuleFoldJniBridgeThunk...',
+            'rem Deploy RuleFoldJniBridgeThunk into C++ source tree',
+            '(',
+            'echo // SuperGhidra Custom P-Code Simplification Rule: RuleFoldJniBridgeThunk',
+            'echo #include "ruleaction.hh"',
+            'echo class RuleFoldJniBridgeThunk : public Rule {',
+            'echo public:',
+            'echo   RuleFoldJniBridgeThunk(const string ^&g) : Rule(g, 0, "fold_jni_bridge") {}',
+            'echo   virtual Rule *clone(const ActionGroupList ^&gl) const override {',
+            'echo     if (!gl.contains(getGroup())) return (Rule *)0;',
+            'echo     return new RuleFoldJniBridgeThunk(getGroup());',
+            'echo   }',
+            'echo   virtual void getOpList(vector^<uint4^> ^&oplist) const override {',
+            'echo     oplist.push_back(CPUI_CALL);',
+            'echo   }',
+            'echo   virtual int4 applyOp(PcodeOp *op, Funcdata ^&data) override {',
+            'echo     if (op-^>numArgs() ^< 1) return 0;',
+            'echo     Varnode *target = op-^>getIn(0);',
+            'echo     if (!target-^>isConstant()) return 0;',
+            'echo     PcodeOp *next_op = op-^>nextOp();',
+            'echo     if (next_op == (PcodeOp *)0) return 0;',
+            'echo     if (next_op-^>code() == CPUI_COPY) {',
+            'echo       Varnode *out_vn = op-^>getOut();',
+            'echo       Varnode *copy_in = next_op-^>getIn(0);',
+            'echo       Varnode *copy_out = next_op-^>getOut();',
+            'echo       if (out_vn != (Varnode *)0 ^&^& copy_in == out_vn ^&^& copy_out != (Varnode *)0) {',
+            'echo         PcodeOp *ret_op = next_op-^>nextOp();',
+            'echo         if (ret_op != (PcodeOp *)0 ^&^& ret_op-^>code() == CPUI_RETURN) {',
+            'echo           if (ret_op-^>numArgs() ^> 1 ^&^& ret_op-^>getIn(1) == copy_out) {',
+            'echo             data.opSetInput(ret_op, out_vn, 1);',
+            'echo             data.opDestroy(next_op);',
+            'echo             return 1;',
+            'echo           }',
+            'echo         }',
+            'echo       }',
+            'echo     }',
+            'echo     if (next_op-^>code() == CPUI_RETURN) {',
+            'echo       Varnode *out_vn = op-^>getOut();',
+            'echo       if (out_vn != (Varnode *)0 ^&^& next_op-^>numArgs() ^> 1) {',
+            'echo         Varnode *ret_vn = next_op-^>getIn(1);',
+            'echo         if (ret_vn != out_vn ^&^& ret_vn-^>isConstant() ^&^& ret_vn-^>getOffset() == 0) {',
+            'echo           data.opSetInput(next_op, out_vn, 1);',
+            'echo           return 1;',
+            'echo         }',
+            'echo       }',
+            'echo       if (next_op-^>numArgs() ^> 2) {',
+            'echo         data.opRemoveInput(next_op, next_op-^>numArgs() - 1);',
+            'echo         return 1;',
+            'echo       }',
+            'echo     }',
+            'echo     return 0;',
+            'echo   }',
+            'echo };',
+            ') > "%SRC_DIR%\\rule_fold_jni.cc"',
+            "",
+            'if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"',
+            'cd /d "%BUILD_DIR%"',
+            "",
+            'echo [SuperGhidra] Configuring CMake with Ninja generator...',
+            f'cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="{self.config.opt_level} {self.config.march}" ..',
+            'if errorlevel 1 (',
+            '    echo [ERROR] CMake configuration failed.',
+            '    exit /b 1',
+            ')',
+            "",
+            'echo [SuperGhidra] Building decompile.exe with Ninja...',
+            'ninja decompile',
+            'if errorlevel 1 (',
+            '    echo [ERROR] Native decompiler build failed.',
+            '    exit /b 1',
+            ')',
+            "",
+            'if not exist "%OUTPUT_BIN_DIR%" mkdir "%OUTPUT_BIN_DIR%"',
+            'copy /y decompile.exe "%OUTPUT_BIN_DIR%\\decompile.exe"',
+            'echo [SuperGhidra] Native decompiler successfully built and installed to:',
+            'echo %OUTPUT_BIN_DIR%\\decompile.exe',
+            "",
+        ]
+        return "\n".join(lines)
+

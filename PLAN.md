@@ -2,8 +2,8 @@
 
 **Target Environment:** OpenJDK 21+ / Ghidra 12.1.x / Windows & Linux Headless / PyGhidra  
 **Workload Target:** 64-bit ARM (`AArch64`) Production Binaries (`libg.so`, `libscid_sdk.so`)  
-**Core Reference:** [`GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md`](file:///E:/Downloads/GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md) & [`README.md`](file:///E:/02_Projects/SuperGhidra/README.md)  
-**Status Tracker:** **35 / 35 Baseline Requirements Completed** | **0 / 6 Future Frontiers In Progress**
+**Core Reference:** `GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md(1).docx` (repo root) & [`README.md`](README.md)  
+**Status Tracker:** 35 baseline items and 6 frontiers implemented. Several are partial or experimental; see [Known Limitations](#-known-limitations) and the 2026-10-17 audit notes below.
 
 ---
 
@@ -26,11 +26,11 @@
 
 - [x] ~~**Block-Level Frame Compression (LZ4 / Zstandard L3)**~~
   - *Implemented in:* [`storage_compression_prototype.py`](file:///E:/02_Projects/SuperGhidra/storage_compression_prototype.py)
-  - *Accomplished:* Transparent 16 KB block codec with 64-bit slot directory (`[block_id, offset, comp_len, orig_len]`).
-  - *Benchmark:* Achieved **54.16% reduction** (LZ4 @ 2.4 GB/s read) and **69.27% - 85.39% reduction** (Zstd L3) on real `libg.so` database blocks with 100% lossless fidelity.
+  - *Accomplished:* 16 KB block codec with 64-bit slot directory (`[block_id, offset, comp_len, orig_len]`). The Python-internal container uses its own magic, distinct from the Java-compatible `SGDB` format.
+  - *Benchmark:* **54.16% reduction** (LZ4) and **69.27% - 85.39% reduction** (Zstd L3), lossless. Measured on synthetic Ghidra-like pages from `GhidraPageSimulator`, not on real `.gbf` buffers.
 - [x] ~~**Elimination of Stale `.lock` and `.lock~` Collisions**~~
-  - *Implemented in:* [`ghidra_oracle.py`](file:///E:/02_Projects/SuperGhidra/ghidra_oracle.py) & [`clean_locks()`](file:///E:/02_Projects/SuperGhidra/ghidra_oracle.py#L428)
-  - *Accomplished:* Read-only project opening with `restoreProject=False` and startup lock cleanup.
+  - *Implemented in:* [`ghidra_oracle.py`](ghidra_oracle.py) (`clean_locks()`)
+  - *Accomplished:* Programs open read-only (`openProgram(..., readOnly=True)`). Lock files are reported, not deleted, unless `--clean-stale-locks` is passed and the lock is older than the stale threshold.
 - [x] ~~**Project Directory Hygiene & Deduplication**~~
   - *Implemented in:* [`E:\02_Projects\pyghidra_mcp_projects`](file:///E:/02_Projects/pyghidra_mcp_projects)
   - *Accomplished:* Purged orphaned locks (`my_project.lock`, `my_project.lock~`); multi-agent sessions now share single read-only project daemon.
@@ -83,10 +83,10 @@
   - *Implemented in:* [`ghidra_oracle.py`](file:///E:/02_Projects/SuperGhidra/ghidra_oracle.py)
   - *Commands:* `serve`, `decompile`, `vtable`, `disassemble`, `refs`, `adrp_add`, `opcodes`, `rva`, `rename`, `comment`, `overlay`, `status`, `stop`.
 - [x] ~~**Microsecond Address Translation (Zero JVM)**~~
-  - *Implemented in:* [`ghidra_oracle.py`](file:///E:/02_Projects/SuperGhidra/ghidra_oracle.py#L118-L160)
+  - *Implemented in:* [`ghidra_oracle.py`](ghidra_oracle.py)
   - *Benchmark:* Resolves `0x00CF2D84` -> `0x00BF2D84` in **0.0030 ms** without touching the JVM.
 - [x] ~~**In-Memory + JSON Symbol Write-Overlay**~~
-  - *Implemented in:* [`WriteOverlay`](file:///E:/02_Projects/SuperGhidra/ghidra_oracle.py#L298)
+  - *Implemented in:* `WriteOverlay` in [`ghidra_oracle.py`](ghidra_oracle.py)
   - *Accomplished:* Allows renaming and commenting without dirtying read-only `.rep` databases.
 
 ---
@@ -101,7 +101,7 @@
   - *Implemented in:* [`cross_platform_headless_harness.py`](file:///E:/02_Projects/SuperGhidra/cross_platform_headless_harness.py)
   - *Accomplished:* Generates tuned execution flags, RAM disk `/dev/shm` bindings, and JADX memory caps.
 - [x] ~~**Google Colab Hardware Tier Matrix**~~
-  - *Implemented in:* [`cross_platform_headless_harness.py`](file:///E:/02_Projects/SuperGhidra/cross_platform_headless_harness.py#L320-L400)
+  - *Implemented in:* [`cross_platform_headless_harness.py`](cross_platform_headless_harness.py)
   - *Accomplished:* Configuration recipes for Free CPU (RAM disk), NVIDIA T4 (EGL + FP16), and Cloud TPU v5e (JAX XLA flags).
 
 ---
@@ -113,10 +113,10 @@
   - *Implemented in:* [`native_decompiler_pgo_builder.py`](file:///E:/02_Projects/SuperGhidra/native_decompiler_pgo_builder.py)
   - *Accomplished:* CMake/Ninja script generator compiling `decompile.exe` / `decompile` with `-O3 -march=native -flto` and 2-phase PGO profiling.
 - [x] ~~**Custom C++ P-Code `Rule` and `Action` Patch Generator**~~
-  - *Implemented in:* [`native_decompiler_pgo_builder.py`](file:///E:/02_Projects/SuperGhidra/native_decompiler_pgo_builder.py#L330-L440)
+  - *Implemented in:* [`native_decompiler_pgo_builder.py`](native_decompiler_pgo_builder.py)
   - *Accomplished:* Emits C++ source patches for `blockaction.cc` and `coreaction.cc` folding ARM64 vector idioms.
 - [x] ~~**In-Process PyGhidra (JPype) Environment Bootstrapper**~~
-  - *Implemented in:* [`setup_environment()`](file:///E:/02_Projects/SuperGhidra/ghidra_oracle.py#L97)
+  - *Implemented in:* `setup_environment()` in [`ghidra_oracle.py`](ghidra_oracle.py)
   - *Accomplished:* Configures `JAVA_HOME`, `GHIDRA_INSTALL_DIR`, and PATH precedence automatically.
 
 ---
@@ -128,14 +128,14 @@
   - *Implemented in:* [`pcode_lifter_bridge.py`](file:///E:/02_Projects/SuperGhidra/pcode_lifter_bridge.py)
   - *Accomplished:* Pure CPython IR lifter executing at **1,050,641 insns/sec** on real `libg.so` without booting Java.
 - [x] ~~**GNN / TPU Systolic Array Adjacency Matrix Generator**~~
-  - *Implemented in:* [`PcodeAdjacencyGraphBuilder`](file:///E:/02_Projects/SuperGhidra/pcode_lifter_bridge.py#L310)
+  - *Implemented in:* `PcodeGraphBuilder` in [`pcode_lifter_bridge.py`](pcode_lifter_bridge.py)
   - *Accomplished:* Converts P-code blocks into fixed-shape padded tensors for TPU systolic arrays.
 - [x] ~~**Two-Phase Skeleton-to-Skin Neural Decompiler Pipeline**~~
   - *Implemented in:* [`neural_decompiler_pipeline.py`](file:///E:/02_Projects/SuperGhidra/neural_decompiler_pipeline.py)
   - *Accomplished:* Phase 1 structural/VTable recovery ("skeleton") coupled with Phase 2 LLM semantic naming ("skin") gated by `EvidenceLedger`.
 - [x] ~~**Zero-Copy Shared-Memory IPC Bridge**~~
   - *Implemented in:* [`shm_decompiler_bridge.py`](file:///E:/02_Projects/SuperGhidra/shm_decompiler_bridge.py)
-  - *Accomplished:* POSIX/Win32 shared memory view with SPSC lock-free ring buffer achieving **5.04 µs IPC roundtrip**.
+  - *Accomplished:* POSIX/Win32 shared memory view (zero-copy `ShmBinaryView`) and SPSC ring buffer (pops copy the payload; MPMC mode uses a named OS mutex). **~5 µs IPC roundtrip** on the dev machine.
 - [x] ~~**GPU Parallel Function Seeder**~~
   - *Implemented in:* [`gpu_function_seeder.py`](file:///E:/02_Projects/SuperGhidra/gpu_function_seeder.py)
   - *Accomplished:* Discovered **8,617 functions in 39.81 ms** (**144.77 Million insns/sec**) on real `libg.so`.
@@ -146,10 +146,10 @@
 *Goal: Closed-loop CPU and RAM reduction with sub-millisecond offline query bypass.*
 
 - [x] ~~**Persistent L2 SQLite WAL Cache**~~
-  - *Implemented in:* [`L2SQLiteCache`](file:///E:/02_Projects/SuperGhidra/ghidra_oracle.py#L213) & [`l2_cache.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/l2_cache.py)
+  - *Implemented in:* `L2SQLiteCache` in [`ghidra_oracle.py`](ghidra_oracle.py) (keyed per program) & [`l2_cache.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/l2_cache.py)
   - *Accomplished:* Intercepts repeat queries (`decompile`, `vtable`, `disassemble`, `refs`, `adrp_add`, `opcodes`) in **< 0.05 ms** with **0% JVM CPU**.
 - [x] ~~**Native Decompiler Idle Watchdog & Hibernation**~~
-  - *Implemented in:* [`ghidra_oracle.py`](file:///E:/02_Projects/SuperGhidra/ghidra_oracle.py#L513) & [`decompiler_pool.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/decompiler_pool.py)
+  - *Implemented in:* [`ghidra_oracle.py`](ghidra_oracle.py) & [`decompiler_pool.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/decompiler_pool.py)
   - *Accomplished:* Watchdog kills idle `decompile.exe` subprocesses after 15s/120s and triggers `System.gc()`.
 - [x] ~~**Multi-Tier Resource Mode Profiles**~~
   - *Profiles:*
@@ -168,7 +168,7 @@
 
 - [x] ~~**SuperghidraMCP Server Core**~~
   - *Location:* [`E:\02_Projects\pyghidra-mcp`](file:///E:/02_Projects/pyghidra-mcp)
-  - *Accomplished:* Fully upgraded with L2 cache, Resource Governor, and 227 passing tests.
+  - *Accomplished:* L2 cache, Resource Governor, 38 registered tools; 235 unit tests passing.
 - [x] ~~**6 New Native SuperGhidra MCP Tools**~~
   - `rva_translate`: Instant zero-JVM address translation (<0.003 ms).
   - `gpu_adrp_scan`: Parallel ARM64 reference pair scanning.
@@ -178,22 +178,22 @@
   - `clear_cache`: Full L2 cache and decompiler pool invalidation.
 - [x] ~~**Tri-Platform Registration**~~
   - [x] ~~**Hermes Agent:** Configured in [`E:\03_Devops\hermes\config.yaml`](file:///E:/03_Devops/hermes/config.yaml).~~
-  - [x] ~~**AGY CLI:** Configured in [`C:\Users\X\.gemini\config\mcp_config.json`](file:///C:/Users/X/.gemini/config/mcp_config.json) with 29 tool schemas in [`C:\Users\X\.gemini\antigravity-cli\mcp\SuperghidraMCP`](file:///C:/Users/X/.gemini/antigravity-cli/mcp/SuperghidraMCP).~~
+  - [x] ~~**AGY CLI:** Configured in [`C:\Users\X\.gemini\config\mcp_config.json`](file:///C:/Users/X/.gemini/config/mcp_config.json) with tool schemas cached in [`C:\Users\X\.gemini\antigravity-cli\mcp\SuperghidraMCP`](file:///C:/Users/X/.gemini/antigravity-cli/mcp/SuperghidraMCP).~~
   - [x] ~~**Claude CLI:** Configured in [`C:\Users\X\.claude.json`](file:///C:/Users/X/.claude.json) and [`claude_desktop_config.json`](file:///C:/Users/X/AppData/Roaming/Claude/claude_desktop_config.json).~~
 
 ---
 
 ## 🚀 Future Architectural Frontiers & Next Phase
 
-The baseline specification (Sections 1 through 8) and MCP unification are **100% complete**. Below is the roadmap for next-generation frontiers:
+The baseline specification (Sections 1 through 8) and MCP unification are implemented; see Known Limitations for what is partial. Frontier status:
 
 ### Frontier 1: Standalone Synthetic DWARF / PDB Symbol Exporter
 - [x] ~~**Goal:** Export recovered class layouts, VTables, struct member alignments, and method names from `EvidenceLedger` / `_ghidra_names.json` directly into standalone `.debug_info` (DWARF 5) and `.pdb` (Microsoft PDB) symbol containers.~~
 - [x] ~~**Impact:** Allows external debuggers (IDA Pro, Binary Ninja, LLDB, x64dbg, Cheat Engine) to natively load recovered symbol types without opening or converting a `.rep` project database.~~
 - [x] ~~**Target Modules:** [`synthetic_symbol_exporter.py`](file:///E:/02_Projects/SuperGhidra/synthetic_symbol_exporter.py)~~
 - [x] ~~**Accomplished:**~~
-  - DWARF 5 ELF64 container (`DWARF5Exporter`) emitting valid CU headers, `.debug_info`, `.debug_abbrev`, `.debug_line`, `.debug_str`, and `.symtab` with struct and subprogram tags.
-  - Microsoft CodeView/PDB MSF 7.0 container (`PDBExporter`) emitting valid 4KB-blocked Multi-Stream File structures, DBI stream, and `S_PUB32` public symbol records.
+  - DWARF 5 ELF64 container (`DWARF5Exporter`, `EM_AARCH64` by default) emitting CU headers, `.debug_info`, `.debug_abbrev`, `.debug_line`, `.debug_str`, and `.symtab`; every `DW_AT_type` references a real DIE.
+  - **Experimental** MSF 7.0 / PDB container (`PDBExporter`): correct 64-byte DBI header, FPM blocks reserved, valid named-stream map, `S_PUB32` records. No GSI hash stream, so MSVC/LLVM tools may not load it.
   - Breakpad `.sym` format (`SymFileExporter`) and linker `.map` format (`MapFileExporter`).
   - Batch export API: `export_from_ledger(ledger, output_base, formats=['dwarf', 'pdb', 'sym', 'map'])` and CLI.
 
@@ -246,36 +246,24 @@ The baseline specification (Sections 1 through 8) and MCP unification are **100%
 
 ---
 
-## 📊 Complete Verification Matrix
+## 📊 Verification (2026-10-17)
 
-```text
-================================================================================
-SUPERGHIDRA TEST SUITE VERIFICATION REPORT
-================================================================================
-1. SuperGhidra Core Suite:
-   - test_superghidra.py                         PASSED (10/10)
-   - test_superghidra_suite.py                   PASSED (9/9)
-   - test_ipc_and_seeder.py                      PASSED (7/7)
-   - test_dag_and_delta.py                       PASSED (7/7)
-   - test_phase2_suite.py                        PASSED (17/17)
-   - test_spec_reformation_suite.py              PASSED (8/8)
-   - test_resource_governor.py                   PASSED (6/6)
-   - test_oracle_governor_cache.py               PASSED (24/24)
-   - test_symbol_and_smt.py                      PASSED (15/15)
-   - test_extension_and_cloud.py                 PASSED (12/12)
-   - test_sidecar_and_migrator.py                PASSED (18/18)
-   Subtotal:                                     143 / 143 PASSED (100%)
+| Suite | Command | Result |
+| :--- | :--- | :--- |
+| SuperGhidra | `python -m pytest` (repo root) | **306 passed, 1 skipped** (skip: needs built `dist/SuperGhidraCodec-1.0.0.zip`) |
+| pyghidra-mcp | `.venv\Scripts\python -m pytest tests\unit` | **235 passed** |
 
-2. SuperghidraMCP Suite:
-   - tests/unit/test_l2_cache.py                 PASSED (9/9)
-   - tests/unit/test_decompiler_governor_cache.py PASSED (7/7)
-   - tests/unit/test_decompiler_pool.py          PASSED (4/4)
-   - tests/unit/test_superghidra_tools.py        PASSED (6/6)
-   - tests/unit/test_struct_shift_migrator_tool.py PASSED (3/3)
-   - tests/test_superghidra_integration.py       PASSED (15/15)
-   - tests/unit/ (Full Server Suite)             PASSED (206/206)
-   Subtotal:                                     230 / 230 PASSED (100%)
-================================================================================
-TOTAL VERIFIED TESTS:                            373 / 373 PASSED (0 FAILURES)
-================================================================================
-```
+Regression tests for the 2026-10-17 audit live in `test_g1_regressions.py`, `test_g2_regressions.py`, `test_g2b_regressions.py`, `test_g3a_regressions.py`, `test_g3b_regressions.py` and `pyghidra-mcp/tests/unit/test_g4a_regressions.py`. Test runs no longer write into the repository (ledger → `SUPERGHIDRA_DATA_DIR` or `~/.superghidra`; benchmark report → temp dir).
+
+---
+
+## ⚠️ Known Limitations
+
+- **Java codec is standalone.** Ghidra builds its own `LocalManagedBufferFile` and has no hook to replace it, so installing the extension does not compress Ghidra projects.
+- **PDB export is experimental.** It has no GSI hash stream, so MSVC/LLVM tools may not load it. DWARF export is the supported path.
+- **SMT verifier is sound but incomplete.** It returns `UNKNOWN`, never "equivalent", for floats, calls, unhandled P-code and loops beyond the unroll limit.
+- **ARM64 lifter covers an integer subset.** Atomics and unsupported encodings lift as `UNIMPLEMENTED`.
+- **Neural and Colab output needs a real LLM endpoint.** Without one, the neural stage returns neutral heuristic names labelled `heuristic-fallback`, and the Colab pipeline reports `not_implemented` stages.
+- **Emulator `pid` access is trust-based.** The caller must declare the device serial for a `pid`; the binding can't be auto-verified.
+- **Benchmarks depend on the machine.** Numbers vary with hardware; storage numbers use synthetic pages.
+- **The MCP server must be restarted (and agy's schema cache refreshed) after code changes.** A stale server process re-caches old schemas.
