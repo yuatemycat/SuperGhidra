@@ -75,8 +75,9 @@ EXPECTED_38_TOOLS = [
     "preindex_dwarf_pdb",
 ]
 
-# Tools added after the original 38 (multi-architecture binary loader / MSVC class recovery).
-EXPECTED_EXTRA_TOOLS = ["inspect_binary", "recover_cpp_classes"]
+# Tools added after the original 38 (multi-architecture binary loader / MSVC class recovery /
+# Serialize() layout tracing and CArchive decoding).
+EXPECTED_EXTRA_TOOLS = ["inspect_binary", "recover_cpp_classes", "trace_serialize", "decode_carchive"]
 
 SUPERGHIDRA_MCP_SCHEMA_DIR = r"C:\Users\X\.gemini\antigravity-cli\mcp\SuperghidraMCP"
 PYGHIDRA_MCP_SCHEMA_DIR = r"C:\Users\X\.gemini\antigravity-cli\mcp\pyghidra"
