@@ -83,7 +83,9 @@ class MfcRuntimeClass:
     base_name: Optional[str] = None
     vtable: Optional[int] = None
     get_runtime_class: Optional[int] = None
-    serialize: Optional[int] = None
+    serialize: Optional[int] = None  # body of Serialize(CArchive&), thunks/forwarders resolved
+    serialize_slot: Optional[int] = None  # vtable slot holding that body (2 for plain MFC)
+    serialize_external: Optional[str] = None  # imported Serialize the class inherits, if any
 
     @property
     def serializable(self) -> bool:
@@ -176,6 +178,7 @@ class _View:
         # every section with file data is scanned except resources and relocations.
         self.data_secs = [s for s in img.sections if s.file_size and s.readable
                           and s.name.lower() not in (".rsrc", ".reloc", ".pdata", ".idata")]
+        self.iat = {imp.address: imp for imp in img.imports if imp.address}
 
     def is_code(self, va: Optional[int]) -> bool:
         return va is not None and any(a <= va < b for a, b in self.code)
@@ -212,24 +215,94 @@ class _View:
                 yield sec.vaddr + off, struct.unpack_from(fmt, blob, off)[0]
 
 
-def _returned_address(view: _View, func_va: int) -> Optional[int]:
-    """Address returned by a `lea rax,[rip+X]; ret` / `mov eax, X; ret` style stub."""
-    code = view.img.read_va(func_va, 32)
+def _decode_at(view: _View, va: int) -> Optional[x86_decode.X86Insn]:
+    code = view.img.read_va(va, 16)
     if not code:
         return None
-    mode = 64 if view.ptr == 8 else 32
-    insn = x86_decode.decode(code, 0, func_va, mode)
-    if insn.invalid:
+    insn = x86_decode.decode(code, 0, va, 64 if view.ptr == 8 else 32)
+    return None if insn.invalid else insn
+
+
+def _follow_thunks(view: _View, va: int, max_hops: int = 8) -> int:
+    """Skip incremental-linking / ICF `jmp rel` thunks to the real function body."""
+    for _ in range(max_hops):
+        insn = _decode_at(view, va)
+        if insn is None or insn.flow != "jmp" or insn.target is None or not view.is_code(insn.target):
+            break
+        va = insn.target
+    return va
+
+
+def _import_slot(view: _View, insn: x86_decode.X86Insn) -> Optional[str]:
+    """Import name when `insn` reads an IAT slot (`mov rax,[rip+iat]` / `jmp [iat]`)."""
+    if insn.mem is None:
         return None
-    value = None
-    if insn.map == 0 and insn.opcode == 0x8D and insn.mem is not None and (insn.reg & 7) == 0:
+    slot = insn.mem.effective_address(insn.end)
+    imp = view.iat.get(slot) if slot is not None else None
+    if imp is None:
+        return None
+    return imp.name or f"{imp.library or '?'}#{imp.ordinal}"
+
+
+def _stub_value(view: _View, func_va: int) -> Tuple[Optional[int], Optional[str]]:
+    """What a `return &classX;` stub returns: (address, None) or (None, imported symbol).
+
+    Recognises `lea rax,[rip+X]; ret`, `mov eax, X; ret`, `mov rax,[rip+__imp_X]; ret`
+    and the tail call `jmp [__imp_Base::GetThisClass]`, behind any number of jmp thunks.
+    """
+    va = _follow_thunks(view, func_va)
+    insn = _decode_at(view, va)
+    if insn is None or insn.map != 0:
+        return None, None
+    if insn.flow == "jmp_ind":
+        return None, _import_slot(view, insn)
+    value, imported = None, None
+    if insn.opcode == 0x8D and insn.mem is not None and (insn.reg & 7) == 0:
         value = insn.mem.effective_address(insn.end)
-    elif insn.map == 0 and insn.opcode == 0xB8 and insn.imm is not None:  # mov eax, imm32
+    elif insn.opcode == 0xB8 and insn.imm is not None:  # mov eax, imm32
         value = insn.imm
-    if value is None:
+    elif insn.opcode in (0x8B, 0xA1) and (insn.reg & 7) == 0:  # mov eax/rax, [mem]
+        imported = _import_slot(view, insn)
+        if imported is None:
+            return None, None
+    else:
+        return None, None
+    nxt = _decode_at(view, insn.end)
+    if nxt is None or nxt.flow != "ret":
+        return None, None
+    return value, imported
+
+
+def _returned_address(view: _View, func_va: int) -> Optional[int]:
+    """Address returned by a `lea rax,[rip+X]; ret` / `mov eax, X; ret` style stub."""
+    return _stub_value(view, func_va)[0]
+
+
+def _virtual_forward_slot(view: _View, func_va: int) -> Optional[int]:
+    """Slot index K when the function is `mov rax,[rcx]; jmp [rax+K*ptr]` (a virtual forwarder).
+
+    Frameworks layered on MFC (e.g. SolidWorks' su_CObject) implement Serialize(CArchive&)
+    this way and put the per-class body in a later virtual slot.
+    """
+    first = _decode_at(view, func_va)
+    if (first is None or first.map != 0 or first.opcode != 0x8B or first.mem is None
+            or first.mem.base not in ("rcx", "ecx") or first.mem.index or first.mem.disp
+            or first.operand_size != view.ptr):
         return None
-    nxt = x86_decode.decode(code, insn.length, insn.end, mode)
-    return value if nxt.flow == "ret" else None
+    reg = (x86_decode.REG64 if view.ptr == 8 else x86_decode.REG32)[first.reg]
+    second = _decode_at(view, first.end)
+    if (second is None or second.flow != "jmp_ind" or second.mem is None
+            or second.mem.base != reg or second.mem.index or second.mem.disp % view.ptr):
+        return None
+    return second.mem.disp // view.ptr
+
+
+def _demangle_mfc_import(name: Optional[str]) -> Optional[str]:
+    """`?classCObject@CObject@@2UCRuntimeClass@@B` / `?GetThisClass@CDocument@@SA...` -> class."""
+    if not name or not name.startswith("?"):
+        return None
+    parts = name[1:].split("@")
+    return parts[1] if len(parts) > 2 and parts[1] else None
 
 
 # --------------------------------------------------------------------------------------
@@ -360,7 +433,7 @@ def _scan_mfc(view: _View) -> List[MfcRuntimeClass]:
             if not view.is_mapped(name_p):
                 continue
             name = class_name(name_p)
-            if not name:
+            if not name or (not base and name != "CObject"):  # only CObject is a root class
                 continue
             va = sec.vaddr + off
             found[va] = MfcRuntimeClass(name, va, size, schema, bool(schema & MFC_VERSIONABLE_SCHEMA),
@@ -368,14 +441,35 @@ def _scan_mfc(view: _View) -> List[MfcRuntimeClass]:
 
     # Base class: static builds store the CRuntimeClass*; _AFXDLL builds store a
     # GetBaseClass() function returning it.
+    # A base CRuntimeClass in another module (e.g. mfc140u.dll) is only known by its
+    # import name, so base_class stays None and base_name comes from the import.
     for cls in found.values():
         if cls.base_class and view.is_code(cls.base_class):
-            cls.base_class = _returned_address(view, cls.base_class)
+            cls.base_class, imported = _stub_value(view, cls.base_class)
+            if imported:
+                cls.base_name = _demangle_mfc_import(imported)
         if cls.base_class in found:
             cls.base_name = found[cls.base_class].name
-    # Second pass: a base CRuntimeClass may live in another module (e.g. mfc140u.dll),
-    # leave base_name None then.
     return sorted(found.values(), key=lambda c: c.name)
+
+
+def _resolve_serialize(view: _View, funcs: List[int]) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    """(body VA, slot, imported name) for the Serialize virtual of a vftable."""
+    slot = MFC_SLOT_SERIALIZE
+    for _ in range(4):
+        if slot >= len(funcs):
+            return None, None, None
+        body = _follow_thunks(view, funcs[slot])
+        insn = _decode_at(view, body)
+        if insn is not None and insn.flow == "jmp_ind":
+            imported = _import_slot(view, insn)
+            if imported:
+                return None, slot, imported
+        nxt = _virtual_forward_slot(view, body)
+        if nxt is None or nxt == slot:
+            return body, slot, None
+        slot = nxt
+    return None, None, None
 
 
 def _link_mfc_to_vtables(view: _View, mfc: List[MfcRuntimeClass], rtti: List[RttiClass]) -> None:
@@ -421,15 +515,22 @@ def _link_mfc_to_vtables(view: _View, mfc: List[MfcRuntimeClass], rtti: List[Rtt
         exact = [o for o in options if o[2] == cls.name]
         vt_va, funcs, _ = (exact or options)[0]
         cls.vtable = vt_va
-        cls.get_runtime_class = funcs[MFC_SLOT_GET_RUNTIME_CLASS]
-        cls.serialize = funcs[MFC_SLOT_SERIALIZE] if cls.serializable else None
+        cls.get_runtime_class = _follow_thunks(view, funcs[MFC_SLOT_GET_RUNTIME_CLASS])
+        if cls.serializable:
+            cls.serialize, cls.serialize_slot, cls.serialize_external = _resolve_serialize(view, funcs)
 
 
-def recover_classes(source, *, rtti: bool = True, mfc: bool = True) -> ClassRecoveryReport:
-    """Recover MSVC RTTI classes and MFC CRuntimeClass records from a PE file/bytes/image."""
+def recover_classes(source, *, rtti: bool = True, mfc: bool = True,
+                    symbol_dirs: Optional[List[str]] = None) -> ClassRecoveryReport:
+    """Recover MSVC RTTI classes and MFC CRuntimeClass records from a PE file/bytes/image.
+
+    ``symbol_dirs`` overrides where ordinal-name tables (``mfc140u.exports`` ...) are looked
+    up; by default Ghidra's ``data/symbols`` directory is used when it can be found.
+    """
     img = source if isinstance(source, binary_loader.BinaryImage) else binary_loader.load_binary(source)
     if img.format != "pe" or img.arch not in ("x86", "x86_64"):
         raise ValueError(f"MSVC class recovery needs an x86/x64 PE image, got {img.format}/{img.arch}")
+    binary_loader.resolve_import_ordinals(img, symbol_dirs)  # MFC DLLs export by ordinal only
     view = _View(img)
     rtti_classes = _scan_rtti(view) if rtti else []
     mfc_classes = _scan_mfc(view) if mfc else []

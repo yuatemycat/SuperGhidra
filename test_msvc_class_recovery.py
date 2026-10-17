@@ -9,8 +9,8 @@ import msvc_class_recovery as R
 BASE = 0x180000000
 
 
-def build_pe_sections(sections, bits=64, image_base=BASE, machine=0x8664):
-    """PE image from [(name, rva, bytes, characteristics)] with no data directories."""
+def build_pe_sections(sections, bits=64, image_base=BASE, machine=0x8664, dirs=None):
+    """PE image from [(name, rva, bytes, characteristics)]; `dirs` = {index: (rva, size)}."""
     opt_size = 240 if bits == 64 else 224
     e_lfanew, headers = 0x80, 0x400
     hdr = bytearray(headers)
@@ -27,6 +27,9 @@ def build_pe_sections(sections, bits=64, image_base=BASE, machine=0x8664):
         struct.pack_into("<H", hdr, opt, 0x10B)
         struct.pack_into("<I", hdr, opt + 28, image_base)
         struct.pack_into("<I", hdr, opt + 92, 16)
+    dirs_off = opt + (112 if bits == 64 else 96)
+    for idx, (rva, size) in (dirs or {}).items():
+        struct.pack_into("<II", hdr, dirs_off + 8 * idx, rva, size)
     raw = bytearray(hdr)
     for i, (name, rva, blob, ch) in enumerate(sections):
         blob = blob.ljust((len(blob) + 0x1FF) & ~0x1FF, b"\x00")
@@ -45,7 +48,10 @@ def build_mfc_dll():
     text[0x10] = text[0x20] = text[0x30] = 0xC3  # dtor, Serialize, CreateObject
     rdata = bytearray(0x200)
     rdata[0x00:0x09] = b"CFeature\x00"
-    struct.pack_into("<QiIQQQQ", rdata, 0x10, va(0x2000), 0x40, 0x80000003, va(0x1030), 0, 0, 0)
+    # Static-MFC style: m_pBaseClass points straight at CObject's CRuntimeClass.
+    struct.pack_into("<QiIQQQQ", rdata, 0x10, va(0x2000), 0x40, 0x80000003, va(0x1030), va(0x2150), 0, 0)
+    rdata[0x140:0x148] = b"CObject\x00"
+    struct.pack_into("<QiIQQQQ", rdata, 0x150, va(0x2140), 8, 0xFFFF, 0, 0, 0, 0)
     struct.pack_into("<QQ", rdata, 0x40, 0, 0)
     rdata[0x50:0x50 + 15] = b".?AVCFeature@@\x00"
     struct.pack_into("<IIIiii", rdata, 0x70, 1, 0, 0, 0x2040, 0x20A0, 0x2070)  # COL
@@ -55,6 +61,77 @@ def build_mfc_dll():
     struct.pack_into("<QQQQQ", rdata, 0xF8, va(0x2070), va(0x1000), va(0x1010), va(0x1020), 0)
     return build_pe_sections([(b".text", 0x1000, bytes(text), 0x60000020),
                               (b".rdata", 0x2000, bytes(rdata), 0x40000040)])
+
+
+MFC_GETTHISCLASS_ORDINAL = 7068  # ?GetThisClass@CObject@@SAPEAUCRuntimeClass@@XZ in mfc140u
+
+
+def build_forwarding_dll():
+    """SolidWorks-style class: no RTTI, incremental-link thunks, Serialize forwarded to slot 4,
+    base class imported from mfc140u.dll by ordinal (`jmp [__imp_CObject::GetThisClass]`)."""
+    va = lambda rva: BASE + rva  # noqa: E731
+    t = va(0x1000)
+    text = bytearray(b"\xCC" * 0x80)
+
+    def jmp(at, to):
+        text[at:at + 5] = b"\xE9" + struct.pack("<i", to - (at + 5))
+
+    jmp(0x00, 0x40)  # GetRuntimeClass thunk
+    jmp(0x08, 0x50)  # Serialize thunk -> forwarder
+    jmp(0x10, 0x60)  # GetBaseClass thunk -> imported
+    text[0x18] = text[0x20] = text[0x28] = 0xC3  # dtor, CreateObject, slot 3
+    jmp(0x30, 0x70)  # slot 4 thunk -> real Serialize body
+    text[0x40:0x48] = b"\x48\x8D\x05" + struct.pack("<i", va(0x2010) - (t + 0x47)) + b"\xC3"
+    text[0x50:0x56] = b"\x48\x8B\x01\xFF\x60\x20"  # mov rax,[rcx] ; jmp [rax+0x20]
+    text[0x60:0x66] = b"\xFF\x25" + struct.pack("<i", va(0x21C0) - (t + 0x66))  # jmp [IAT]
+    text[0x70] = 0xC3
+
+    rdata = bytearray(0x200)
+    rdata[0x00:0x0C] = b"moFeature_c\x00"
+    struct.pack_into("<QiIQQQQ", rdata, 0x10, va(0x2000), 0x58, 0x80000001, t + 0x20, t + 0x10, 0, 0)
+    struct.pack_into("<5Q", rdata, 0x100, t + 0x00, t + 0x18, t + 0x08, t + 0x28, t + 0x30)
+    struct.pack_into("<IIIII", rdata, 0x180, 0x21B0, 0, 0, 0x21D0, 0x21C0)  # import descriptor
+    struct.pack_into("<Q", rdata, 0x1B0, (1 << 63) | MFC_GETTHISCLASS_ORDINAL)  # ILT
+    struct.pack_into("<Q", rdata, 0x1C0, (1 << 63) | MFC_GETTHISCLASS_ORDINAL)  # IAT
+    rdata[0x1D0:0x1DC] = b"mfc140u.dll\x00"
+    return build_pe_sections([(b".text", 0x1000, bytes(text), 0x60000020),
+                              (b".rdata", 0x2000, bytes(rdata), 0x40000040)],
+                             dirs={1: (0x2180, 40)})
+
+
+class TestForwardingDll(unittest.TestCase):
+    def test_thunks_and_forwarder(self):
+        cls = R.recover_classes(build_forwarding_dll(), symbol_dirs=[]).mfc_by_name()["moFeature_c"]
+        self.assertEqual(cls.vtable, BASE + 0x2100)
+        self.assertEqual(cls.get_runtime_class, BASE + 0x1040)  # thunk followed
+        self.assertEqual(cls.serialize, BASE + 0x1070)  # forwarder -> slot 4 -> thunk -> body
+        self.assertEqual(cls.serialize_slot, 4)
+        self.assertIsNone(cls.base_name)  # ordinal import, no name table
+
+    def test_ordinal_base_named_from_exports_table(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "mfc140u.exports"), "w", encoding="utf-8") as f:
+                f.write('<LIBRARY NAME="mfc140u.dll">\n<EXPORT ORDINAL="%d" '
+                        'NAME="?GetThisClass@CObject@@SAPEAUCRuntimeClass@@XZ" />\n</LIBRARY>\n'
+                        % MFC_GETTHISCLASS_ORDINAL)
+            rep = R.recover_classes(build_forwarding_dll(), symbol_dirs=[d])
+        self.assertEqual(rep.mfc_by_name()["moFeature_c"].base_name, "CObject")
+
+    def test_imported_serialize_reported_as_external(self):
+        raw = bytearray(build_forwarding_dll())
+        # Point vtable slot 4 at the `jmp [IAT]` stub: the class inherits an imported Serialize.
+        off = raw.find(struct.pack("<Q", BASE + 0x1030), 0x400)
+        struct.pack_into("<Q", raw, off, BASE + 0x1060)
+        cls = R.recover_classes(bytes(raw), symbol_dirs=[]).mfc_by_name()["moFeature_c"]
+        self.assertIsNone(cls.serialize)
+        self.assertEqual(cls.serialize_slot, 4)
+        self.assertEqual(cls.serialize_external, f"mfc140u.dll#{MFC_GETTHISCLASS_ORDINAL}")
+
+    def test_root_class_filter(self):
+        names = {c.name for c in R.recover_classes(build_mfc_dll()).mfc_classes}
+        self.assertEqual(names, {"CFeature", "CObject"})
 
 
 class TestDemangle(unittest.TestCase):
@@ -78,6 +155,7 @@ class TestSyntheticDll(unittest.TestCase):
         self.assertTrue(cls.versionable)
         self.assertTrue(cls.serializable)
         self.assertEqual(cls.create_object, BASE + 0x1030)
+        self.assertEqual(cls.base_name, "CObject")
 
     def test_vtable_and_serialize_link(self):
         cls = self.report.mfc_by_name()["CFeature"]
@@ -116,6 +194,8 @@ class TestRealMfc(unittest.TestCase):
         self.assertIsNotNone(mfc["CObArray"].serialize)
         self.assertGreater(len(rep.mfc_classes), 300)
         self.assertIn("CCmdTarget", rep.rtti_by_name()["CWnd"].bases)
+        serializable = [c for c in rep.mfc_classes if c.serializable]
+        self.assertEqual([c.name for c in serializable if not c.serialize], [])
 
     @unittest.skipUnless(os.path.exists(MFC64), "64-bit mfc140u.dll not present")
     def test_mfc140u_x64(self):
@@ -124,6 +204,22 @@ class TestRealMfc(unittest.TestCase):
     @unittest.skipUnless(os.path.exists(MFC32), "32-bit mfc140u.dll not present")
     def test_mfc140u_x86(self):
         self._check(MFC32, 4)
+
+
+SWDM = r"C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS PCB Viewer\System\Model3DWrapper\SWAPI64\swdocumentmgr.dll"
+
+
+class TestRealSolidWorks(unittest.TestCase):
+    @unittest.skipUnless(os.path.exists(SWDM), "SOLIDWORKS Document Manager DLL not present")
+    def test_swdocumentmgr(self):
+        rep = R.recover_classes(SWDM)
+        ser = [c for c in rep.mfc_classes if c.serializable]
+        self.assertGreater(len(ser), 100)
+        unresolved = [c.name for c in ser if not c.serialize and not c.serialize_external]
+        self.assertEqual(unresolved, [])
+        hdr = rep.mfc_by_name()["moHeader_c"]
+        self.assertEqual(hdr.base_name, "su_CObject")
+        self.assertEqual(hdr.serialize_slot, 5)  # su_CObject::Serialize forwards to slot 5
 
 
 if __name__ == "__main__":
