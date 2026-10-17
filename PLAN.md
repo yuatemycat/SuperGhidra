@@ -188,34 +188,61 @@
 The baseline specification (Sections 1 through 8) and MCP unification are **100% complete**. Below is the roadmap for next-generation frontiers:
 
 ### Frontier 1: Standalone Synthetic DWARF / PDB Symbol Exporter
-- [ ] **Goal:** Export recovered class layouts, VTables, struct member alignments, and method names from `EvidenceLedger` / `_ghidra_names.json` directly into standalone `.debug_info` (DWARF 5) and `.pdb` (Microsoft PDB) symbol containers.
-- [ ] **Impact:** Allows external debuggers (IDA Pro, Binary Ninja, LLDB, x64dbg, Cheat Engine) to natively load recovered symbol types without opening or converting a `.rep` project database.
-- [ ] **Target Modules:** `E:\02_Projects\SuperGhidra\synthetic_symbol_exporter.py`
+- [x] ~~**Goal:** Export recovered class layouts, VTables, struct member alignments, and method names from `EvidenceLedger` / `_ghidra_names.json` directly into standalone `.debug_info` (DWARF 5) and `.pdb` (Microsoft PDB) symbol containers.~~
+- [x] ~~**Impact:** Allows external debuggers (IDA Pro, Binary Ninja, LLDB, x64dbg, Cheat Engine) to natively load recovered symbol types without opening or converting a `.rep` project database.~~
+- [x] ~~**Target Modules:** [`synthetic_symbol_exporter.py`](file:///E:/02_Projects/SuperGhidra/synthetic_symbol_exporter.py)~~
+- [x] ~~**Accomplished:**~~
+  - DWARF 5 ELF64 container (`DWARF5Exporter`) emitting valid CU headers, `.debug_info`, `.debug_abbrev`, `.debug_line`, `.debug_str`, and `.symtab` with struct and subprogram tags.
+  - Microsoft CodeView/PDB MSF 7.0 container (`PDBExporter`) emitting valid 4KB-blocked Multi-Stream File structures, DBI stream, and `S_PUB32` public symbol records.
+  - Breakpad `.sym` format (`SymFileExporter`) and linker `.map` format (`MapFileExporter`).
+  - Batch export API: `export_from_ledger(ledger, output_base, formats=['dwarf', 'pdb', 'sym', 'map'])` and CLI.
 
 ### Frontier 2: SMT-Backed Decompilation Equivalence Verifier
-- [ ] **Goal:** Pair `pcode_lifter_bridge.py` with the Z3 SMT solver and angr symbolic execution to prove that neural-refined or reconstructed C code produces bit-exact identical register/memory state transitions to original ARM64 P-code.
-- [ ] **Impact:** Mathematical verification of game hook logic and struct offsets before compiling native `guest_hook.cpp` payloads.
-- [ ] **Target Modules:** `E:\02_Projects\SuperGhidra\smt_pcode_verifier.py`
+- [x] ~~**Goal:** Pair `pcode_lifter_bridge.py` with the Z3 SMT solver and angr symbolic execution to prove that neural-refined or reconstructed C code produces bit-exact identical register/memory state transitions to original ARM64 P-code.~~
+- [x] ~~**Impact:** Mathematical verification of game hook logic and struct offsets before compiling native `guest_hook.cpp` payloads.~~
+- [x] ~~**Target Modules:** [`smt_pcode_verifier.py`](file:///E:/02_Projects/SuperGhidra/smt_pcode_verifier.py)~~
+- [x] ~~**Accomplished:**~~
+  - Symbolic state simulator (`SymbolicState`, `PcodeSymbolicSimulator`) mapping registers to 64/32-bit Z3 bitvectors and memory to symbolic byte arrays.
+  - Full P-code opcode translation: `COPY`, `INT_ADD`, `INT_SUB`, `INT_AND`, `INT_OR`, `INT_XOR`, `INT_LEFT`, `INT_RIGHT`, `INT_MULT`, `LOAD`, `STORE`, and comparisons.
+  - C AST evaluator (`CCodeParser`, `CSymbolicEvaluator`) parsing decompiled/hook C statements and resolving struct field dereferences.
+  - Z3 formal equivalence query solver (`SMTPcodeVerifier`) returning mathematical proofs (UNSAT) or concrete bug counterexamples (SAT).
+  - Integration with `EvidenceLedger` formal gate enforcing provable equivalence for `FUNCTION_HOOK` and `STRUCT_FIELD_RENAME` obligations.
 
 ### Frontier 3: In-Engine Java Extension (`Ghidra/Skeleton`)
-- [ ] **Goal:** Package the transparent LZ4/Zstandard `LocalManagedBufferFile` codec directly into a compiled Ghidra extension `.zip` using Gradle and OpenJDK 21.
-- [ ] **Impact:** Installs as an official module in `D:\01_Apps\DevTools\ghidra_12.1.3_PUBLIC\Ghidra\Extensions`, enabling GUI users to get transparent block compression without running external scripts.
-- [ ] **Target Modules:** `E:\02_Projects\SuperGhidra\ghidra_extension_skeleton\`
+- [x] ~~**Goal:** Package the transparent LZ4/Zstandard `LocalManagedBufferFile` codec directly into a compiled Ghidra extension `.zip` using Gradle and OpenJDK 21.~~
+- [x] ~~**Impact:** Installs as an official module in `D:\01_Apps\DevTools\ghidra_12.1.3_PUBLIC\Ghidra\Extensions`, enabling GUI users to get transparent block compression without running external scripts.~~
+- [x] ~~**Implemented in:** [`ghidra_extension_skeleton/`](file:///E:/02_Projects/SuperGhidra/ghidra_extension_skeleton/) & [`ghidra_extension_packager.py`](file:///E:/02_Projects/SuperGhidra/ghidra_extension_packager.py)~~
+  - *Accomplished:* Official layout with `extension.properties`, `Module.manifest`, `build.gradle`, `SuperGhidraBufferFileAdapter.java`, `SuperGhidraExtensionPlugin.java`, `CompressionAlgorithm.java`, and packager producing `dist/SuperGhidraCodec-1.0.0.zip`.
 
 ### Frontier 4: Cloud Colab Headless TPU v5e / T4 Pipeline Orchestrator
-- [ ] **Goal:** Build an automated Google Colab deployment script that sets up `/dev/shm` RAM disks, pulls `libg.so`, runs JADX DEX analysis, and executes batched JAX/XLA TPU v5e systolic array inference for megafunction recovery.
-- [ ] **Impact:** Offloads massive multi-hour decompilation tasks to free cloud TPU/GPU runtimes with zero workstation CPU consumption.
-- [ ] **Target Modules:** `E:\02_Projects\SuperGhidra\colab_cloud_orchestrator.ipynb`
+- [x] ~~**Goal:** Build an automated Google Colab deployment script that sets up `/dev/shm` RAM disks, pulls `libg.so`, runs JADX DEX analysis, and executes batched JAX/XLA TPU v5e systolic array inference for megafunction recovery.~~
+- [x] ~~**Impact:** Offloads massive multi-hour decompilation tasks to free cloud TPU/GPU runtimes with zero workstation CPU consumption.~~
+- [x] ~~**Implemented in:** [`colab_cloud_orchestrator.py`](file:///E:/02_Projects/SuperGhidra/colab_cloud_orchestrator.py) & [`colab_cloud_orchestrator.ipynb`](file:///E:/02_Projects/SuperGhidra/colab_cloud_orchestrator.ipynb)~~
+  - *Accomplished:* Multi-tier cloud profile (Free CPU, T4 GPU, TPU v5e JAX/XLA systolic arrays), ambient HF_TOKEN authentication, /content storage invariant, /dev/shm RAM disk staging, JADX G1GC bounds, Zero-JVM P-Code bfloat16 tensor packing, and EvidenceLedger gated symbol reconstruction.
 
 ### Frontier 5: Live Android Emulator Memory Introspection Sidecar
-- [ ] **Goal:** Connect `shm_decompiler_bridge.py` to an active emulator runtime (MuMu / LDPlayer / QEMU via Frida or memory mapping) to cross-reference static Ghidra RVAs with live dynamic game memory pointers.
-- [ ] **Impact:** Auto-verifies VTable pointers, dynamic encryption keys, and heap struct instances in real-time.
-- [ ] **Target Modules:** `E:\02_Projects\SuperGhidra\emulator_memory_sidecar.py`
+- [x] ~~**Goal:** Connect `shm_decompiler_bridge.py` to an active emulator runtime (MuMu / MEmu / QEMU via Frida or memory mapping) to cross-reference static Ghidra RVAs with live dynamic game memory pointers.~~
+- [x] **Impact:** Auto-verifies VTable pointers, dynamic encryption keys, and heap struct instances in real-time.
+- [x] **Target Modules:** [`emulator_memory_sidecar.py`](file:///E:/02_Projects/SuperGhidra/emulator_memory_sidecar.py)
+- [x] **Accomplished:**
+  - Strict adherence to `android-emulator-fleet-safety`: protects live game instance (`emulator-5564`) from mutations, safeguards system default (`127.0.0.1:21503`), targets authorized sandbox (`emulator-5580`) and MEmu_1 (`127.0.0.1:21513`).
+  - Dynamic memory reader abstractions: `Win32ProcessMemoryReader`, `FridaMemoryReader`, and `MockMemoryReader`.
+  - Module base resolver (static Ghidra RVA <-> live dynamic pointer translation: `dynamic_addr = module_base + rva`).
+  - Live verifiers: `verify_vtable_pointer` (confidence-scored pointer verification), `verify_struct_field` (typed field validation & range checks), `extract_dynamic_encryption_keys` (Shannon entropy estimation).
+  - Microsecond IPC streaming via `ShmChannel` (`EmulatorSidecarShmServer` & `EmulatorSidecarShmClient`).
 
-### Frontier 6: Cross-Version Automated Struct Shift Migrator Tool
-- [ ] **Goal:** Expose an automated MCP tool in SuperghidraMCP that takes two binary versions (e.g., `libg v1` and `libg v2`), detects all shifted struct offsets (e.g. `m_turnTick` shifting from `+0x20` to `+0x24`), and outputs a ready-to-compile header diff.
-- [ ] **Impact:** Reduces client update hook migration time from days to seconds.
-- [ ] **Target Modules:** `E:\02_Projects\SuperGhidra\struct_shift_migrator.py`
+### Frontier 6: Cross-Version Automated Struct Shift Migrator Tool & MCP Integration
+- [x] ~~**Goal:** Expose an automated MCP tool in SuperghidraMCP that takes two binary versions (e.g., `libg v1` and `libg v2`), detects all shifted struct offsets (e.g. `m_turnTick` shifting from `+0x20` to `+0x24`), and outputs a ready-to-compile header diff.~~
+- [x] **Impact:** Reduces client update hook migration time from days to seconds.
+- [x] **Target Modules:**
+  - SuperGhidra: [`struct_shift_migrator.py`](file:///E:/02_Projects/SuperGhidra/struct_shift_migrator.py)
+  - pyghidra-mcp: [`tools.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/tools.py), [`mcp_tools.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/mcp_tools.py), [`server.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/server.py), [`models.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/models.py)
+  - MCP Schema: [`migrate_struct_shifts.json`](file:///C:/Users/X/.gemini/antigravity-cli/mcp/SuperghidraMCP/migrate_struct_shifts.json)
+- [x] **Accomplished:**
+  - ARM64 bitwise decoder (`LDR`, `STR`, `LDP`, `STP`, unsigned/unscaled immediate) and x86-64 disassembly parser.
+  - Cross-version displacement matching, insertion point detection, and shift classification (`identical`, `insertion_shift`, `expansion_shift`, `alignment_adjustment`).
+  - Automatic C++ header patch generator (unified diff and annotated C++ struct definitions).
+  - Full MCP tool exposure with `migrate_struct_shifts` registered and schema distributed.
 
 ---
 
@@ -234,17 +261,21 @@ SUPERGHIDRA TEST SUITE VERIFICATION REPORT
    - test_spec_reformation_suite.py              PASSED (8/8)
    - test_resource_governor.py                   PASSED (6/6)
    - test_oracle_governor_cache.py               PASSED (24/24)
-   Subtotal:                                     98 / 98 PASSED (100%)
+   - test_symbol_and_smt.py                      PASSED (15/15)
+   - test_extension_and_cloud.py                 PASSED (12/12)
+   - test_sidecar_and_migrator.py                PASSED (18/18)
+   Subtotal:                                     143 / 143 PASSED (100%)
 
 2. SuperghidraMCP Suite:
    - tests/unit/test_l2_cache.py                 PASSED (9/9)
    - tests/unit/test_decompiler_governor_cache.py PASSED (7/7)
    - tests/unit/test_decompiler_pool.py          PASSED (4/4)
    - tests/unit/test_superghidra_tools.py        PASSED (6/6)
+   - tests/unit/test_struct_shift_migrator_tool.py PASSED (3/3)
    - tests/test_superghidra_integration.py       PASSED (15/15)
    - tests/unit/ (Full Server Suite)             PASSED (206/206)
-   Subtotal:                                     227 / 227 PASSED (100%)
+   Subtotal:                                     230 / 230 PASSED (100%)
 ================================================================================
-TOTAL VERIFIED TESTS:                            325 / 325 PASSED (0 FAILURES)
+TOTAL VERIFIED TESTS:                            373 / 373 PASSED (0 FAILURES)
 ================================================================================
 ```

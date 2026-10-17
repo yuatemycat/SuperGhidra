@@ -1,44 +1,43 @@
 """SuperGhidra Core Package: High-Performance Ghidra Architecture & GPU Acceleration Suite."""
 
 # Phase 1 Core Modules
-from .ghidra_oracle import GhidraOracleClient, GhidraOracleDaemon, run_oracle_cli
+from .ghidra_oracle import GhidraOracleSession, GhidraDaemonServer, client_send_request
 from .storage_compression_prototype import (
     DataBuffer,
     SlotDirectory,
     SlotDirectoryEntry,
-    CompressedBufferFile,
-    benchmark_compression_layer,
+    CompressedLocalManagedBufferFile,
+    StorageCompressionBenchmark,
 )
 from .headless_analyzer_tuner import (
-    HeadlessAnalyzerTuner,
-    AnalyzerProfile,
-    AnalyzerOption,
-    generate_prescript_java,
-    generate_lazy_noreturn_postscript_java,
+    AnalyzerConfiguration,
+    AnalyzerProfileName,
+    HeadlessCommandBuilder,
+    ScriptGenerator,
+    get_profile_config,
 )
 from .gpu_adrp_scanner import (
-    GPUADRPScanner,
+    GPUAdrpScanner,
     ADRPMatch,
     decode_adrp_target,
     decode_add_imm,
     decode_ldr_imm,
-    benchmark_adrp_scan,
+    benchmark_scanner,
 )
 from .binary_diff_engine import (
-    BinaryDiffEngine,
     BatchedBinaryMatcher,
-    FunctionFeatureVector,
-    FunctionMatchResult,
-    StructOffsetDelta,
-    DisplacementExtractor,
+    CFGFeatureExtractor,
+    DiffResult,
+    FunctionCFG,
+    FunctionMatch,
 )
 from .evidence_ledger import (
     ReconstructionObligationLedger,
-    EvidenceObligation,
+    ProofObligation,
     VTableSlotVerifier,
     FieldDisplacementVerifier,
     AllocationSizeVerifier,
-    VerificationReport,
+    CheckResult,
 )
 
 # Phase 2 High-Performance Modules
@@ -53,35 +52,25 @@ from .shm_decompiler_bridge import (
 from .gpu_function_seeder import (
     GPUFunctionSeeder,
     FunctionSeed,
-    ARM64InstructionClassifier,
 )
 from .dependency_cache_dag import (
     DependencyCacheDAG,
     DecompilationLRUCache,
     InvalidationImpactReport,
-    benchmark_dag_invalidation,
 )
 from .semantic_delta_log import (
     SemanticDeltaLog,
     DeltaMigrationEngine,
     DeltaMigrationReport,
-    RenameSymbolEvent,
-    DefineStructFieldEvent,
-    BindVTableSlotEvent,
-    SetFunctionSignatureEvent,
-    SetCommentEvent,
-    benchmark_semantic_delta_log,
+    SemanticEvent,
+    DeltaEventType,
 )
 from .dwarf_pdb_preindexer import (
-    DwarfPdbPreindexer,
-    TypeDeduplicator,
     OffHeapTypeStore,
     OracleTypeStoreAdapter,
-    CanonicalType,
-    StructMember,
-    EnumMember,
+    TypeDeduplicator,
     SyntheticDebugDataGenerator,
-    benchmark_dwarf_preindexer,
+    StructMember,
 )
 
 # Phase 3 Reformation Spec Modules (Sections 5, 6, 7)
@@ -90,8 +79,6 @@ from .apk_jni_cross_referencer import (
     JavaNativeMethod,
     JNIRegisteredNative,
     JNICrossReferenceMatch,
-    construct_static_jni_symbol,
-    mangle_jni_identifier,
 )
 from .cross_platform_headless_harness import (
     HeadlessProfile,
@@ -130,3 +117,77 @@ from .resource_governor import (
     TelemetryResourceGovernor,
 )
 
+# Frontiers 5 & 6 Modules
+from .emulator_memory_sidecar import (
+    FleetSafetyViolationError,
+    EmulatorDeviceInfo,
+    EmulatorFleetGuard,
+    MemoryRegion,
+    BaseMemoryReader,
+    Win32ProcessMemoryReader,
+    FridaMemoryReader,
+    MockMemoryReader,
+    ModuleBaseResolver,
+    VTableSlot,
+    VTableVerificationResult,
+    StructFieldVerificationResult,
+    DynamicKeyResult,
+    verify_vtable_pointer,
+    verify_struct_field,
+    extract_dynamic_encryption_keys,
+    EmulatorSidecarShmServer,
+    EmulatorSidecarShmClient,
+)
+from .struct_shift_migrator import (
+    MemoryAccess,
+    ShiftType,
+    FieldMigration,
+    StructInsertion,
+    MigrationReport,
+    StructShiftMigrator,
+    migrate_struct_shifts,
+    decode_arm64_memory_access,
+    parse_disassembly_line,
+)
+
+# Frontiers 1 & 2 Modules (Synthetic Symbol Exporters & SMT P-Code Verifier)
+from .synthetic_symbol_exporter import (
+    ExportSymbol,
+    ExportField,
+    ExportStruct,
+    DWARF5Exporter,
+    PDBExporter,
+    MapFileExporter,
+    SymFileExporter,
+    SymbolLedgerIngestor,
+    export_from_ledger,
+)
+from .smt_pcode_verifier import (
+    VerificationResult,
+    SymbolicState,
+    PcodeSymbolicSimulator,
+    CASTNode,
+    CVar,
+    CConst,
+    CBinary,
+    CUnary,
+    CDeref,
+    CFieldAccess,
+    CAssignment,
+    CReturn,
+    CBlock,
+    CCodeParser,
+    CSymbolicEvaluator,
+    SMTPcodeVerifier,
+)
+
+# Frontiers 3 & 4 Modules (In-Engine Java Extension & Cloud Colab TPU/T4 Orchestrator)
+from .ghidra_extension_packager import (
+    GhidraExtensionPackager,
+    ExtensionValidationError,
+)
+from .colab_cloud_orchestrator import (
+    CloudRuntimeTier,
+    CloudConfig,
+    ColabCloudOrchestrator,
+)
