@@ -31,6 +31,7 @@ all = [
 py-modules = [
     "apk_jni_cross_referencer",
     "binary_diff_engine",
+    "binary_loader",
     "colab_cloud_orchestrator",
     "cross_platform_headless_harness",
     "dependency_cache_dag",
@@ -42,6 +43,7 @@ py-modules = [
     "gpu_adrp_scanner",
     "gpu_function_seeder",
     "headless_analyzer_tuner",
+    "msvc_class_recovery",
     "native_decompiler_pgo_builder",
     "neural_decompiler_pipeline",
     "pcode_lifter_bridge",
@@ -52,6 +54,7 @@ py-modules = [
     "storage_compression_prototype",
     "struct_shift_migrator",
     "synthetic_symbol_exporter",
+    "x86_decode",
 ]
 
 [tool.pytest.ini_options]
