@@ -76,7 +76,7 @@ class Field:
             v = [x.to_dict() if isinstance(x, ArchiveObject) else x for x in v]
         elif isinstance(v, bytes):
             v = v.hex()
-        d = {"offset": self.offset, "kind": self.kind, "value": v}
+        d = {"offset": self.offset, "kind": self.kind, "value": v, "size": self.size}
         if self.member:
             d["member"] = self.member
         if self.kind == "u64" and isinstance(self.value, int):
@@ -330,6 +330,24 @@ def evaluate_condition(cond, env: Dict[str, object], fields: Optional[Dict[str, 
     return {"<": v < imm, ">=": v >= imm, "==": v == imm, "!=": v != imm, "<=": v <= imm, ">": v > imm}[rel]
 
 
+_NEG_REL = {">=": "<", "<": ">=", ">": "<=", "<=": ">", "==": "!=", "!=": "=="}
+
+
+def _cond_key(cond):
+    """Hashable form of a structured condition (lists from JSON become tuples)."""
+    if cond is None:
+        return None
+    if isinstance(cond, (list, tuple)):
+        return tuple(_cond_key(x) for x in cond)
+    return cond
+
+
+def _negate_cond(cond):
+    if not cond or cond[0] in ("mode", "or") or len(cond) != 3 or cond[1] not in _NEG_REL:
+        return None
+    return (cond[0], _NEG_REL[cond[1]], cond[2])
+
+
 def _cond_text(cond) -> str:
     try:
         from serialize_trace import _gate_text  # type: ignore
@@ -392,14 +410,23 @@ class _Decoder:
         return obj
 
     def _gate_ok(self, op: LayoutOp, obj: ArchiveObject, values: Dict[str, object]) -> bool:
+        decided = values.setdefault("__assumed__", {})  # per object: condition -> assumed value
         for c in op.conditions:
             v = evaluate_condition(c, self.env, values)
             if v is None:
-                if self.unknown_gates == "stop":
-                    obj.note = f"unknown gate {_cond_text(c)}"
-                    raise _StopWith(obj)
-                v = self.unknown_gates == "true"
-                obj.assumed.append(f"{_cond_text(c)} -> {v}")
+                key = _cond_key(c)
+                neg = _cond_key(_negate_cond(c))
+                if key in decided:
+                    v = decided[key]
+                elif neg is not None and neg in decided:
+                    v = not decided[neg]  # stay consistent: `x != 0` assumed => `x == 0` is false
+                else:
+                    if self.unknown_gates == "stop":
+                        obj.note = f"unknown gate {_cond_text(c)}"
+                        raise _StopWith(obj)
+                    v = self.unknown_gates == "true"
+                    decided[key] = v
+                    obj.assumed.append(f"{_cond_text(c)} -> {v}")
             if not v:
                 return False
         return True
@@ -520,8 +547,8 @@ def decode_stream(data: bytes, layouts: Optional[Dict[str, List[LayoutOp]]] = No
             continue
         except _StopWith as stop:
             objects.append(stop.obj)
-        except ArchiveError as exc:
-            objects.append(ArchiveObject(pos, None, None, None, kind="object", status="opaque", note=str(exc)))
+        except ArchiveError as exc:  # malformed tag at this position (not just an unknown class)
+            objects.append(ArchiveObject(pos, None, None, None, kind="object", status="error", note=str(exc)))
         nxt = resync(max(pos, reader.pos - 1) if reader.pos > pos else pos)
         if nxt is None:
             if reader.pos < len(data):
@@ -533,7 +560,7 @@ def decode_stream(data: bytes, layouts: Optional[Dict[str, List[LayoutOp]]] = No
         pos = nxt
 
     def count(objs):
-        n = {"decoded": 0, "partial": 0, "opaque": 0}
+        n = {"decoded": 0, "partial": 0, "opaque": 0, "error": 0}
         for o in objs:
             if o.status in n:
                 n[o.status] += 1
@@ -553,6 +580,18 @@ def decode_stream(data: bytes, layouts: Optional[Dict[str, List[LayoutOp]]] = No
                     if e[0] == "class"],
         "stats": count(objects),
     }
+
+
+def _field_bytes(o: Dict[str, object]) -> int:
+    """Bytes covered by decoded primitive/string fields inside an object dict (recursive)."""
+    total = 0
+    for f in o.get("fields", []) or []:
+        v = f["value"]
+        if isinstance(v, dict):
+            total += _field_bytes(v)
+        else:
+            total += f.get("size") or 0
+    return total
 
 
 def _furthest(o: Dict[str, object]) -> int:
@@ -608,14 +647,28 @@ def calibrate(data: bytes, layouts: Dict[str, List[LayoutOp]], *, start: int = 0
     for value in candidates:
         res = decode_stream(data, layouts, start=start, env={variable: value}, unknown_gates="true")
         s = res["stats"]
-        decoded_bytes = sum((o.get("end") or o["offset"]) - o["offset"] for o in res["objects"]
-                            if o.get("status") == "decoded")
+        # Bytes explained by decoded fields at any nesting depth: a wrong version misaligns
+        # the stream and stops decoding early, wherever the object boundaries are.
+        decoded_bytes = sum(_field_bytes(o) for o in res["objects"])
         trials.append({"value": value, "decoded": s["decoded"], "partial": s["partial"], "opaque": s["opaque"],
-                       "decoded_bytes": decoded_bytes, "progress": max((_furthest(o) for o in res["objects"]),
+                       "error": s["error"], "decoded_bytes": decoded_bytes, "progress": max((_furthest(o) for o in res["objects"]),
                                                                         default=0)})
-    best = max(trials, key=lambda t: (t["decoded_bytes"], t["progress"], t["decoded"], -t["partial"],
-                                      t["value"] == 0))
-    return {"variable": variable, "value": best["value"], "trials": trials}
+    # A wrong value makes objects with known layouts fail part-way ("partial") or leaves
+    # the stream misaligned ("error"); objects without a layout are skipped the same way
+    # for every value, so they do not count.
+    def score(t):
+        return (-(t["partial"] + t["error"]), t["decoded_bytes"], t["progress"], t["decoded"])
+
+    best = max(trials, key=lambda t: score(t) + (t["value"] == 0,))
+    max_known = max(thresholds) if thresholds else None
+    out = {"variable": variable, "value": best["value"], "max_known_threshold": max_known, "trials": trials}
+    # The newest known version decodes as well as anything and decoding is still incomplete:
+    # the data may come from a newer application version than the traced binaries.
+    newest = [t for t in trials if max_known is not None and t["value"] == max_known]
+    if newest and score(newest[0]) == score(best) and (best["partial"] or best["error"]):
+        out["warning"] = (f"best value {best['value']} is at or above the highest version these layouts know "
+                          f"({max_known}); the stream may have been written by a newer application version")
+    return out
 
 
 def _looks_like_tag(data: bytes, pos: int, reader: ArchiveReader) -> bool:
