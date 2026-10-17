@@ -174,6 +174,28 @@ class TestTraceDrivenDecode(unittest.TestCase):
         self.assertFalse(res["map_reliable"])
 
 
+class TestDecoderPolicies(unittest.TestCase):
+    def test_complementary_unknown_gates_take_one_branch(self):
+        # if (m_p != 0) { ar << 1; ... } else { ar << 0; }  -- m_p is not in the stream
+        layouts = {"CThing": [
+            MA.LayoutOp("u32", 4, conditions=[("this+0x90", "!=", 0)]),
+            MA.LayoutOp("u16", 2, conditions=[("this+0x90", "!=", 0)]),
+            MA.LayoutOp("u32", 4, conditions=[("this+0x90", "==", 0)]),
+        ]}
+        data = write_stream([("CThing", 1, struct.pack("<IH", 1, 7))])
+        obj = MA.decode_stream(data, layouts)["objects"][0]
+        self.assertEqual(obj["status"], "decoded")
+        self.assertEqual([f["value"] for f in obj["fields"]], [1, 7])
+        self.assertEqual(obj["assumed_gates"], ["this+0x90 != 0x0 -> True"])
+
+    def test_malformed_tag_is_an_error_not_a_missing_layout(self):
+        layouts = {"CThing": [MA.LayoutOp("u32", 4)]}
+        data = write_stream([("CThing", 1, struct.pack("<I", 5))]) + b"\x01\x00"  # ref #1 = a class
+        res = MA.decode_stream(data, layouts)
+        self.assertEqual([o["status"] for o in res["objects"]], ["decoded", "error"])
+        self.assertEqual(res["stats"]["error"], 1)
+
+
 SWDM = r"C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS PCB Viewer\System\Model3DWrapper\SWAPI64\swdocumentmgr.dll"
 MFC64 = r"C:\Windows\System32\mfc140u.dll"
 
