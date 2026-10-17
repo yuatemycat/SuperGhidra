@@ -28,6 +28,12 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+try:  # package import or flat module import
+    from . import binary_loader, x86_decode
+except ImportError:
+    import binary_loader
+    import x86_decode
+
 # -----------------------------------------------------------------------------
 # 1. Memory Access Instruction Model & ARM64/x86 Instruction Decoder
 # -----------------------------------------------------------------------------
@@ -257,189 +263,133 @@ _X86_64_REGS_16 = (
 )
 
 
+_X86_MEM_MNEMONICS_MAP0 = {
+    0x8B: "MOV", 0x8A: "MOV", 0x89: "MOV", 0x88: "MOV", 0xC7: "MOV", 0xC6: "MOV",
+    0x8D: "LEA", 0x63: "MOVSXD",
+    0x03: "ADD", 0x02: "ADD", 0x01: "ADD", 0x00: "ADD",
+    0x2B: "SUB", 0x2A: "SUB", 0x29: "SUB", 0x28: "SUB",
+    0x3B: "CMP", 0x3A: "CMP", 0x39: "CMP", 0x38: "CMP",
+    0x33: "XOR", 0x31: "XOR", 0x23: "AND", 0x21: "AND", 0x0B: "OR", 0x09: "OR",
+    0x85: "TEST", 0x84: "TEST", 0x87: "XCHG", 0x86: "XCHG", 0x69: "IMUL", 0x6B: "IMUL",
+}
+_X86_GRP1_NAMES = ("ADD", "OR", "ADC", "SBB", "AND", "SUB", "XOR", "CMP")
+_SSE_SUFFIX = {None: "PS", 0x66: "PD", 0xF3: "SS", 0xF2: "SD"}
+_SSE_ARITH = {0x51: "SQRT", 0x58: "ADD", 0x59: "MUL", 0x5C: "SUB", 0x5D: "MIN", 0x5E: "DIV", 0x5F: "MAX",
+              0x54: "AND", 0x55: "ANDN", 0x56: "OR", 0x57: "XOR"}
+
+
+def _x86_mem_mnemonic(insn: "x86_decode.X86Insn") -> Optional[str]:
+    """Mnemonic for an instruction whose ModRM memory operand is a data access we track."""
+    op, mp = insn.opcode, insn.map
+    if mp == 0 and not insn.vex:
+        if op in _X86_MEM_MNEMONICS_MAP0:
+            return _X86_MEM_MNEMONICS_MAP0[op]
+        if op in (0x80, 0x81, 0x83):
+            return _X86_GRP1_NAMES[insn.reg & 7]
+        if op in (0xF6, 0xF7) and (insn.reg & 7) in (0, 1):
+            return "TEST"
+        if op in (0xFE, 0xFF) and (insn.reg & 7) in (0, 1):
+            return "INC" if (insn.reg & 7) == 0 else "DEC"
+        if op == 0xFF and (insn.reg & 7) == 2:
+            return "CALL"  # indirect call through a vtable slot: [vptr + slot*8]
+        return None
+    if mp != 1:
+        return None
+    pfx = insn.mandatory_prefix
+    v = "V" if insn.vex else ""
+    if op in (0xB6, 0xB7):
+        return "MOVZX"
+    if op in (0xBE, 0xBF):
+        return "MOVSX"
+    if op in (0x10, 0x11):
+        return v + ("MOVSS" if pfx == 0xF3 else "MOVSD" if pfx == 0xF2 else "MOVUPD" if pfx == 0x66 else "MOVUPS")
+    if op in (0x28, 0x29):
+        return v + ("MOVAPD" if pfx == 0x66 else "MOVAPS")
+    if op in (0x6F, 0x7F):
+        return v + ("MOVDQA" if pfx == 0x66 else "MOVDQU" if pfx == 0xF3 else "MOVQ")
+    if op in (0x6E, 0x7E, 0xD6):
+        return v + ("MOVQ" if (insn.rex_w or op == 0xD6 or (op == 0x7E and pfx == 0xF3)) else "MOVD")
+    if op in (0x12, 0x13):
+        return v + ("MOVLPD" if pfx == 0x66 else "MOVLPS")
+    if op in (0x16, 0x17):
+        return v + ("MOVHPD" if pfx == 0x66 else "MOVHPS")
+    if op in (0x2E, 0x2F):
+        return v + ("UCOMI" if op == 0x2E else "COMI") + ("SD" if pfx == 0x66 else "SS")
+    if op in _SSE_ARITH:
+        return v + _SSE_ARITH[op] + _SSE_SUFFIX.get(pfx, "PS")
+    if op == 0x5A:
+        return v + "CVT"
+    if op in (0x2A, 0x2C, 0x2D):
+        return v + "CVT"
+    if 0x40 <= op <= 0x4F:
+        return "CMOV"
+    if op == 0xAF:
+        return "IMUL"
+    return None
+
+
 def decode_x86_64_memory_accesses(
     code_bytes: bytes,
     base_pc: int = 0x401000,
+    mode: int = 64,
 ) -> List[MemoryAccess]:
     """
-    Decodes x86_64 instructions with memory displacements ([reg + disp8] where mod == 0b01
-    and [reg + disp32] where mod == 0b10) for opcodes:
-      - 0x8B: MOV load
-      - 0x89: MOV store
-      - 0x8D: LEA
-      - 0x03 / 0x01: ADD
-      - 0x3B / 0x39: CMP
-    with optional REX prefix (0x40..0x4F) and operand-size prefix (0x66).
+    Decodes struct-style memory accesses `[base_reg + disp]` from x86 / x86-64 code
+    (mode 64 or 32) using the table-driven x86_decode module, so the sweep stays in sync
+    through any instruction mix (SSE/AVX included).
+
+    Reported: MOV loads/stores (incl. immediate stores), MOVZX/MOVSX/MOVSXD, LEA, ALU ops
+    with a memory operand (ADD/SUB/CMP/AND/OR/XOR/TEST/...), SSE/AVX scalar and vector
+    moves and arithmetic (MOVSS/MOVSD/MOVUPS/...), CMOVcc and indirect vtable calls.
+    Skipped: register-only forms, RIP-relative/absolute addresses and indexed [base+idx*s]
+    operands, which are not single struct fields.
     """
     accesses: List[MemoryAccess] = []
-    n = len(code_bytes)
-    i = 0
-
-    mem_opcodes = {
-        0x8B: ("MOV", False),
-        0x89: ("MOV", True),
-        0x8D: ("LEA", False),
-        0x03: ("ADD", False),
-        0x01: ("ADD", True),
-        0x3B: ("CMP", False),
-        0x39: ("CMP", False),
-    }
-
-    while i < n:
-        insn_start = i
-        pc = base_pc + insn_start
-
-        # 1. Check ENDBR64 (F3 0F 1E FA)
-        if i + 4 <= n and code_bytes[i : i + 4] == b"\xf3\x0f\x1e\xfa":
-            i += 4
+    for insn in x86_decode.iter_decode(code_bytes, base_pc, mode):
+        if insn.invalid or insn.modrm is None or insn.mem is None:
             continue
-
-        # 2. Optional prefixes (0x66, REX 0x40..0x4F)
-        has_66 = False
-        if i < n and code_bytes[i] == 0x66:
-            has_66 = True
-            i += 1
-
-        rex = 0
-        if i < n and 0x40 <= code_bytes[i] <= 0x4F:
-            rex = code_bytes[i]
-            i += 1
-
-        if i >= n:
-            break
-
-        opcode = code_bytes[i]
-        rex_w = bool((rex >> 3) & 1)
-        rex_r = (rex >> 2) & 1
-        rex_b = rex & 1
-
-        # 3. Check target memory opcodes (8B, 89, 8D, 03, 01, 3B, 39)
-        if opcode in mem_opcodes and (i + 1) < n:
-            mnemonic, is_write = mem_opcodes[opcode]
-            modrm = code_bytes[i + 1]
-            mod = (modrm >> 6) & 0x03
-            reg_idx = ((modrm >> 3) & 0x07) | (rex_r << 3)
-            rm_low = modrm & 0x07
-            base_idx = rm_low | (rex_b << 3)
-
-            pos = i + 2
-            # SIB byte present if mod != 0b11 and rm_low == 4
-            if mod != 0b11 and rm_low == 4:
-                if pos >= n:
-                    i = insn_start + 1
-                    continue
-                sib = code_bytes[pos]
-                base_idx = (sib & 0x07) | (rex_b << 3)
-                pos += 1
-
-            if mod == 0b01:
-                if pos + 1 > n:
-                    i = insn_start + 1
-                    continue
-                disp = struct.unpack_from("<b", code_bytes, pos)[0]
-                pos += 1
-            elif mod == 0b10:
-                if pos + 4 > n:
-                    i = insn_start + 1
-                    continue
-                disp = struct.unpack_from("<i", code_bytes, pos)[0]
-                pos += 4
-            elif mod == 0b00:
-                if rm_low == 5:
-                    pos += 4
-                i = pos
-                continue
-            else:
-                # mod == 0b11 (register-to-register, e.g. MOV rbp, rsp = 48 89 E5)
-                i = pos
-                continue
-
-            access_size = 8 if rex_w else (2 if has_66 else 4)
-            b_reg = _X86_64_REGS_64[base_idx]
-            reg_table = _X86_64_REGS_64 if rex_w else (_X86_64_REGS_16 if has_66 else _X86_64_REGS_32)
-            t_reg = reg_table[reg_idx]
-
-            raw_val = int.from_bytes(code_bytes[insn_start:pos], "little")
-            sign_str = f"+ 0x{disp:X}" if disp >= 0 else f"- 0x{-disp:X}"
-            if is_write:
-                insn_text = f"{mnemonic} [{b_reg} {sign_str}], {t_reg}"
-            else:
-                insn_text = f"{mnemonic} {t_reg}, [{b_reg} {sign_str}]"
-
-            accesses.append(
-                MemoryAccess(
-                    pc=pc,
-                    mnemonic=mnemonic,
-                    base_reg=b_reg,
-                    target_reg=t_reg,
-                    displacement=disp,
-                    access_size=access_size,
-                    is_write=is_write,
-                    raw_insn=raw_val,
-                    instruction_text=insn_text,
-                )
-            )
-            i = pos
+        mem = insn.mem
+        if mem.rip_relative or mem.base is None or mem.index is not None:
             continue
-
-        # 4. Step cleanly over common non-target x86_64 instructions to keep alignment
-        if opcode in (0x90, 0xC3, 0xC9, 0xCC) or (0x50 <= opcode <= 0x5F):
-            i += 1
-        elif opcode in (0xEB,) or (0x70 <= opcode <= 0x7F):
-            i += 2
-        elif opcode in (0xE8, 0xE9, 0x05, 0x2D, 0x3D):
-            i += 5
-        elif 0xB8 <= opcode <= 0xBF:
-            i += 1 + (8 if rex_w else (2 if has_66 else 4))
-        elif opcode in (0x31, 0x33, 0x29, 0x2B, 0x85, 0x84, 0x21, 0x23, 0x09, 0x0B) and (i + 1) < n:
-            modrm = code_bytes[i + 1]
-            mod = (modrm >> 6) & 0x03
-            rm_low = modrm & 0x07
-            pos = i + 2 + (1 if (mod != 3 and rm_low == 4) else 0)
-            if mod == 1:
-                pos += 1
-            elif mod == 2 or (mod == 0 and rm_low == 5):
-                pos += 4
-            i = pos
-        elif opcode in (0x83, 0xC6, 0x80) and (i + 1) < n:
-            modrm = code_bytes[i + 1]
-            mod = (modrm >> 6) & 0x03
-            rm_low = modrm & 0x07
-            pos = i + 2 + (1 if (mod != 3 and rm_low == 4) else 0)
-            if mod == 1:
-                pos += 1
-            elif mod == 2 or (mod == 0 and rm_low == 5):
-                pos += 4
-            i = pos + 1
-        elif opcode in (0x81, 0xC7) and (i + 1) < n:
-            modrm = code_bytes[i + 1]
-            mod = (modrm >> 6) & 0x03
-            rm_low = modrm & 0x07
-            pos = i + 2 + (1 if (mod != 3 and rm_low == 4) else 0)
-            if mod == 1:
-                pos += 1
-            elif mod == 2 or (mod == 0 and rm_low == 5):
-                pos += 4
-            i = pos + 4
-        elif opcode == 0x0F and (i + 1) < n:
-            op2 = code_bytes[i + 1]
-            if 0x80 <= op2 <= 0x8F:
-                i += 6
-            elif op2 in (0x1F, 0xB6, 0xB7, 0xBE, 0xBF, 0xAF) and (i + 2) < n:
-                modrm = code_bytes[i + 2]
-                mod = (modrm >> 6) & 0x03
-                rm_low = modrm & 0x07
-                pos = i + 3 + (1 if (mod != 3 and rm_low == 4) else 0)
-                if mod == 1:
-                    pos += 1
-                elif mod == 2 or (mod == 0 and rm_low == 5):
-                    pos += 4
-                i = pos
-            else:
-                i = insn_start + 1
+        mnemonic = _x86_mem_mnemonic(insn)
+        if mnemonic is None:
+            continue
+        is_simd = insn.map == 1 and mnemonic not in ("MOVZX", "MOVSX", "CMOV", "IMUL")
+        if mnemonic == "LEA":
+            access_size = insn.operand_size
+        elif mnemonic == "CALL":
+            access_size = 8 if mode == 64 else 4
         else:
-            i = insn_start + 1
-
+            access_size = insn.memory_access_size() or insn.operand_size
+        if is_simd:
+            target = ("ymm" if insn.vex_l else "xmm") + str(insn.reg)
+        elif mnemonic == "CALL":
+            target = "pc"
+        else:
+            reg_size = insn.operand_size if mnemonic in ("MOVZX", "MOVSX", "MOVSXD") else (
+                1 if insn.is_byte_op else insn.operand_size)
+            if mode == 32 and reg_size == 8:
+                reg_size = 4
+            target = insn.reg_name(insn.reg, reg_size)
+        disp = mem.disp
+        sign = f"+ 0x{disp:X}" if disp >= 0 else f"- 0x{-disp:X}"
+        is_write = insn.is_memory_write()
+        if is_write:
+            text = f"{mnemonic} [{mem.base} {sign}], {target}"
+        else:
+            text = f"{mnemonic} {target}, [{mem.base} {sign}]"
+        start = insn.address - base_pc
+        accesses.append(MemoryAccess(
+            pc=insn.address,
+            mnemonic=mnemonic,
+            base_reg=mem.base,
+            target_reg=target,
+            displacement=disp,
+            access_size=access_size,
+            is_write=is_write,
+            raw_insn=int.from_bytes(code_bytes[start : start + insn.length], "little"),
+            instruction_text=text,
+        ))
     return accesses
 
 
@@ -717,7 +667,16 @@ class StructShiftMigrator:
         with open(path, "rb") as f:
             raw = f.read()
 
-        # Check if ELF
+        # Real ELF / PE / Mach-O images go through the shared loader (any bitness/endianness).
+        if binary_loader.detect_format(raw) != "raw":
+            try:
+                image = binary_loader.load_binary(raw)
+            except binary_loader.BinaryFormatError:
+                image = None
+            if image is not None and image.executable_sections():
+                return self._extract_image_accesses(image)
+
+        # Legacy: minimal/synthetic headers.  Check if ELF
         if raw.startswith(b"\x7fELF"):
             is_x86_64 = False
             if len(raw) >= 20:
@@ -801,38 +760,69 @@ class StructShiftMigrator:
         code_bytes: bytes,
         base_pc: int = 0x401000,
         default_name: str = "text_section",
+        mode: int = 64,
     ) -> Dict[str, List[MemoryAccess]]:
         """
-        Sweeps x86_64 instructions and partitions functions at RET (0xC3) boundaries.
+        Sweeps x86 instructions (mode 64 or 32) and partitions functions after each decoded
+        RET instruction (not every 0xC3 byte, which also occurs inside other instructions).
         Retains default_name when only 1 function is present.
         """
         if not code_bytes:
             return {default_name: []}
 
-        # Partition by 0xC3 (RET) while decoding accesses via decode_x86_64_memory_accesses
-        all_accs = decode_x86_64_memory_accesses(code_bytes, base_pc=base_pc)
-        ret_pcs: List[int] = [
-            base_pc + idx for idx, b in enumerate(code_bytes) if b == 0xC3
-        ]
+        all_accs = decode_x86_64_memory_accesses(code_bytes, base_pc=base_pc, mode=mode)
+        ret_pcs = [i.address for i in x86_decode.iter_decode(code_bytes, base_pc, mode) if i.flow == "ret"]
         if len(ret_pcs) <= 1:
             return {default_name: all_accs}
 
         functions_list: List[List[MemoryAccess]] = []
-        prev_bound = base_pc
+        k = 0
         for r_pc in ret_pcs:
-            accs = [a for a in all_accs if prev_bound <= a.pc <= r_pc]
+            accs = []
+            while k < len(all_accs) and all_accs[k].pc <= r_pc:
+                accs.append(all_accs[k])
+                k += 1
             if accs:
                 functions_list.append(accs)
-            prev_bound = r_pc + 1
-
-        tail_accs = [a for a in all_accs if a.pc >= prev_bound]
-        if tail_accs:
-            functions_list.append(tail_accs)
+        if k < len(all_accs):
+            functions_list.append(all_accs[k:])
 
         if len(functions_list) <= 1:
             return {default_name: all_accs}
 
         return {f"func_{idx}": accs for idx, accs in enumerate(functions_list)}
+
+    def _extract_image_accesses(self, image: "binary_loader.BinaryImage") -> Dict[str, List[MemoryAccess]]:
+        """Per-function struct accesses for a loaded ELF / PE / Mach-O image.
+
+        Functions are delimited by the image's known function starts (PE .pdata, exports,
+        symbols, LC_FUNCTION_STARTS) and named by export/symbol where available, so the same
+        function can be matched across versions by name.
+        """
+        import bisect
+
+        if image.arch == "arm64":
+            decode_region = self._sweep_arm64_instructions
+        elif image.arch in ("x86_64", "x86"):
+            mode = 64 if image.arch == "x86_64" else 32
+            decode_region = lambda code, base: decode_x86_64_memory_accesses(code, base, mode)  # noqa: E731
+        else:
+            raise ValueError(f"struct shift analysis does not support {image.arch} binaries yet")
+
+        names: Dict[int, str] = {s.address: s.name for s in image.symbols if s.kind == "func" and s.name}
+        names.update({e.address: e.name for e in image.exports if e.name and e.forwarder is None})
+        starts = sorted(set(image.function_starts) | set(names))
+        functions: Dict[str, List[MemoryAccess]] = {}
+        for region_va, code in image.code_regions():
+            accs = decode_region(code, region_va)
+            region_starts = [s for s in starts if region_va <= s < region_va + len(code)] or [region_va]
+            pcs = [a.pc for a in accs]
+            for idx, fs in enumerate(region_starts):
+                end = region_starts[idx + 1] if idx + 1 < len(region_starts) else region_va + len(code)
+                chunk = accs[bisect.bisect_left(pcs, fs) : bisect.bisect_left(pcs, end)]
+                if chunk:
+                    functions[names.get(fs, f"sub_{fs:x}")] = chunk
+        return functions
 
     def _sweep_arm64_instructions(self, code_bytes: bytes, base_pc: int) -> List[MemoryAccess]:
         """Linear sweep of ARM64 machine instructions into a single list of memory accesses."""
