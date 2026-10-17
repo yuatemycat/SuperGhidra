@@ -11,3 +11,10 @@ __pycache__/
 build/
 dist/
 scratch/
+
+# Local agent skills and runtime data (not part of SuperGhidra)
+.agents/
+evidence_ledger.json
+.code-review-graph/
+*.class
+.ghidra-delta.jsonl
