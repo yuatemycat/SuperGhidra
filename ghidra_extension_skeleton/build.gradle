@@ -1,0 +1,40 @@
+/* ###
+ * SuperGhidraCodec - High Performance Compressed Buffer File Extension
+ * Target: Ghidra 12.1 / Java 21
+ */
+
+def ghidraInstallDir
+
+if (System.env.GHIDRA_INSTALL_DIR) {
+    ghidraInstallDir = System.env.GHIDRA_INSTALL_DIR
+}
+else if (project.hasProperty("GHIDRA_INSTALL_DIR")) {
+    ghidraInstallDir = project.getProperty("GHIDRA_INSTALL_DIR")
+}
+else {
+    ghidraInstallDir = "E:/03_Devops/Ghidra"
+}
+
+apply plugin: 'java'
+
+sourceCompatibility = JavaVersion.VERSION_21
+targetCompatibility = JavaVersion.VERSION_21
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Ghidra Framework and Base jars
+    compileOnly fileTree(dir: "${ghidraInstallDir}/Ghidra/Framework", include: "**/*.jar")
+    compileOnly fileTree(dir: "${ghidraInstallDir}/Ghidra/Features", include: "**/*.jar")
+}
+
+task distributeExtension {
+    group = "Ghidra"
+    description = "Packages the SuperGhidraCodec extension zip for installation into Ghidra"
+    if (file("${ghidraInstallDir}/support/buildExtension.gradle").exists()) {
+        apply from: new File(ghidraInstallDir).getCanonicalPath() + "/support/buildExtension.gradle"
+        dependsOn ':buildExtension'
+    }
+}
