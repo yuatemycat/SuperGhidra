@@ -75,6 +75,9 @@ EXPECTED_38_TOOLS = [
     "preindex_dwarf_pdb",
 ]
 
+# Tools added after the original 38 (multi-architecture binary loader / MSVC class recovery).
+EXPECTED_EXTRA_TOOLS = ["inspect_binary", "recover_cpp_classes"]
+
 SUPERGHIDRA_MCP_SCHEMA_DIR = r"C:\Users\X\.gemini\antigravity-cli\mcp\SuperghidraMCP"
 PYGHIDRA_MCP_SCHEMA_DIR = r"C:\Users\X\.gemini\antigravity-cli\mcp\pyghidra"
 
@@ -86,9 +89,7 @@ class TestMCP38ToolsAndSMTBridge(unittest.TestCase):
         """Confirm all 38 tools are registered on pyghidra_mcp.server.mcp."""
         registered_tools = {t.name for t in mcp._tool_manager.list_tools()}
         self.assertEqual(len(EXPECTED_38_TOOLS), 38)
-        for tool_name in EXPECTED_38_TOOLS:
-            self.assertIn(tool_name, registered_tools, f"Missing tool registration: {tool_name}")
-        self.assertEqual(len(registered_tools), 38)
+        self.assertEqual(registered_tools, set(EXPECTED_38_TOOLS) | set(EXPECTED_EXTRA_TOOLS))
 
     def test_all_38_schema_json_files_exist_and_valid(self):
         """Confirm all 38 tools are registered live and verify_smt_equivalence has arch='arm64' default."""

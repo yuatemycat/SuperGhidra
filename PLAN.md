@@ -244,14 +244,21 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
   - Automatic C++ header patch generator (unified diff and annotated C++ struct definitions).
   - Full MCP tool exposure with `migrate_struct_shifts` registered and schema distributed.
 
+### Frontier 7: Multi-Architecture Binaries & Windows Class Recovery
+- [x] **Unified loader** ([`binary_loader.py`](binary_loader.py)): ELF 32/64 LE/BE, PE32/PE32+ EXE/DLL, Mach-O thin/universal; exports, imports, function starts, PDB path; stripped-section-table fallback.
+- [x] **x86 decoder** ([`x86_decode.py`](x86_decode.py)): 16/32/64-bit, VEX/EVEX; Capstone-verified lengths. Diff engine and struct migrator routed through loader + decoder (32-bit x86, SSE/AVX accesses, DLL export-name matching).
+- [x] **MSVC RTTI + MFC CRuntimeClass recovery** ([`msvc_class_recovery.py`](msvc_class_recovery.py)) with `Serialize()` resolution; MCP tools `inspect_binary`, `recover_cpp_classes`.
+- [ ] ARM32/Thumb-2 decoding for CFG extraction, struct migration and seeding (loader already identifies ARM/Thumb binaries).
+- [ ] CArchive stream decoder driven by recovered `Serialize()` layouts (LiquidWork integration).
+
 ---
 
 ## 📊 Verification (2026-10-17)
 
 | Suite | Command | Result |
 | :--- | :--- | :--- |
-| SuperGhidra | `python -m pytest` (repo root) | **306 passed, 1 skipped** (skip: needs built `dist/SuperGhidraCodec-1.0.0.zip`) |
-| pyghidra-mcp | `.venv\Scripts\python -m pytest tests\unit` | **235 passed** |
+| SuperGhidra | `python -m pytest` (repo root) | **356 passed** (machine-specific tests skip when files/tools are absent) |
+| pyghidra-mcp | `.venv\Scripts\python -m pytest tests\unit` | **239 passed** |
 
 Regression tests for the 2026-10-17 audit live in `test_g1_regressions.py`, `test_g2_regressions.py`, `test_g2b_regressions.py`, `test_g3a_regressions.py`, `test_g3b_regressions.py` and `pyghidra-mcp/tests/unit/test_g4a_regressions.py`. Test runs no longer write into the repository (ledger → `SUPERGHIDRA_DATA_DIR` or `~/.superghidra`; benchmark report → temp dir).
 

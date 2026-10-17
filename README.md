@@ -116,11 +116,17 @@
   12. `verify_emulator_memory`: Audits emulator memory maps under FleetGuard protection.
   13. `neural_decompile_skin`: Two-phase neural decompilation with EvidenceLedger gate.
 
+### 15. Multi-Architecture Loading & Windows Class Recovery (`binary_loader.py`, `x86_decode.py`, `msvc_class_recovery.py`)
+- **One loader for every format:** ELF 32/64-bit (little/big endian; x86, x86-64, ARM, AArch64, MIPS, RISC-V, PPC), PE32/PE32+ EXEs and DLLs (exports with ordinals/forwarders, imports incl. delay-load, `.pdata` function starts, PDB path, .NET flag) and Mach-O thin/universal binaries (export trie, `LC_FUNCTION_STARTS`). Stripped or forged ELF section tables fall back to `PT_LOAD` + `PT_DYNAMIC`.
+- **Table-driven x86 decoder:** 16/32/64-bit modes, REX/VEX/EVEX/XOP, ModRM/SIB/RIP-relative operands. Instruction lengths match Capstone on ~6.7M instructions of real Windows code (incl. AVX/AVX-512). The diff engine and struct-shift migrator now handle 32-bit x86 and SSE/AVX struct accesses (`movsd [rdi+18h]`, `vmovups`), and match functions across DLL versions by export name.
+- **MSVC RTTI + MFC `CRuntimeClass` recovery:** class names, vftables and inheritance from RTTI; CArchive class name, object size, schema version and base class from `CRuntimeClass`; each serializable class is linked to its **`Serialize(CArchive&)`** function through the `GetRuntimeClass()` vtable slot. On `mfc140u.dll`: ~390 MFC classes, ~760 RTTI classes, 52/53 `Serialize()` functions resolved, in under a second. Useful for decoding MFC CArchive streams such as SolidWorks `Contents/Config-*-ResolvedFeatures` (LiquidWork).
+- **MCP tools:** `inspect_binary` and `recover_cpp_classes` (no Ghidra needed).
+
 ---
 
 ## 📊 Consolidated Benchmark & Test Verification
 
-Test status (2026-10-17, Windows 11 x64): **SuperGhidra 306 passed / 1 skipped** (`python -m pytest`), **pyghidra-mcp 235 passed** (`tests/unit`). Performance figures below were measured on the development machine and vary with hardware; the storage-compression numbers use synthetic Ghidra-like pages (`GhidraPageSimulator`), not real `.gbf` buffers. See **Known Limitations** in [PLAN.md](PLAN.md).
+Test status (2026-10-17, Windows 11 x64): **SuperGhidra 356 passed** (`python -m pytest`; machine-specific tests skip when their files/tools are absent), **pyghidra-mcp 239 passed** (`tests/unit`). Performance figures below were measured on the development machine and vary with hardware; the storage-compression numbers use synthetic Ghidra-like pages (`GhidraPageSimulator`), not real `.gbf` buffers. See **Known Limitations** in [PLAN.md](PLAN.md).
 
 | Subsystem / Metric | Target Requirement | Measured Performance | Verification Status |
 | :--- | :--- | :--- | :--- |
