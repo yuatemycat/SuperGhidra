@@ -21,6 +21,9 @@ Supported Commands:
   - rename <addr> <name>         : Sets function/symbol rename in JSON write-overlay table.
   - comment <addr> <text>        : Sets address comment in JSON write-overlay table.
   - overlay [list|clear]         : Inspects or clears active JSON write-overlay entries.
+  - mode [eco|balanced|turbo|auto]: Dynamic Governor mode switch.
+  - hibernate                    : Forces immediate decompiler process hibernation & RAM cleanup.
+  - clear-cache                  : Clears persistent L2 SQLite query cache.
   - status                       : Reports daemon uptime, function count, and LRU cache hit rate.
   - stop                         : Cleanly shuts down the daemon.
 """
@@ -31,6 +34,8 @@ import time
 import json
 import socket
 import struct
+import sqlite3
+import contextlib
 import logging
 import subprocess
 import threading
@@ -47,6 +52,7 @@ DEFAULT_IMAGE_BASE = 0x100000  # Default ELF image base offset (- 0x100000)
 DAEMON_STARTUP_TIMEOUT = 40.0   # Maximum seconds to wait for daemon JVM warmup
 OVERLAY_FILENAME = "ghidra_overlay.json"
 DAEMON_LOG_FILENAME = "ghidra_oracle_daemon.log"
+L2_CACHE_FILENAME = "ghidra_oracle_cache.db"
 
 PROJECT_CANDIDATES = [
     # 1. Intra-farm libg_analysis
@@ -205,6 +211,185 @@ class LRUCache:
 
 
 # ==============================================================================
+# Persistent L2 SQLite Cache (0% JVM CPU on repeats)
+# ==============================================================================
+
+class L2SQLiteCache:
+    """
+    Persistent WAL-mode SQLite cache for sub-millisecond local responses.
+    Caches decompile, vtable, disassemble, refs, adrp_add, and opcodes queries.
+    Enables instant lookups with 0% JVM CPU even when the daemon is offline.
+    """
+
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            cache_dir = os.path.join(os.path.expanduser("~"), ".cache")
+            os.makedirs(cache_dir, exist_ok=True)
+            db_path = os.path.join(cache_dir, L2_CACHE_FILENAME)
+        self.db_path = db_path
+        self._lock = threading.Lock()
+        self._init_db()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        return conn
+
+    @contextlib.contextmanager
+    def _conn_ctx(self):
+        conn = self._get_conn()
+        try:
+            yield conn
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _init_db(self) -> None:
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS oracle_cache (
+                            query_type TEXT NOT NULL,
+                            query_key TEXT NOT NULL,
+                            data_json TEXT NOT NULL,
+                            timestamp REAL NOT NULL,
+                            PRIMARY KEY (query_type, query_key)
+                        )
+                    """)
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to initialize L2 SQLite cache at {self.db_path}: {e}")
+
+    def get(self, query_type: str, query_key: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    cur = conn.execute(
+                        "SELECT data_json, timestamp FROM oracle_cache WHERE query_type = ? AND query_key = ?",
+                        (query_type, str(query_key).lower())
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        data = json.loads(row[0])
+                        data["l2_cached"] = True
+                        data["l2_timestamp"] = float(row[1])
+                        return data
+            except Exception as e:
+                logger.debug(f"L2 cache read error: {e}")
+        return None
+
+    def put(
+        self,
+        query_type: str,
+        query_key: str,
+        data: Dict[str, Any],
+        timestamp: Optional[float] = None,
+    ) -> None:
+        with self._lock:
+            try:
+                data_copy = dict(data)
+                data_copy.pop("l2_cached", None)
+                data_copy.pop("cached", None)
+                data_copy.pop("l2_timestamp", None)
+                ts = timestamp if timestamp is not None else time.time()
+                with self._conn_ctx() as conn:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO oracle_cache (query_type, query_key, data_json, timestamp)
+                        VALUES (?, ?, ?, ?)
+                    """, (query_type, str(query_key).lower(), json.dumps(data_copy), ts))
+                    conn.commit()
+            except Exception as e:
+                logger.debug(f"L2 cache write error: {e}")
+
+    def evict(
+        self,
+        query_type: Optional[str] = None,
+        query_key: Optional[str] = None,
+        older_than_sec: Optional[float] = None,
+        max_entries: Optional[int] = None,
+    ) -> int:
+        """
+        Evicts cached entries by type, key, age, or capacity limit.
+        Returns the number of rows removed.
+        """
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    # Capacity-based eviction
+                    if max_entries is not None and max_entries >= 0:
+                        cur = conn.execute("SELECT COUNT(*) FROM oracle_cache")
+                        count = cur.fetchone()[0]
+                        if count > max_entries:
+                            excess = count - max_entries
+                            cur = conn.execute(
+                                """
+                                DELETE FROM oracle_cache
+                                WHERE rowid IN (
+                                    SELECT rowid FROM oracle_cache
+                                    ORDER BY timestamp ASC
+                                    LIMIT ?
+                                )
+                                """,
+                                (excess,),
+                            )
+                            conn.commit()
+                            return cur.rowcount
+                        return 0
+
+                    conditions = []
+                    params: List[Any] = []
+                    if query_type is not None:
+                        conditions.append("query_type = ?")
+                        params.append(query_type)
+                    if query_key is not None:
+                        conditions.append("query_key = ?")
+                        params.append(str(query_key).lower())
+                    if older_than_sec is not None:
+                        cutoff = time.time() - older_than_sec
+                        conditions.append("timestamp < ?")
+                        params.append(cutoff)
+
+                    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+                    cur = conn.execute(f"DELETE FROM oracle_cache {where_clause}", params)
+                    conn.commit()
+                    return cur.rowcount
+            except Exception as e:
+                logger.warning(f"L2 cache eviction error: {e}")
+                return 0
+
+    def clear(self) -> int:
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    cur = conn.execute("DELETE FROM oracle_cache")
+                    deleted = cur.rowcount
+                    conn.commit()
+                    return deleted
+            except Exception as e:
+                logger.warning(f"L2 cache clear error: {e}")
+                return 0
+
+    def count(self) -> int:
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    cur = conn.execute("SELECT COUNT(*) FROM oracle_cache")
+                    row = cur.fetchone()
+                    return row[0] if row else 0
+            except Exception as e:
+                logger.debug(f"L2 cache count error: {e}")
+                return 0
+
+    def close(self) -> None:
+        """Closes any persistent resources."""
+        pass
+
+
+# ==============================================================================
 # In-Memory + JSON Write-Overlay Table
 # ==============================================================================
 
@@ -305,6 +490,9 @@ class GhidraOracleSession:
         project_dir: Optional[str] = None,
         project_name: Optional[str] = None,
         program_name: Optional[str] = None,
+        resource_mode: str = "balanced",
+        l2_cache: Optional[L2SQLiteCache] = None,
+        overlay: Optional[WriteOverlay] = None,
     ):
         self.project_dir = project_dir
         self.project_name = project_name
@@ -318,9 +506,23 @@ class GhidraOracleSession:
         self.image_base = DEFAULT_IMAGE_BASE
 
         self.start_time = time.time()
-        self.decompile_cache = LRUCache(256)
+        self.decompile_cache = LRUCache(512)
         self.vtable_cache = LRUCache(512)
-        self.overlay = WriteOverlay()
+        self.overlay = overlay if overlay is not None else WriteOverlay()
+        self.l2_cache = l2_cache if l2_cache is not None else L2SQLiteCache()
+
+        # Section 8 Resource Governor & Decompiler Watchdog state
+        self.resource_mode = "balanced"  # eco, balanced, turbo, auto
+        self.idle_timeout_sec = 120.0
+        self.throttle_ms = 10
+        self.last_decompile_time = time.time()
+        self.is_hibernating = False
+        self._watchdog_thread: Optional[threading.Thread] = None
+        self._watchdog_stop = threading.Event()
+        self._session_lock = threading.Lock()
+
+        if resource_mode and resource_mode != "balanced":
+            self.set_resource_mode(resource_mode)
 
         # Pre-indexed opcode gates: list of (imm, va, rva)
         self._opcode_gates: List[Tuple[int, int, int]] = []
@@ -409,6 +611,174 @@ class GhidraOracleSession:
         # Warm up & build fast indexes (opcodes & ADRP pages)
         self._build_fast_indexes()
 
+        # Start native decompiler idle reaper watchdog (Section 8.2)
+        self._start_decompiler_watchdog()
+
+    def _start_decompiler_watchdog(self) -> None:
+        """Starts watchdog thread monitoring native decompiler idle timeout."""
+        if self._watchdog_thread is None or not self._watchdog_thread.is_alive():
+            self._watchdog_stop.clear()
+            self._watchdog_thread = threading.Thread(
+                target=self._decompiler_watchdog_loop,
+                name="DecompilerReaperWatchdog",
+                daemon=True,
+            )
+            self._watchdog_thread.start()
+
+    def _decompiler_watchdog_loop(self) -> None:
+        """Polls every 3 seconds to reap idle native decompile.exe subprocesses."""
+        while not self._watchdog_stop.wait(3.0):
+            if self.idle_timeout_sec <= 0:
+                continue  # Turbo mode: permanently warm
+            idle_duration = time.time() - self.last_decompile_time
+            if not self.is_hibernating and idle_duration >= self.idle_timeout_sec:
+                logger.info(
+                    f"Decompiler idle for {idle_duration:.1f}s >= {self.idle_timeout_sec}s. Hibernating native process..."
+                )
+                self.hibernate()
+
+    def hibernate(self) -> Dict[str, Any]:
+        """
+        Forces immediate native decompiler hibernation & RAM release (Section 8.2).
+        Calls decompiler.flushCache(), decompiler.stopProcess(), and triggers System.gc().
+        """
+        with self._session_lock:
+            if self.decompiler is not None:
+                try:
+                    self.decompiler.flushCache()
+                    self.decompiler.stopProcess()
+                except Exception as e:
+                    logger.debug(f"decompiler.stopProcess() notice: {e}")
+            self.is_hibernating = True
+
+            # Trigger JVM garbage collection to release unused pages
+            try:
+                import java.lang.System
+                java.lang.System.gc()
+            except Exception:
+                pass
+
+            return {
+                "status": "ok",
+                "message": "Native decompiler process hibernated; idle RAM reclaimed via System.gc()",
+                "is_hibernating": True,
+            }
+
+    def _ensure_decompiler_active(self) -> None:
+        """Re-arms the native decompiler process if currently hibernated."""
+        self.last_decompile_time = time.time()
+        if self.is_hibernating or self.decompiler is None:
+            with self._session_lock:
+                if self.decompiler is None:
+                    from ghidra.app.decompiler import DecompInterface, DecompileOptions
+                    self.decompiler = DecompInterface()
+                    options = DecompileOptions()
+                    self.decompiler.setOptions(options)
+                self.decompiler.openProgram(self.program)
+                self.is_hibernating = False
+                logger.info("Native decompiler process re-armed and program opened.")
+
+    def set_resource_mode(self, mode: str) -> Dict[str, Any]:
+        """
+        Hot-swaps running daemon between eco, balanced, turbo, and auto resource profiles.
+        """
+        mode_lower = mode.lower().strip()
+        if mode_lower == "eco":
+            self.resource_mode = "eco"
+            self.idle_timeout_sec = 15.0
+            self.throttle_ms = 50
+            self.decompile_cache.capacity = 128
+            self.vtable_cache.capacity = 128
+            try:
+                import psutil
+                p = psutil.Process()
+                p.cpu_affinity([0])
+                p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 15)
+            except Exception:
+                pass
+        elif mode_lower == "balanced":
+            self.resource_mode = "balanced"
+            self.idle_timeout_sec = 120.0
+            self.throttle_ms = 10
+            self.decompile_cache.capacity = 512
+            self.vtable_cache.capacity = 512
+            try:
+                import psutil
+                p = psutil.Process()
+                avail = list(range(min(2, os.cpu_count() or 2)))
+                p.cpu_affinity(avail)
+                p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 5)
+            except Exception:
+                pass
+        elif mode_lower == "turbo":
+            self.resource_mode = "turbo"
+            self.idle_timeout_sec = 0.0  # Never hibernate
+            self.throttle_ms = 0
+            self.decompile_cache.capacity = 2048
+            self.vtable_cache.capacity = 2048
+            try:
+                import psutil
+                p = psutil.Process()
+                p.cpu_affinity(list(range(os.cpu_count() or 8)))
+                p.nice(psutil.NORMAL_PRIORITY_CLASS if os.name == "nt" else 0)
+            except Exception:
+                pass
+        elif mode_lower == "auto":
+            self.resource_mode = "auto"
+            self.idle_timeout_sec = 60.0
+            self.throttle_ms = 10
+            self.decompile_cache.capacity = 1024
+            self.vtable_cache.capacity = 1024
+            try:
+                import psutil
+                p = psutil.Process()
+                avail = list(range(min(4, os.cpu_count() or 4)))
+                p.cpu_affinity(avail)
+                p.nice(psutil.NORMAL_PRIORITY_CLASS if os.name == "nt" else 0)
+            except Exception:
+                pass
+        else:
+            return {
+                "status": "error",
+                "message": f"Unknown mode '{mode}'. Choose from: eco, balanced, turbo, auto",
+            }
+
+        return {
+            "status": "ok",
+            "mode": self.resource_mode,
+            "idle_timeout_sec": self.idle_timeout_sec,
+            "throttle_ms": self.throttle_ms,
+            "cache_capacity": self.decompile_cache.capacity,
+            "message": f"Daemon resource mode updated to '{self.resource_mode}'",
+        }
+
+    def close(self) -> None:
+        """Cleanly releases program and closes the project."""
+        self._watchdog_stop.set()
+        if self._watchdog_thread is not None:
+            self._watchdog_thread.join(timeout=1.0)
+
+        if self.decompiler is not None:
+            try:
+                self.decompiler.dispose()
+            except Exception:
+                pass
+            self.decompiler = None
+
+        if self.project is not None and self.program is not None:
+            try:
+                self.project.close(self.program)
+            except Exception:
+                pass
+            self.program = None
+
+        if self.project is not None:
+            try:
+                self.project.close()
+            except Exception:
+                pass
+            self.project = None
+
     def _build_fast_indexes(self) -> None:
         """Extracts executable segments into memory to build instant opcode & ADRP tables."""
         from java.lang.reflect import Array
@@ -496,28 +866,6 @@ class GhidraOracleSession:
         except Exception as e:
             logger.warning(f"Error during fast index building: {e}")
 
-    def close(self) -> None:
-        """Cleanly releases program and closes the project."""
-        if self.decompiler is not None:
-            try:
-                self.decompiler.dispose()
-            except Exception:
-                pass
-            self.decompiler = None
-
-        if self.project is not None and self.program is not None:
-            try:
-                self.project.close(self.program)
-            except Exception:
-                pass
-            self.program = None
-
-        if self.project is not None:
-            try:
-                self.project.close()
-            except Exception:
-                pass
-            self.project = None
 
     # --------------------------------------------------------------------------
     # Core Queries
@@ -538,10 +886,29 @@ class GhidraOracleSession:
             "time_ms": round(t_ms, 4),
         }
 
-    def query_decompile(self, targets: List[Any]) -> Dict[str, Any]:
+    def query_decompile(
+        self,
+        targets: List[Any],
+        style: Optional[str] = None,
+        throttle_ms: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Returns decompiled C code, mapping Ghidra VA and runtime RVA."""
+        self._ensure_decompiler_active()
+
+        # Apply simplification style (Section 8.3)
+        simplification = style or ("normalize" if self.resource_mode == "eco" else "decompile")
+        try:
+            self.decompiler.setSimplificationStyle(simplification)
+        except Exception as e:
+            logger.debug(f"Could not set simplification style '{simplification}': {e}")
+
+        effective_throttle_ms = throttle_ms if throttle_ms is not None else self.throttle_ms
         results = []
-        for t in targets:
+
+        for idx, t in enumerate(targets):
+            if idx > 0 and effective_throttle_ms > 0:
+                time.sleep(effective_throttle_ms / 1000.0)
+
             va, rva = normalize_address_pair(t, self.image_base)
             cached = self.decompile_cache.get(va)
             if cached is not None:
@@ -592,6 +959,7 @@ class GhidraOracleSession:
                         "entry_rva": f"0x{entry_rva:08X}",
                         "code": c_code,
                         "comment": comment,
+                        "style": simplification,
                         "cached": False,
                     }
                     self.decompile_cache.put(va, data)
@@ -891,6 +1259,8 @@ class GhidraOracleSession:
             "status": "ok",
             "uptime_seconds": round(uptime, 2),
             "uptime_human": f"{int(uptime // 3600)}h {int((uptime % 3600) // 60)}m {int(uptime % 60)}s",
+            "resource_mode": self.resource_mode,
+            "is_hibernating": self.is_hibernating,
             "project_name": self.project_name,
             "project_dir": self.project_dir,
             "program_name": self.program_name,
@@ -903,6 +1273,7 @@ class GhidraOracleSession:
             "overall_hit_rate_pct": overall_hit_rate,
             "overlay_renames_count": len(self.overlay.renames),
             "overlay_comments_count": len(self.overlay.comments),
+            "l2_cache_count": self.l2_cache.count(),
         }
 
 
@@ -994,7 +1365,10 @@ class GhidraDaemonServer:
                 return self.session.query_rva(addr)
             elif cmd == "decompile":
                 targets = args.get("targets") or req.get("targets") or [args.get("addr")]
-                return self.session.query_decompile(targets)
+                style = args.get("style") or req.get("style")
+                throttle = args.get("throttle_ms") or req.get("throttle_ms")
+                throttle_int = int(throttle) if throttle is not None else None
+                return self.session.query_decompile(targets, style=style, throttle_ms=throttle_int)
             elif cmd == "vtable":
                 addr = args.get("addr") or req.get("addr")
                 count = int(args.get("count", req.get("count", 12)))
@@ -1014,6 +1388,11 @@ class GhidraDaemonServer:
                 min_op = int(args.get("min", req.get("min", 0)))
                 max_op = int(args.get("max", req.get("max", 1000)))
                 return self.session.query_opcodes(min_op, max_op)
+            elif cmd == "hibernate":
+                return self.session.hibernate()
+            elif cmd == "mode":
+                new_mode = args.get("mode") or req.get("mode") or args.get("arg") or "balanced"
+                return self.session.set_resource_mode(str(new_mode))
             elif cmd == "rename":
                 addr = args.get("addr")
                 name = args.get("name")
@@ -1113,18 +1492,101 @@ def wait_for_daemon_ready(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, ti
     return False
 
 
+CACHEABLE_COMMANDS = {
+    "decompile",
+    "vtable",
+    "disassemble",
+    "refs",
+    "references",
+    "adrp_add",
+    "opcodes",
+}
+
+_client_l2_cache: Optional[L2SQLiteCache] = None
+
+
+def get_client_l2_cache() -> L2SQLiteCache:
+    """Returns singleton L2 SQLite Cache instance for client queries."""
+    global _client_l2_cache
+    if _client_l2_cache is None:
+        _client_l2_cache = L2SQLiteCache()
+    return _client_l2_cache
+
+
+def _make_l2_cache_key(cmd: str, args: Dict[str, Any]) -> Optional[str]:
+    """Creates deterministic JSON cache key from query command and arguments."""
+    norm_cmd = "refs" if cmd in ("refs", "references") else cmd.lower()
+    if norm_cmd not in CACHEABLE_COMMANDS:
+        return None
+
+    key_dict: Dict[str, Any] = {}
+    if norm_cmd == "decompile":
+        raw_targets = args.get("targets")
+        if raw_targets is None and "addr" in args:
+            raw_targets = [args["addr"]]
+        elif raw_targets is None and "target" in args:
+            raw_targets = [args["target"]]
+        elif isinstance(raw_targets, (str, int)):
+            raw_targets = [raw_targets]
+
+        if not raw_targets:
+            return None
+
+        norm_targets = []
+        for t in raw_targets:
+            try:
+                norm_targets.append(normalize_hex_key(t))
+            except Exception:
+                norm_targets.append(str(t).strip().lower())
+        key_dict["targets"] = norm_targets
+        if args.get("style"):
+            key_dict["style"] = str(args["style"]).lower().strip()
+
+    elif norm_cmd in ("vtable", "disassemble", "refs"):
+        addr = args.get("addr") or args.get("target")
+        if addr is None:
+            return None
+        try:
+            key_dict["addr"] = normalize_hex_key(addr)
+        except Exception:
+            key_dict["addr"] = str(addr).strip().lower()
+        if "count" in args and args["count"] is not None:
+            key_dict["count"] = int(args["count"])
+
+    elif norm_cmd == "adrp_add":
+        target = args.get("target") or args.get("symbol_or_addr") or args.get("addr")
+        if target is None:
+            return None
+        target_str = str(target).strip()
+        try:
+            key_dict["target"] = normalize_hex_key(target_str)
+        except Exception:
+            key_dict["target"] = target_str.lower()
+
+    elif norm_cmd == "opcodes":
+        key_dict["min"] = int(args.get("min", 500))
+        key_dict["max"] = int(args.get("max", 550))
+
+    return json.dumps(key_dict, sort_keys=True)
+
+
 def client_send_request(
     cmd: str,
     args: Dict[str, Any],
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     auto_spawn: bool = True,
+    l2_cache: Optional[L2SQLiteCache] = None,
 ) -> Dict[str, Any]:
     """Sends JSON-RPC command to the daemon, auto-spawning if offline."""
-    # Fast path for rva: zero JVM required
-    if cmd == "rva" and not is_daemon_online(host, port):
+    t0 = time.perf_counter()
+    cmd_lower = cmd.lower()
+
+    # Fast path for rva: zero JVM required (< 0.1 ms)
+    if cmd_lower == "rva":
         addr = args.get("addr")
         va, rva = normalize_address_pair(addr, DEFAULT_IMAGE_BASE)
+        t_ms = (time.perf_counter() - t0) * 1000.0
         return {
             "status": "ok",
             "va": f"0x{va:08X}",
@@ -1132,13 +1594,53 @@ def client_send_request(
             "va_int": va,
             "rva_int": rva,
             "image_base": f"0x{DEFAULT_IMAGE_BASE:08X}",
-            "time_ms": 0.05,
+            "time_ms": round(t_ms, 4),
             "local_fallback": True,
         }
 
+    # 1. Check L2 SQLite cache before TCP connection or daemon spawn
+    cache_inst = l2_cache or get_client_l2_cache()
+    is_cacheable = cmd_lower in CACHEABLE_COMMANDS
+    qtype = "refs" if cmd_lower == "references" else cmd_lower
+    cache_key = _make_l2_cache_key(cmd_lower, args) if is_cacheable else None
+
+    if is_cacheable and cache_inst is not None:
+        cached_res = None
+        if cache_key is not None:
+            cached_res = cache_inst.get(qtype, cache_key)
+        if cached_res is None:
+            # Fallback for direct address or symbol string keys
+            raw_key = None
+            if cmd_lower == "decompile":
+                raw_targets = args.get("targets")
+                if raw_targets and isinstance(raw_targets, list) and len(raw_targets) == 1:
+                    raw_key = str(raw_targets[0])
+                elif raw_targets and isinstance(raw_targets, str):
+                    raw_key = raw_targets
+                elif args.get("addr"):
+                    raw_key = str(args.get("addr"))
+            elif cmd_lower in ("vtable", "disassemble", "refs", "references"):
+                raw_key = str(args.get("addr") or args.get("target") or "")
+            elif cmd_lower == "adrp_add":
+                raw_key = str(args.get("target") or args.get("symbol_or_addr") or args.get("addr") or "")
+            elif cmd_lower == "opcodes":
+                min_op = args.get("min", 500)
+                max_op = args.get("max", 550)
+                raw_key = f"{min_op}_{max_op}"
+            if raw_key:
+                cached_res = cache_inst.get(qtype, raw_key)
+
+        if cached_res is not None:
+            t_ms = (time.perf_counter() - t0) * 1000.0
+            cached_res["l2_cached"] = True
+            cached_res["time_ms"] = round(t_ms, 4)
+            return cached_res
+
     if not is_daemon_online(host, port):
-        if cmd == "stop":
+        if cmd_lower == "stop":
             return {"status": "ok", "message": "Ghidra daemon is already offline."}
+        if cmd_lower == "hibernate":
+            return {"status": "ok", "message": "Ghidra daemon is offline (already hibernated)."}
         if not auto_spawn:
             return {"status": "error", "message": f"Ghidra daemon offline on {host}:{port}"}
 
@@ -1150,6 +1652,7 @@ def client_send_request(
             }
 
     payload = json.dumps({"cmd": cmd, "args": args}) + "\n"
+    res = {"status": "error", "message": "No response from daemon"}
     with socket.create_connection((host, port), timeout=60.0) as s:
         s.sendall(payload.encode("utf-8"))
         buf = ""
@@ -1160,9 +1663,20 @@ def client_send_request(
             buf += chunk.decode("utf-8")
             if "\n" in buf:
                 line = buf.split("\n", 1)[0]
-                return json.loads(line)
+                res = json.loads(line)
+                break
 
-    return {"status": "error", "message": "No response from daemon"}
+    # 2. Store successful responses into L2 SQLite cache for future instant retrieval
+    if is_cacheable and cache_inst is not None and cache_key and res.get("status") == "ok":
+        try:
+            cache_inst.put(qtype, cache_key, res)
+        except Exception as e:
+            logger.debug(f"L2 cache store error: {e}")
+
+    if "time_ms" not in res:
+        res["time_ms"] = round((time.perf_counter() - t0) * 1000.0, 4)
+
+    return res
 
 
 # ==============================================================================
@@ -1179,7 +1693,7 @@ def print_decompile_result(res: Dict[str, Any]) -> None:
         rva = item.get("rva")
         name = item.get("name", "Unknown")
         entry_rva = item.get("entry_rva", rva)
-        cached_str = " (CACHED)" if item.get("cached") else ""
+        cached_str = " (L2 CACHED)" if res.get("l2_cached") else (" (CACHED)" if item.get("cached") else "")
         print(f"\n{'='*80}")
         print(f"=== DECOMPILED {t} ({name} @ VA: {va} | RVA: {rva} | Hook RVA: {entry_rva}){cached_str} ===")
         print(f"{'='*80}")
@@ -1196,7 +1710,7 @@ def print_vtable_result(res: Dict[str, Any]) -> None:
     vt_va = res.get("vtable_va")
     vt_rva = res.get("vtable_rva")
     cnt = res.get("count")
-    cached_str = " (CACHED)" if res.get("cached") else ""
+    cached_str = " (L2 CACHED)" if res.get("l2_cached") else (" (CACHED)" if res.get("cached") else "")
     print(f"\n{'='*85}")
     print(f"=== VTABLE @ {vt_va} (RVA: {vt_rva}) [{cnt} entries]{cached_str} ===")
     print(f"{'='*85}")
@@ -1219,8 +1733,9 @@ def print_disasm_result(res: Dict[str, Any]) -> None:
     t_va = res.get("target_va")
     t_rva = res.get("target_rva")
     cnt = res.get("count")
+    cached_str = " (L2 CACHED)" if res.get("l2_cached") else ""
     print(f"\n{'='*85}")
-    print(f"=== DISASSEMBLY @ {t_va} (RVA: {t_rva}) [{cnt} instructions] ===")
+    print(f"=== DISASSEMBLY @ {t_va} (RVA: {t_rva}) [{cnt} instructions]{cached_str} ===")
     print(f"{'='*85}")
     print(f"{'VA':<12} {'RVA':<12} {'Hex Bytes':<10} {'Mnemonic':<8} {'Operands'}")
     print(f"{'-'*85}")
@@ -1241,8 +1756,9 @@ def print_refs_result(res: Dict[str, Any]) -> None:
     t_va = res.get("target_va")
     t_rva = res.get("target_rva")
     tot = res.get("total_refs")
+    cached_str = " (L2 CACHED)" if res.get("l2_cached") else ""
     print(f"\n{'='*85}")
-    print(f"=== REFERENCES TO {t_va} (RVA: {t_rva}) [{tot} total] ===")
+    print(f"=== REFERENCES TO {t_va} (RVA: {t_rva}) [{tot} total]{cached_str} ===")
     print(f"{'='*85}")
     for r in res.get("references", []):
         f_va = r.get("from_va")
@@ -1263,8 +1779,9 @@ def print_adrp_add_result(res: Dict[str, Any]) -> None:
     sym = res.get("symbol") or "Unknown"
     d_cnt = res.get("direct_refs_count", 0)
     p_cnt = res.get("page_refs_count", 0)
+    cached_str = " (L2 CACHED)" if res.get("l2_cached") else ""
     print(f"\n{'='*85}")
-    print(f"=== PC-RELATIVE ADRP/ADD REFERENCES FOR {t_va} (RVA: {t_rva} | {sym}) ===")
+    print(f"=== PC-RELATIVE ADRP/ADD REFERENCES FOR {t_va} (RVA: {t_rva} | {sym}){cached_str} ===")
     print(f"Target Page: {res.get('target_page')} | Offset: {res.get('target_offset')} | Direct Xrefs: {d_cnt} | Page Hits: {p_cnt}")
     print(f"{'='*85}")
     if res.get("page_references"):
@@ -1283,8 +1800,9 @@ def print_opcodes_result(res: Dict[str, Any]) -> None:
     max_op = res.get("max")
     cnt = res.get("count")
     tot = res.get("total_indexed_gates")
+    cached_str = " (L2 CACHED)" if res.get("l2_cached") else ""
     print(f"\n{'='*85}")
-    print(f"=== DISPATCHER OPCODES [Range: {min_op} .. {max_op}] ({cnt} gates matching / {tot} total indexed) ===")
+    print(f"=== DISPATCHER OPCODES [Range: {min_op} .. {max_op}] ({cnt} gates matching / {tot} total indexed){cached_str} ===")
     print(f"{'='*85}")
     print(f"{'Opcode':<8} {'Hex':<8} {'Gate VA':<12} {'Gate RVA':<12} {'Instruction':<24} {'Associated Function'}")
     print(f"{'-'*85}")
@@ -1306,6 +1824,7 @@ def print_status_result(res: Dict[str, Any]) -> None:
     print("=== GHIDRA ORACLE DAEMON STATUS (127.0.0.1:5073) ===")
     print(f"{'='*75}")
     print(f"Uptime:             {res.get('uptime_human')} ({res.get('uptime_seconds')}s)")
+    print(f"Resource Mode:      {res.get('resource_mode', 'balanced')} (Hibernating: {res.get('is_hibernating', False)})")
     print(f"Ghidra Project:     {res.get('project_name')} in {res.get('project_dir')}")
     print(f"Program:            {res.get('program_name')} (Base: {res.get('image_base')})")
     print(f"Functions in DB:    {res.get('function_count'):,}")
@@ -1315,6 +1834,7 @@ def print_status_result(res: Dict[str, Any]) -> None:
     v_cache = res.get("vtable_cache", {})
     print(f"Decompile Cache:    {d_cache.get('size')}/{d_cache.get('capacity')} entries | Hit Rate: {d_cache.get('hit_rate_pct')}% ({d_cache.get('hits')} hits, {d_cache.get('misses')} misses)")
     print(f"VTable Cache:       {v_cache.get('size')}/{v_cache.get('capacity')} entries | Hit Rate: {v_cache.get('hit_rate_pct')}% ({v_cache.get('hits')} hits, {v_cache.get('misses')} misses)")
+    print(f"L2 SQLite Cache:    {res.get('l2_cache_count', 0)} entries")
     print(f"Overall Hit Rate:   {res.get('overall_hit_rate_pct')}%")
     print(f"Write-Overlay:      {res.get('overlay_renames_count')} renames, {res.get('overlay_comments_count')} comments")
 
@@ -1338,26 +1858,61 @@ def main():
     parser.add_argument("--project-dir", default=None, help="Custom Ghidra project directory")
     parser.add_argument("--project-name", default=None, help="Custom Ghidra project name")
     parser.add_argument("--program-name", default=None, help="Custom program name inside project")
+    parser.add_argument(
+        "--mode",
+        choices=["eco", "balanced", "turbo", "auto"],
+        default=None,
+        help="Governor resource mode (eco, balanced, turbo, auto)",
+    )
+    parser.add_argument(
+        "--style",
+        choices=["firstpass", "register", "jumptable", "paramid", "normalize", "decompile"],
+        default=None,
+        help="Decompiler simplification style (firstpass, register, jumptable, paramid, normalize, decompile)",
+    )
+    parser.add_argument(
+        "--throttle-ms",
+        type=int,
+        default=None,
+        help="Duty-cycle throttle delay in milliseconds between decompilations",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clears persistent L2 SQLite cache and exits",
+    )
     parser.add_argument("-h", "--help", action="store_true", help="Show help message")
 
     parsed, unknown = parser.parse_known_args()
 
     if parsed.help or not parsed.command:
         print(__doc__)
+        parser.print_help()
         return
 
     cmd = parsed.command.lower()
     c_args = parsed.args
 
+    # Handle clear-cache subcommand or --clear-cache flag early
+    if parsed.clear_cache or cmd == "clear-cache":
+        cache = get_client_l2_cache()
+        cache.clear()
+        print(f"[*] Persistent L2 SQLite cache cleared successfully ({cache.db_path}).")
+        return
+
     # 1. Daemon serve mode
     if cmd == "serve":
         logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+        target_mode = parsed.mode or "balanced"
         session = GhidraOracleSession(
             project_dir=parsed.project_dir,
             project_name=parsed.project_name,
             program_name=parsed.program_name,
+            resource_mode=target_mode,
         )
-        print("[*] Initializing Ghidra & OpenJDK 21...")
+        if parsed.mode:
+            session.set_resource_mode(parsed.mode)
+        print(f"[*] Initializing Ghidra & OpenJDK 21 (Mode: {session.resource_mode})...")
         session.initialize()
         server = GhidraDaemonServer(session, host=parsed.host, port=parsed.port)
         try:
@@ -1379,6 +1934,10 @@ def main():
             print("Usage: python ghidra_oracle.py decompile <addr...>")
             return
         req_args["targets"] = c_args
+        if parsed.style:
+            req_args["style"] = parsed.style
+        if parsed.throttle_ms is not None:
+            req_args["throttle_ms"] = parsed.throttle_ms
     elif cmd == "vtable":
         if not c_args:
             print("Usage: python ghidra_oracle.py vtable <addr> [count]")
@@ -1421,11 +1980,26 @@ def main():
         req_args["comment"] = " ".join(c_args[1:])
     elif cmd == "overlay":
         req_args["action"] = c_args[0] if c_args else "list"
+    elif cmd == "hibernate":
+        pass
+    elif cmd == "mode":
+        target_mode = None
+        if c_args:
+            target_mode = c_args[0].lower()
+        elif parsed.mode:
+            target_mode = parsed.mode.lower()
+        else:
+            print("Usage: python ghidra_oracle.py mode <eco|balanced|turbo|auto>")
+            return
+        if target_mode not in ("eco", "balanced", "turbo", "auto"):
+            print(f"ERROR: Invalid mode '{target_mode}'. Choose from: eco, balanced, turbo, auto")
+            return
+        req_args["mode"] = target_mode
     elif cmd in ("status", "stop", "ping"):
         pass
     else:
         print(f"Unknown command: {cmd}")
-        print("Available commands: decompile, vtable, disassemble, refs, adrp_add, opcodes, rva, rename, comment, overlay, status, stop, serve")
+        print("Available commands: decompile, vtable, disassemble, refs, adrp_add, opcodes, rva, rename, comment, overlay, status, stop, hibernate, mode, clear-cache, serve")
         return
 
     res = client_send_request(cmd, req_args, host=parsed.host, port=parsed.port)
@@ -1459,10 +2033,14 @@ def main():
         print_opcodes_result(res)
     elif cmd == "status":
         print_status_result(res)
-    elif cmd in ("rename", "comment", "stop", "ping"):
+    elif cmd in ("rename", "comment", "stop", "ping", "hibernate", "mode"):
         print(res.get("message") or res)
     elif cmd == "overlay":
         print(json.dumps(res.get("overlay", res), indent=2))
+
+    if res.get("l2_cached") and cmd not in ("rva", "status"):
+        t_ms = res.get("time_ms", 0.0)
+        print(f"\n[L2 SQLite Cache Hit: {t_ms:.4f} ms | 0% JVM CPU]")
 
 
 if __name__ == "__main__":
