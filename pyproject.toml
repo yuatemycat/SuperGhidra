@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "superghidra"
+version = "0.1.0"
+description = "SuperGhidra: High-Performance Ghidra Architecture & GPU Acceleration Suite"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+]
+
+[project.optional-dependencies]
+smt = ["z3-solver"]
+gpu = ["wgpu"]
+storage = ["lz4", "zstandard"]
+frida = ["frida"]
+ghidra = ["pyghidra"]
+all = [
+    "z3-solver",
+    "wgpu",
+    "lz4",
+    "zstandard",
+    "frida",
+    "pyghidra",
+]
+
+[tool.setuptools]
+py-modules = [
+    "apk_jni_cross_referencer",
+    "binary_diff_engine",
+    "colab_cloud_orchestrator",
+    "cross_platform_headless_harness",
+    "dependency_cache_dag",
+    "dwarf_pdb_preindexer",
+    "emulator_memory_sidecar",
+    "evidence_ledger",
+    "ghidra_extension_packager",
+    "ghidra_oracle",
+    "gpu_adrp_scanner",
+    "gpu_function_seeder",
+    "headless_analyzer_tuner",
+    "native_decompiler_pgo_builder",
+    "neural_decompiler_pipeline",
+    "pcode_lifter_bridge",
+    "resource_governor",
+    "semantic_delta_log",
+    "shm_decompiler_bridge",
+    "smt_pcode_verifier",
+    "storage_compression_prototype",
+    "struct_shift_migrator",
+    "synthetic_symbol_exporter",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]
+norecursedirs = ["scratch", ".*", "build", "dist", "*.egg"]

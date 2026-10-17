@@ -30,6 +30,9 @@ from .binary_diff_engine import (
     DiffResult,
     FunctionCFG,
     FunctionMatch,
+    decode_arm64_instruction,
+    extract_cfgs_from_arm64_bytes,
+    extract_cfgs_from_binary,
 )
 from .evidence_ledger import (
     ReconstructionObligationLedger,
@@ -80,12 +83,15 @@ from .apk_jni_cross_referencer import (
     JNIRegisteredNative,
     JNICrossReferenceMatch,
 )
+build_synthetic_dex_bytes = APKJNICrossReferencer.build_synthetic_dex_bytes
+build_synthetic_jni_elf_bytes = APKJNICrossReferencer.build_synthetic_jni_elf_bytes
 from .cross_platform_headless_harness import (
     HeadlessProfile,
     HeadlessEnvironmentConfigurator,
 )
 from .pcode_lifter_bridge import (
     ARM64PcodeLifter,
+    X86_64PcodeLifter,
     PcodeOp,
     PcodeOpcode,
     Varnode,
@@ -98,6 +104,7 @@ from .native_decompiler_pgo_builder import (
 )
 from .neural_decompiler_pipeline import (
     NeuralDecompilerPipeline,
+    LLMDecompilerClient,
     SkeletonExtractor,
     DecompiledSkeleton,
     NeuralPrediction,
@@ -171,9 +178,13 @@ from .smt_pcode_verifier import (
     CConst,
     CBinary,
     CUnary,
+    CTernary,
     CDeref,
     CFieldAccess,
+    CIntrinsic,
     CAssignment,
+    CIfElse,
+    CWhile,
     CReturn,
     CBlock,
     CCodeParser,
