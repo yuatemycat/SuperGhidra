@@ -176,26 +176,31 @@ class DWARF5Exporter:
     DW_AT_producer = 0x25
     DW_AT_data_member_location = 0x38
     DW_AT_type = 0x49
+    DW_AT_encoding = 0x3E
 
     DW_FORM_addr = 0x01
+    DW_FORM_data1 = 0x0B
     DW_FORM_data2 = 0x05
     DW_FORM_data4 = 0x06
     DW_FORM_data8 = 0x07
     DW_FORM_string = 0x08
     DW_FORM_strp = 0x0E
     DW_FORM_udata = 0x0F
+    DW_FORM_ref4 = 0x13
     DW_FORM_sec_offset = 0x17
 
     DW_UT_compile = 0x01
     DW_LANG_C_plus_plus = 0x0004
 
-    def __init__(self, symbols: List[ExportSymbol], structs: List[ExportStruct], base_address: int = 0x100000000):
+    def __init__(self, symbols: List[ExportSymbol], structs: List[ExportStruct], base_address: int = 0x100000000, architecture: str = "arm64"):
         self.symbols = sorted(symbols, key=lambda s: s.address)
         self.structs = structs
         self.base_address = base_address
+        self.architecture = (architecture or "arm64").lower()
 
-    def build_elf(self) -> bytes:
+    def build_elf(self, architecture: Optional[str] = None) -> bytes:
         """Constructs and returns the full binary ELF64 container with DWARF 5 sections."""
+        arch = (architecture or self.architecture or "arm64").lower()
         # 1. Build .debug_str (string pool)
         debug_str = bytearray(b"\x00")  # Offset 0 is empty string
         str_cache: Dict[str, int] = {"": 0}
@@ -248,6 +253,16 @@ class DWARF5Exporter:
         abbrev.extend(encode_uleb128(self.DW_AT_name) + encode_uleb128(self.DW_FORM_strp))
         abbrev.extend(encode_uleb128(self.DW_AT_data_member_location) + encode_uleb128(self.DW_FORM_udata))
         abbrev.extend(encode_uleb128(self.DW_AT_byte_size) + encode_uleb128(self.DW_FORM_udata))
+        abbrev.extend(encode_uleb128(self.DW_AT_type) + encode_uleb128(self.DW_FORM_ref4))
+        abbrev.extend(b"\x00\x00")
+
+        # Abbrev 5: DW_TAG_base_type
+        abbrev.extend(encode_uleb128(5))
+        abbrev.extend(encode_uleb128(self.DW_TAG_base_type))
+        abbrev.append(self.DW_CHILDREN_no)
+        abbrev.extend(encode_uleb128(self.DW_AT_name) + encode_uleb128(self.DW_FORM_strp))
+        abbrev.extend(encode_uleb128(self.DW_AT_encoding) + encode_uleb128(self.DW_FORM_data1))
+        abbrev.extend(encode_uleb128(self.DW_AT_byte_size) + encode_uleb128(self.DW_FORM_udata))
         abbrev.extend(b"\x00\x00")
 
         # End of abbreviation table
@@ -272,6 +287,41 @@ class DWARF5Exporter:
         cu_body.extend(struct.pack("<Q", high_pc_delta))
         cu_body.extend(struct.pack("<I", 0))  # stmt_list = 0 (.debug_line offset)
 
+        # Base Types (Abbrev 5)
+        # Collect all unique field types across structs
+        base_types: Dict[str, Tuple[int, int]] = {}  # type_name -> (size, encoding)
+        for st in self.structs:
+            for f in st.fields:
+                tn = f.type_name or "uint32_t"
+                if tn not in base_types:
+                    tn_lower = tn.lower()
+                    if "float" in tn_lower or "double" in tn_lower:
+                        enc = 4  # DW_ATE_float
+                    elif tn_lower.startswith("int") or tn_lower in ("signed", "short", "long", "char"):
+                        enc = 5  # DW_ATE_signed
+                    elif tn_lower.startswith("bool"):
+                        enc = 2  # DW_ATE_boolean
+                    else:
+                        enc = 7  # DW_ATE_unsigned
+                    base_types[tn] = (max(f.size, 1), enc)
+
+        # Always ensure a fallback base type exists so no DW_AT_type emits ref4=0
+        if "uint32_t" not in base_types:
+            base_types["uint32_t"] = (4, 7)
+
+        # Pre-emit all unique base types
+        # Note: CU header is 12 bytes, so DIE offset relative to CU start is 12 + len(cu_body)
+        base_type_offsets: Dict[str, int] = {}
+        for tn, (bt_size, bt_enc) in base_types.items():
+            base_type_offsets[tn] = 12 + len(cu_body)
+            tn_offset = add_debug_str(tn)
+            cu_body.extend(encode_uleb128(5))  # abbrev 5: DW_TAG_base_type
+            cu_body.extend(struct.pack("<I", tn_offset))
+            cu_body.append(bt_enc)
+            cu_body.extend(encode_uleb128(bt_size))
+
+        fallback_offset = base_type_offsets["uint32_t"]
+
         # Children: Functions
         for sym in self.symbols:
             name_offset = add_debug_str(sym.name)
@@ -293,6 +343,10 @@ class DWARF5Exporter:
                 cu_body.extend(struct.pack("<I", f_name_offset))
                 cu_body.extend(encode_uleb128(f.offset))
                 cu_body.extend(encode_uleb128(f.size))
+                # DW_AT_type (DW_FORM_ref4): match tn and fallback to valid base type DIE
+                tn = f.type_name or "uint32_t"
+                type_ref_off = base_type_offsets.get(tn, fallback_offset)
+                cu_body.extend(struct.pack("<I", type_ref_off))
             cu_body.append(0x00)  # End of struct members
 
         # End of compile unit children
@@ -311,9 +365,9 @@ class DWARF5Exporter:
         # 5. Build .symtab and .strtab (Standard ELF symbol table)
         symtab, strtab = self._build_symtab()
 
-        # 6. Build dummy .text section
+        # 6. Build dummy .text section (zero-filled)
         text_size = max(high_pc_delta, 0x100)
-        text_data = b"\x90" * min(text_size, 0x4000)  # NOPs or small slice
+        text_data = b"\x00" * min(text_size, 0x4000)
 
         # 7. Assemble ELF64 binary container
         return self._assemble_elf64(
@@ -325,6 +379,7 @@ class DWARF5Exporter:
             debug_info=debug_info,
             debug_line=debug_line,
             low_pc=low_pc,
+            architecture=arch,
         )
 
     def _build_debug_line(self, low_pc: int) -> bytes:
@@ -423,6 +478,7 @@ class DWARF5Exporter:
         debug_info: bytes,
         debug_line: bytes,
         low_pc: int,
+        architecture: str = "arm64",
     ) -> bytes:
         """Assembles section contents into a fully compliant 64-bit ELF file."""
         # Section names string table (.shstrtab)
@@ -481,6 +537,14 @@ class DWARF5Exporter:
         num_sections = len(sections_payload) + 1  # including .shstrtab
         shstrtab_section_idx = num_sections - 1
 
+        arch_norm = (architecture or "arm64").lower()
+        if "arm" in arch_norm or "aarch64" in arch_norm:
+            e_machine = 183  # EM_AARCH64
+        elif "x86" in arch_norm or "64" in arch_norm or "amd64" in arch_norm:
+            e_machine = 62   # EM_X86_64
+        else:
+            e_machine = 183  # EM_AARCH64 default
+
         # Construct ELF Header
         elf_header = bytearray(64)
         elf_header[0:4] = b"\x7fELF"
@@ -489,7 +553,7 @@ class DWARF5Exporter:
         elf_header[6] = 1   # EV_CURRENT
         elf_header[7] = 0   # ELFOSABI_NONE
         struct.pack_into("<H", elf_header, 16, 2)            # e_type = ET_EXEC
-        struct.pack_into("<H", elf_header, 18, 0x3E)         # e_machine = EM_X86_64
+        struct.pack_into("<H", elf_header, 18, e_machine)    # e_machine
         struct.pack_into("<I", elf_header, 20, 1)            # e_version = 1
         struct.pack_into("<Q", elf_header, 24, low_pc)       # e_entry
         struct.pack_into("<Q", elf_header, 32, 64)           # e_phoff = 64
@@ -580,8 +644,9 @@ class DWARF5Exporter:
 
 class PDBExporter:
     """
-    Synthesizes a valid Microsoft Compound File (MSF 7.0 / PDB) with Public Symbol Stream (S_PUB32).
-    Supported directly by x64dbg, LLDB, and symbol visualizers.
+    Synthesizes a minimal experimental Microsoft Compound File (MSF 7.0 / PDB) with Public Symbol Stream (S_PUB32).
+    NOTE: The PDB output is a minimal experimental container intended for internal synthetic symbol tracking and preindexing.
+    It may not load directly in standard MSVC/LLVM tools because a full Global Symbol Information (GSI) hash table / public stream hash records are omitted.
     """
 
     MSF_MAGIC = b"Microsoft C/C++ MSF 7.00\r\n\x1a\x44\x53\x00\x00\x00"
@@ -613,7 +678,14 @@ class PDBExporter:
         # Stream 3: DBI Stream
         # Stream 4: IPI Stream (empty or minimal)
         # Stream 5: Public Symbol Stream
-        ipi_stream = tpi_stream
+        ipi_hdr = bytearray(56)
+        struct.pack_into(
+            "<IIIIIHHIIiIiIiI", ipi_hdr, 0,
+            20040203, 56, 0x1000, 0x1000, 0,
+            0xFFFF, 0xFFFF, 4, 0x3FFFF,
+            0, 0, 0, 0, 0, 0,
+        )
+        ipi_stream = bytes(ipi_hdr)
         streams: List[bytes] = [
             b"",            # Stream 0
             pdb_stream,     # Stream 1
@@ -630,35 +702,152 @@ class PDBExporter:
         # Version = 20000404 (VC70), Signature = 0x53504442 ('SPDB'), Age = 1, GUID (16 bytes)
         guid_bytes = uuid.uuid4().bytes
         header = struct.pack("<IIII16s", 20000404, 0x53504442, 1, 0, guid_bytes)
-        # Named stream table length = 0
-        names_table = struct.pack("<I", 0)
+        # Named stream map: serialized hash table (empty)
+        # string-buffer size u32 (+bytes), size u32, capacity u32,
+        # present bitvector (word count u32 + words), deleted bitvector (word count u32 + words).
+        names_table = struct.pack("<IIIII", 0, 0, 0, 0, 0)
         return header + names_table
 
     def _build_tpi_stream(self) -> bytes:
-        """Builds minimal TPI type stream header."""
-        # version = 20040203 (V80), header_size = 56, ti_min = 0x1000, ti_max = 0x1000, records_len = 0
-        tpi_hdr = bytearray(56)
-        struct.pack_into("<IIIII", tpi_hdr, 0, 20040203, 56, 0x1000, 0x1000, 0)
-        return bytes(tpi_hdr)
+        """
+        Builds CodeView TPI (Type Info) stream containing LF_FIELDLIST (0x1203)
+        and LF_STRUCTURE (0x1505) records for all reconstructed struct definitions.
+        """
+        if not self.structs:
+            tpi_hdr = bytearray(56)
+            struct.pack_into(
+                "<IIIIIHHIIiIiIiI", tpi_hdr, 0,
+                20040203, 56, 0x1000, 0x1000, 0,
+                0xFFFF, 0xFFFF, 4, 0x3FFFF,
+                0, 0, 0, 0, 0, 0,
+            )
+            return bytes(tpi_hdr)
 
-    def _build_dbi_stream(self, public_stream_len: int) -> bytes:
+        records_buf = bytearray()
+        ti_min = 0x1000
+        current_ti = ti_min
+
+        def get_cv_builtin_type(type_name: str, size: int) -> int:
+            tn = (type_name or "").lower()
+            if "float" in tn:
+                return 0x0040  # T_REAL32
+            if "double" in tn:
+                return 0x0041  # T_REAL64
+            if "*" in tn or "pointer" in tn:
+                return 0x0603  # T_64PVOID
+            if tn.startswith("uint") or "unsigned" in tn:
+                if size == 1:
+                    return 0x0020
+                if size == 2:
+                    return 0x0021
+                if size == 8:
+                    return 0x0077
+                return 0x0075  # T_UINT4
+            if tn.startswith("int"):
+                if size == 1:
+                    return 0x0070
+                if size == 2:
+                    return 0x0072
+                if size == 8:
+                    return 0x0076
+                return 0x0074  # T_INT4
+            if size == 8:
+                return 0x0077
+            if size == 2:
+                return 0x0021
+            if size == 1:
+                return 0x0020
+            return 0x0075
+
+        for st in self.structs:
+            flist_ti = current_ti
+            current_ti += 1
+            struct_ti = current_ti
+            current_ti += 1
+
+            # 1. LF_FIELDLIST (0x1203)
+            flist_body = bytearray(struct.pack("<H", 0x1203))
+            for f in st.fields:
+                cv_type = get_cv_builtin_type(f.type_name, f.size)
+                # LF_MEMBER (0x150D): leaf (2B), attr (2B = 3 for public), type (4B)
+                member_entry = bytearray(struct.pack("<HHI", 0x150D, 3, cv_type))
+                if f.offset < 0x8000:
+                    member_entry.extend(struct.pack("<H", f.offset))
+                else:
+                    member_entry.extend(struct.pack("<HI", 0x8004, f.offset))
+                member_entry.extend(f.name.encode("utf-8") + b"\x00")
+                pad_len = (4 - (len(member_entry) % 4)) % 4
+                for rem in range(pad_len, 0, -1):
+                    member_entry.append(0xF0 | rem)
+                flist_body.extend(member_entry)
+
+            records_buf.extend(struct.pack("<H", len(flist_body)) + flist_body)
+
+            # 2. LF_STRUCTURE (0x1505)
+            struct_body = bytearray(struct.pack("<HHHIII", 0x1505, len(st.fields), 0, flist_ti, 0, 0))
+            if st.size < 0x8000:
+                struct_body.extend(struct.pack("<H", st.size))
+            else:
+                struct_body.extend(struct.pack("<HI", 0x8004, st.size))
+            struct_body.extend(st.name.encode("utf-8") + b"\x00")
+            pad_len = (4 - (len(struct_body) % 4)) % 4
+            struct_body.extend(b"\x00" * pad_len)
+
+            records_buf.extend(struct.pack("<H", len(struct_body)) + struct_body)
+
+        ti_max = current_ti
+        records_len = len(records_buf)
+
+        tpi_hdr = bytearray(56)
+        struct.pack_into("<IIIIIHHIIiIiIiI", tpi_hdr, 0,
+            20040203,
+            56,
+            ti_min,
+            ti_max,
+            records_len,
+            0xFFFF,
+            0xFFFF,
+            4,
+            0x3FFFF,
+            0, 0,
+            0, 0,
+            0, 0
+        )
+        return bytes(tpi_hdr) + bytes(records_buf)
+
+    def _build_dbi_stream(self, public_stream_len: int, public_stream_idx: int = 5, machine: int = 0x8664) -> bytes:
         """Builds DBI stream referencing the Public Symbol stream."""
-        # DBI Header (64 bytes):
-        # signature: -1 (0xFFFFFFFF)
-        # version: 19990903 (V70)
-        # age: 1
-        # global_stream_index: 0xFFFF
-        # toolchain_version: 0x0000
-        # public_stream_index: 5 (Stream 5)
-        # ... sizes of sub-streams ...
+        # Real DBI Header (64 bytes):
+        # VersionSignature: i32 = -1 (0..4)
+        # VersionHeader: u32 = 19990903 (4..8)
+        # Age: u32 = 1 (8..12)
+        # GlobalStreamIndex: u16 = 0xFFFF (12..14)
+        # BuildNumber: u16 = 0 (14..16)
+        # PublicStreamIndex: u16 = public_stream_idx (16..18)
+        # PdbDllVersion: u16 = 0 (18..20)
+        # SymRecordStream: u16 = 0xFFFF (20..22)
+        # PdbDllRbld: u16 = 0 (22..24)
+        # ModInfoSize: i32 = 0 (24..28)
+        # SectionContributionSize: i32 = 0 (28..32)
+        # SectionMapSize: i32 = 0 (32..36)
+        # SourceInfoSize: i32 = 0 (36..40)
+        # TypeServerMapSize: i32 = 0 (40..44)
+        # MFCTypeServerIndex: u32 = 0 (44..48)
+        # OptionalDbgHeaderSize: i32 = 0 (48..52)
+        # ECSubstreamSize: i32 = 0 (52..56)
+        # Flags: u16 = 0 (56..58)
+        # Machine: u16 (0xAA64 ARM64, 0x8664 x64) (58..60)
+        # Padding: u32 (60..64)
         dbi_hdr = bytearray(64)
-        struct.pack_into("<IiIIHH", dbi_hdr, 0, 0xFFFFFFFF, 19990903, 1, 0xFFFF, 0x0000, 5)
-        # mod_info_size (offset 20) = 0
-        # sec_conpr_size (offset 24) = 0
-        # sec_map_size (offset 28) = 0
-        # filenam_size (offset 32) = 0
-        # ec_info_size (offset 36) = 0
-        # dbghdr_size (offset 40) = 0
+        struct.pack_into(
+            "<iIIHHHHHHiiiiiIiiHHI",
+            dbi_hdr, 0,
+            -1, 19990903, 1,
+            0xFFFF, 0, public_stream_idx,
+            0, 0xFFFF, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, machine, machine,
+        )
         return bytes(dbi_hdr)
 
     def _build_public_stream(self) -> bytes:
@@ -687,11 +876,13 @@ class PDBExporter:
         """Packs multiple streams into a standard MSF 7.0 block-aligned file."""
         bs = self.BLOCK_SIZE
         # Block 0: MSF Header
-        # Block 1..: Stream data blocks
+        # Blocks 1 and 2: Free Page Map (FPM) blocks
         blocks: List[bytes] = []
 
-        # Reserve Block 0 for Header
-        blocks.append(b"\x00" * bs)
+        # Reserve Block 0 for Header, Blocks 1 and 2 for FPM
+        blocks.append(b"\x00" * bs)  # Block 0: Header
+        blocks.append(b"\x00" * bs)  # Block 1: FPM 1
+        blocks.append(b"\x00" * bs)  # Block 2: FPM 2
 
         # Lay out stream data
         stream_block_lists: List[List[int]] = []

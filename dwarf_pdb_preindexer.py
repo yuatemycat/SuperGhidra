@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import sqlite3
+import struct
 import time
 from typing import Any, Dict, Generator, Iterable, List, Optional, Set, Tuple, Union
 
@@ -493,6 +494,727 @@ class TypeDeduplicator:
             return 0.0
         return (1.0 - (len(self.canonical_types) / self.raw_types_ingested)) * 100.0
 
+    def ingest_dwarf5_elf_bytes(self, elf_bytes: bytes) -> Dict[str, int]:
+        """
+        Parses a 64-bit ELF container containing DWARF 5 sections (.debug_str, .debug_abbrev,
+        .debug_info) as well as ELF symbol tables (.symtab, .strtab).
+        Registers base types, structs (with members and resolved type references), and
+        binary symbols off-heap into the canonical deduplicated store.
+        """
+        if len(elf_bytes) < 64 or elf_bytes[:4] != b"\x7fELF":
+            raise ValueError("Invalid ELF magic header")
+        if elf_bytes[4] != 2 or elf_bytes[5] != 1:
+            raise ValueError("Only 64-bit little-endian ELF supported")
+
+        e_shoff, = struct.unpack_from("<Q", elf_bytes, 40)
+        e_shentsize, e_shnum, e_shstrndx = struct.unpack_from("<HHH", elf_bytes, 58)
+
+        # Read .shstrtab
+        shstr_hdr = e_shoff + e_shstrndx * e_shentsize
+        shstr_offset, shstr_size = struct.unpack_from("<QQ", elf_bytes, shstr_hdr + 24)
+        shstrtab = elf_bytes[shstr_offset : shstr_offset + shstr_size]
+
+        sections: Dict[str, Tuple[int, int, int, int]] = {}
+        for i in range(e_shnum):
+            shdr_off = e_shoff + i * e_shentsize
+            sh_name, sh_type = struct.unpack_from("<II", elf_bytes, shdr_off)
+            sec_offset, sec_size = struct.unpack_from("<QQ", elf_bytes, shdr_off + 24)
+            sec_link, sec_info = struct.unpack_from("<II", elf_bytes, shdr_off + 40)
+            end = shstrtab.find(b"\x00", sh_name)
+            sec_name = shstrtab[sh_name:end].decode("utf-8", errors="replace") if end != -1 else ""
+            sections[sec_name] = (sec_offset, sec_size, sec_link, sec_info)
+
+        def get_sec_data(name: str) -> bytes:
+            if name not in sections:
+                return b""
+            off, sz, _, _ = sections[name]
+            return elf_bytes[off : off + sz]
+
+        debug_str = get_sec_data(".debug_str")
+        debug_abbrev = get_sec_data(".debug_abbrev")
+        debug_info = get_sec_data(".debug_info")
+        symtab = get_sec_data(".symtab")
+        strtab = get_sec_data(".strtab")
+
+        def get_str(off: int) -> str:
+            if off >= len(debug_str):
+                return ""
+            end = debug_str.find(b"\x00", off)
+            return debug_str[off:end].decode("utf-8", errors="replace") if end != -1 else ""
+
+        def decode_uleb128(data: bytes, off: int) -> Tuple[int, int]:
+            result = 0
+            shift = 0
+            while True:
+                byte = data[off]
+                off += 1
+                result |= (byte & 0x7F) << shift
+                if (byte & 0x80) == 0:
+                    break
+                shift += 7
+            return result, off
+
+        def decode_sleb128(data: bytes, off: int) -> Tuple[int, int]:
+            result = 0
+            shift = 0
+            while True:
+                byte = data[off]
+                off += 1
+                result |= (byte & 0x7F) << shift
+                shift += 7
+                if (byte & 0x80) == 0:
+                    if (byte & 0x40) != 0:
+                        result |= -(1 << shift)
+                    break
+            return result, off
+
+        # Parse .debug_abbrev
+        abbrevs: Dict[int, Dict[str, Any]] = {}
+        abbrev_off = 0
+        while abbrev_off < len(debug_abbrev):
+            code, abbrev_off = decode_uleb128(debug_abbrev, abbrev_off)
+            if code == 0:
+                break
+            tag, abbrev_off = decode_uleb128(debug_abbrev, abbrev_off)
+            has_children = debug_abbrev[abbrev_off] == 1
+            abbrev_off += 1
+            attrs = []
+            while True:
+                aname, abbrev_off = decode_uleb128(debug_abbrev, abbrev_off)
+                aform, abbrev_off = decode_uleb128(debug_abbrev, abbrev_off)
+                if aname == 0 and aform == 0:
+                    break
+                implicit_const_val = None
+                if aform == 0x21:  # DW_FORM_implicit_const
+                    implicit_const_val, abbrev_off = decode_sleb128(debug_abbrev, abbrev_off)
+                attrs.append((aname, aform, implicit_const_val))
+            abbrevs[code] = {"tag": tag, "has_children": has_children, "attrs": attrs}
+
+        DW_TAG_formal_parameter = 0x05
+        DW_TAG_enumeration_type = 0x04
+        DW_TAG_enumerator = 0x28
+        DW_TAG_union_type = 0x17
+        DW_TAG_typedef = 0x16
+        DW_TAG_pointer_type = 0x0F
+        DW_TAG_compile_unit = 0x11
+        DW_TAG_structure_type = 0x13
+        DW_TAG_member = 0x0D
+        DW_TAG_subprogram = 0x2E
+        DW_TAG_base_type = 0x24
+
+        DW_AT_name = 0x03
+        DW_AT_byte_size = 0x0B
+        DW_AT_low_pc = 0x11
+        DW_AT_high_pc = 0x12
+        DW_AT_const_value = 0x1C
+        DW_AT_data_member_location = 0x38
+        DW_AT_type = 0x49
+        DW_AT_encoding = 0x3E
+
+        struct_count = 0
+        member_count = 0
+        enum_count = 0
+        union_count = 0
+        typedef_count = 0
+        pointer_count = 0
+        function_count = 0
+
+        # Parse .debug_info
+        cu_offset = 0
+        while cu_offset < len(debug_info):
+            if cu_offset + 12 > len(debug_info):
+                break
+            unit_length, = struct.unpack_from("<I", debug_info, cu_offset)
+            version, unit_type, addr_size = struct.unpack_from("<HBB", debug_info, cu_offset + 4)
+            cu_end = cu_offset + 4 + unit_length
+
+            die_offset = cu_offset + 12
+
+            def parse_die(off: int) -> Tuple[Optional[Dict[str, Any]], int]:
+                if off >= cu_end:
+                    return None, off
+                code, next_off = decode_uleb128(debug_info, off)
+                if code == 0:
+                    return None, next_off
+                decl = abbrevs.get(code)
+                if not decl:
+                    return None, next_off
+
+                die_data: Dict[str, Any] = {
+                    "offset": off - cu_offset,
+                    "tag": decl["tag"],
+                    "attrs": {},
+                    "children": [],
+                }
+                curr = next_off
+                for attr_item in decl["attrs"]:
+                    if len(attr_item) == 3:
+                        aname, aform, aconst = attr_item
+                    else:
+                        aname, aform = attr_item
+                        aconst = None
+                    val = None
+                    if aform == 0x01:  # DW_FORM_addr
+                        val, = struct.unpack_from("<Q", debug_info, curr)
+                        curr += 8
+                    elif aform == 0x02:  # DW_FORM_block2
+                        blen, = struct.unpack_from("<H", debug_info, curr)
+                        curr += 2
+                        val = debug_info[curr : curr + blen]
+                        curr += blen
+                    elif aform == 0x03:  # DW_FORM_block4
+                        blen, = struct.unpack_from("<I", debug_info, curr)
+                        curr += 4
+                        val = debug_info[curr : curr + blen]
+                        curr += blen
+                    elif aform == 0x05:  # DW_FORM_data2
+                        val, = struct.unpack_from("<H", debug_info, curr)
+                        curr += 2
+                    elif aform == 0x06:  # DW_FORM_data4
+                        val, = struct.unpack_from("<I", debug_info, curr)
+                        curr += 4
+                    elif aform == 0x07:  # DW_FORM_data8
+                        val, = struct.unpack_from("<Q", debug_info, curr)
+                        curr += 8
+                    elif aform == 0x08:  # DW_FORM_string
+                        end = debug_info.find(b"\x00", curr)
+                        val = debug_info[curr:end].decode("utf-8", errors="replace")
+                        curr = end + 1
+                    elif aform == 0x09:  # DW_FORM_block
+                        blen, curr = decode_uleb128(debug_info, curr)
+                        val = debug_info[curr : curr + blen]
+                        curr += blen
+                    elif aform == 0x0A:  # DW_FORM_block1
+                        blen = debug_info[curr]
+                        curr += 1
+                        val = debug_info[curr : curr + blen]
+                        curr += blen
+                    elif aform == 0x0B:  # DW_FORM_data1
+                        val = debug_info[curr]
+                        curr += 1
+                    elif aform == 0x0C:  # DW_FORM_flag
+                        val = bool(debug_info[curr])
+                        curr += 1
+                    elif aform == 0x0D:  # DW_FORM_sdata
+                        val, curr = decode_sleb128(debug_info, curr)
+                    elif aform == 0x0E:  # DW_FORM_strp
+                        str_off, = struct.unpack_from("<I", debug_info, curr)
+                        val = get_str(str_off)
+                        curr += 4
+                    elif aform == 0x0F:  # DW_FORM_udata
+                        val, curr = decode_uleb128(debug_info, curr)
+                    elif aform == 0x10:  # DW_FORM_ref_addr
+                        val, = struct.unpack_from("<Q", debug_info, curr) if addr_size == 8 else struct.unpack_from("<I", debug_info, curr)
+                        curr += addr_size
+                    elif aform == 0x11:  # DW_FORM_ref1
+                        val = debug_info[curr]
+                        curr += 1
+                    elif aform == 0x12:  # DW_FORM_ref2
+                        val, = struct.unpack_from("<H", debug_info, curr)
+                        curr += 2
+                    elif aform == 0x13:  # DW_FORM_ref4
+                        val, = struct.unpack_from("<I", debug_info, curr)
+                        curr += 4
+                    elif aform == 0x14:  # DW_FORM_ref8
+                        val, = struct.unpack_from("<Q", debug_info, curr)
+                        curr += 8
+                    elif aform == 0x15:  # DW_FORM_ref_udata
+                        val, curr = decode_uleb128(debug_info, curr)
+                    elif aform == 0x17:  # DW_FORM_sec_offset
+                        val, = struct.unpack_from("<I", debug_info, curr)
+                        curr += 4
+                    elif aform == 0x18:  # DW_FORM_exprloc
+                        elen, curr = decode_uleb128(debug_info, curr)
+                        val = debug_info[curr : curr + elen]
+                        curr += elen
+                    elif aform == 0x19:  # DW_FORM_flag_present
+                        val = True
+                    elif aform == 0x1A:  # DW_FORM_strx
+                        val, curr = decode_uleb128(debug_info, curr)
+                    elif aform == 0x1B:  # DW_FORM_addrx
+                        val, curr = decode_uleb128(debug_info, curr)
+                    elif aform in (0x1C, 0x1D):  # ref_sup4, strp_sup
+                        val, = struct.unpack_from("<I", debug_info, curr)
+                        curr += 4
+                    elif aform == 0x1E:  # DW_FORM_data16
+                        val = debug_info[curr : curr + 16]
+                        curr += 16
+                    elif aform == 0x1F:  # DW_FORM_line_strp
+                        str_off, = struct.unpack_from("<I", debug_info, curr)
+                        val = get_str(str_off)
+                        curr += 4
+                    elif aform == 0x20:  # DW_FORM_ref_sig8
+                        val, = struct.unpack_from("<Q", debug_info, curr)
+                        curr += 8
+                    elif aform == 0x21:  # DW_FORM_implicit_const
+                        val = aconst
+                    elif aform in (0x22, 0x23):  # DW_FORM_loclistx, DW_FORM_rnglistx
+                        val, curr = decode_uleb128(debug_info, curr)
+                    elif aform == 0x24:  # DW_FORM_ref_sup8
+                        val, = struct.unpack_from("<Q", debug_info, curr)
+                        curr += 8
+                    elif aform == 0x25:  # DW_FORM_strx1
+                        val = debug_info[curr]
+                        curr += 1
+                    elif aform == 0x26:  # DW_FORM_strx2
+                        val, = struct.unpack_from("<H", debug_info, curr)
+                        curr += 2
+                    elif aform == 0x27:  # DW_FORM_strx3
+                        val = int.from_bytes(debug_info[curr : curr + 3], "little")
+                        curr += 3
+                    elif aform == 0x28:  # DW_FORM_strx4
+                        val, = struct.unpack_from("<I", debug_info, curr)
+                        curr += 4
+                    elif aform == 0x29:  # DW_FORM_addrx1
+                        val = debug_info[curr]
+                        curr += 1
+                    elif aform == 0x2A:  # DW_FORM_addrx2
+                        val, = struct.unpack_from("<H", debug_info, curr)
+                        curr += 2
+                    elif aform == 0x2B:  # DW_FORM_addrx3
+                        val = int.from_bytes(debug_info[curr : curr + 3], "little")
+                        curr += 3
+                    elif aform == 0x2C:  # DW_FORM_addrx4
+                        val, = struct.unpack_from("<I", debug_info, curr)
+                        curr += 4
+                    else:
+                        raise ValueError(f"Unknown DWARF form 0x{aform:X} at offset 0x{curr:X}")
+                    die_data["attrs"][aname] = val
+
+                if decl["has_children"]:
+                    while curr < cu_end:
+                        child_die, curr = parse_die(curr)
+                        if child_die is None:
+                            break
+                        die_data["children"].append(child_die)
+
+                return die_data, curr
+
+            root_die, _ = parse_die(die_offset)
+            if root_die and root_die["children"]:
+                # Pass 1: Map all type definitions by CU-relative offset
+                cu_types: Dict[int, str] = {}
+                for child in root_die["children"]:
+                    ctag = child["tag"]
+                    cattrs = child["attrs"]
+                    coff = child["offset"]
+                    cname = cattrs.get(DW_AT_name, "")
+                    if ctag == DW_TAG_base_type:
+                        cname = cname or f"type_{coff}"
+                        bsize = cattrs.get(DW_AT_byte_size, 4)
+                        cu_types[coff] = cname
+                        self.register_type(name=cname, kind=TypeKind.PRIMITIVE, byte_size=bsize, local_id=cname)
+                    elif ctag == DW_TAG_structure_type:
+                        cu_types[coff] = cname or f"struct_{coff}"
+                    elif ctag == DW_TAG_union_type:
+                        cu_types[coff] = cname or f"union_{coff}"
+                    elif ctag == DW_TAG_enumeration_type:
+                        cu_types[coff] = cname or f"enum_{coff}"
+                    elif ctag == DW_TAG_typedef:
+                        cu_types[coff] = cname or f"typedef_{coff}"
+                    elif ctag == DW_TAG_pointer_type:
+                        cu_types[coff] = cname or f"ptr_{coff}"
+
+                # Pass 2: Ingest types, members, prototypes, and subprograms
+                for child in root_die["children"]:
+                    ctag = child["tag"]
+                    cattrs = child["attrs"]
+                    coff = child["offset"]
+                    cname = cattrs.get(DW_AT_name, "")
+
+                    if ctag == DW_TAG_pointer_type:
+                        target_ref = cattrs.get(DW_AT_type)
+                        target_name = cu_types.get(target_ref, "void") if target_ref is not None else "void"
+                        ptr_size = cattrs.get(DW_AT_byte_size, addr_size if addr_size else 8)
+                        ptr_name = cname or f"{target_name}*"
+                        cu_types[coff] = ptr_name
+                        self.register_type(name=ptr_name, kind=TypeKind.POINTER, byte_size=ptr_size, local_id=ptr_name, parent_type_id=target_name)
+                        pointer_count += 1
+
+                    elif ctag == DW_TAG_typedef:
+                        target_ref = cattrs.get(DW_AT_type)
+                        target_name = cu_types.get(target_ref, "uint32_t") if target_ref is not None else "uint32_t"
+                        td_name = cname or f"typedef_{coff}"
+                        td_size = cattrs.get(DW_AT_byte_size, 4)
+                        self.register_type(name=td_name, kind=TypeKind.TYPEDEF, byte_size=td_size, local_id=td_name, parent_type_id=target_name)
+                        typedef_count += 1
+
+                    elif ctag == DW_TAG_enumeration_type:
+                        enum_name = cname or f"enum_{coff}"
+                        e_size = cattrs.get(DW_AT_byte_size, 4)
+                        variants: List[EnumVariant] = []
+                        for m in child.get("children", []):
+                            if m["tag"] == DW_TAG_enumerator:
+                                mattrs = m["attrs"]
+                                vname = mattrs.get(DW_AT_name, "VAR")
+                                vval = int(mattrs.get(DW_AT_const_value, 0))
+                                variants.append(EnumVariant(name=vname, value=vval))
+                        self.register_type(name=enum_name, kind=TypeKind.ENUM, byte_size=e_size, local_id=enum_name, variants=variants)
+                        enum_count += 1
+
+                    elif ctag == DW_TAG_union_type:
+                        un_name = cname or f"union_{coff}"
+                        un_size = cattrs.get(DW_AT_byte_size, 0)
+                        members: List[StructMember] = []
+                        for m in child.get("children", []):
+                            if m["tag"] == DW_TAG_member:
+                                mattrs = m["attrs"]
+                                mname = mattrs.get(DW_AT_name, "field")
+                                moff = mattrs.get(DW_AT_data_member_location, 0)
+                                msz = mattrs.get(DW_AT_byte_size, 4)
+                                mtype_ref = mattrs.get(DW_AT_type)
+                                mtype_name = cu_types.get(mtype_ref, "uint32_t") if mtype_ref is not None else "uint32_t"
+                                members.append(StructMember(name=mname, type_id=mtype_name, offset=moff, size=msz))
+                                member_count += 1
+                        if un_size == 0 and members:
+                            un_size = max(m.size for m in members)
+                        self.register_type(name=un_name, kind=TypeKind.UNION, byte_size=un_size, local_id=un_name, members=members)
+                        union_count += 1
+
+                    elif ctag == DW_TAG_structure_type:
+                        st_name = cname or f"struct_{coff}"
+                        st_size = cattrs.get(DW_AT_byte_size, 0)
+                        members = []
+                        for m in child.get("children", []):
+                            if m["tag"] == DW_TAG_member:
+                                mattrs = m["attrs"]
+                                mname = mattrs.get(DW_AT_name, "field")
+                                moff = mattrs.get(DW_AT_data_member_location, 0)
+                                msz = mattrs.get(DW_AT_byte_size, 4)
+                                mtype_ref = mattrs.get(DW_AT_type)
+                                mtype_name = cu_types.get(mtype_ref, "uint32_t") if mtype_ref is not None else "uint32_t"
+                                members.append(StructMember(name=mname, type_id=mtype_name, offset=moff, size=msz))
+                                member_count += 1
+                        self.register_type(name=st_name, kind=TypeKind.STRUCT, byte_size=st_size, local_id=st_name, members=members)
+                        struct_count += 1
+
+                    elif ctag == DW_TAG_subprogram:
+                        low_pc = cattrs.get(DW_AT_low_pc, 0)
+                        high_pc = cattrs.get(DW_AT_high_pc, 0)
+                        param_dies = [m for m in child.get("children", []) if m["tag"] == DW_TAG_formal_parameter]
+                        has_ret = DW_AT_type in cattrs
+                        if param_dies or has_ret:
+                            ret_ref = cattrs.get(DW_AT_type)
+                            ret_name = cu_types.get(ret_ref, "void") if ret_ref is not None else "void"
+                            params: List[FunctionParameter] = []
+                            for idx, p in enumerate(param_dies):
+                                pattrs = p.get("attrs", {})
+                                pname = pattrs.get(DW_AT_name, f"arg_{idx}")
+                                ptype_ref = pattrs.get(DW_AT_type)
+                                ptype_name = cu_types.get(ptype_ref, "uint32_t") if ptype_ref is not None else "uint32_t"
+                                params.append(FunctionParameter(name=pname, type_id=ptype_name))
+                            proto = FunctionPrototype(proto_id=f"proto_{cname}", return_type_id=ret_name, parameters=params)
+                            fn_type = self.register_type(name=f"fn_{cname}", kind=TypeKind.FUNCTION, byte_size=0, local_id=f"fn_{cname}", function_proto=proto)
+                            self.register_symbol(name=cname, address=low_pc, size=high_pc, section=".text", type_id=fn_type.type_id)
+                            function_count += 1
+                        else:
+                            self.register_symbol(name=cname, address=low_pc, size=high_pc, section=".text")
+
+            cu_offset = cu_end
+
+        # Parse .symtab for global/function/object symbols
+        if symtab and strtab:
+            num_syms = len(symtab) // 24
+            for s_i in range(num_syms):
+                s_off = s_i * 24
+                st_name, st_info = struct.unpack_from("<IB", symtab, s_off)
+                st_val, st_sz = struct.unpack_from("<QQ", symtab, s_off + 8)
+                if st_name != 0 and st_val != 0:
+                    end = strtab.find(b"\x00", st_name)
+                    sym_name = strtab[st_name:end].decode("utf-8", errors="replace") if end != -1 else ""
+                    sym_id = f"sym_{st_val:08x}_{sym_name}"
+                    if sym_id not in self.symbols:
+                        st_type = st_info & 0xF
+                        sec = ".text" if st_type == 2 else ".data"
+                        self.register_symbol(name=sym_name, address=st_val, size=st_sz, section=sec, symbol_id=sym_id)
+
+        return {
+            "types": len(self.canonical_types),
+            "symbols": len(self.symbols),
+            "structs": struct_count,
+            "members": member_count,
+            "enums": enum_count,
+            "unions": union_count,
+            "typedefs": typedef_count,
+            "pointers": pointer_count,
+            "functions": function_count,
+        }
+
+    def ingest_pdb_bytes(self, pdb_bytes: bytes, base_address: int = 0x140000000) -> Dict[str, int]:
+        """
+        Parses binary Microsoft PDB (MSF 7.00) file containers.
+        Reconstructs the Stream Directory and extracts:
+        - Stream 2 (TPI Stream): parses CodeView type records (LF_FIELDLIST, LF_MEMBER, LF_STRUCTURE, LF_ENUM, LF_ENUMERATE).
+        - Stream 3 / Stream 5 (DBI / Public Symbol Stream): parses S_PUB32 (0x110E) public symbol records.
+        Registers canonical types and symbols off-heap with deduplication.
+        """
+        MSF_MAGIC = b"Microsoft C/C++ MSF 7.00\r\n\x1a\x44\x53\x00\x00\x00"
+        if len(pdb_bytes) < 64 or pdb_bytes[:32] != MSF_MAGIC:
+            raise ValueError("Invalid Microsoft MSF 7.00 PDB magic header")
+
+        block_size, free_block_map, num_blocks, num_dir_bytes, reserved, block_map_addr = struct.unpack_from(
+            "<IIIIII", pdb_bytes, 32
+        )
+        if block_size == 0 or num_blocks == 0:
+            raise ValueError("Invalid MSF 7.00 superblock dimensions")
+
+        # Number of blocks required to store the directory
+        num_dir_blocks = (num_dir_bytes + block_size - 1) // block_size
+
+        # Read the directory block numbers from the block map
+        dir_block_nums: List[int] = []
+        map_offset = block_map_addr * block_size
+        for _ in range(num_dir_blocks):
+            b_num, = struct.unpack_from("<I", pdb_bytes, map_offset)
+            dir_block_nums.append(b_num)
+            map_offset += 4
+
+        # Assemble the directory bytes
+        dir_buf = bytearray()
+        for b_num in dir_block_nums:
+            b_off = b_num * block_size
+            dir_buf.extend(pdb_bytes[b_off : b_off + block_size])
+        dir_bytes = dir_buf[:num_dir_bytes]
+
+        # Parse Stream Directory:
+        # uint32 num_streams
+        # uint32 stream_sizes[num_streams]
+        # uint32 stream_blocks...
+        num_streams, = struct.unpack_from("<I", dir_bytes, 0)
+        stream_sizes: List[int] = []
+        cur_off = 4
+        for _ in range(num_streams):
+            sz, = struct.unpack_from("<I", dir_bytes, cur_off)
+            stream_sizes.append(sz)
+            cur_off += 4
+
+        streams: List[bytes] = []
+        for s_idx, sz in enumerate(stream_sizes):
+            if sz == 0 or sz == 0xFFFFFFFF:
+                streams.append(b"")
+                continue
+            num_s_blocks = (sz + block_size - 1) // block_size
+            s_blocks = []
+            for _ in range(num_s_blocks):
+                b_idx, = struct.unpack_from("<I", dir_bytes, cur_off)
+                s_blocks.append(b_idx)
+                cur_off += 4
+
+            s_data = bytearray()
+            for b_idx in s_blocks:
+                b_off = b_idx * block_size
+                s_data.extend(pdb_bytes[b_off : b_off + block_size])
+            streams.append(bytes(s_data[:sz]))
+
+        struct_count = 0
+        member_count = 0
+        enum_count = 0
+
+        # Parse Stream 2: TPI Stream (Type Information)
+        if len(streams) > 2 and len(streams[2]) >= 56:
+            tpi_stream = streams[2]
+            version, hdr_sz, ti_min, ti_max, records_len = struct.unpack_from("<IIIII", tpi_stream, 0)
+            rec_off = hdr_sz
+            end_off = min(hdr_sz + records_len, len(tpi_stream))
+
+            field_lists: Dict[int, List[StructMember]] = {}
+            field_enum_variants: Dict[int, List[EnumVariant]] = {}
+            type_names: Dict[int, str] = {}
+
+            def cv_type_to_str(ti: int) -> Tuple[str, int]:
+                if ti in type_names:
+                    return type_names[ti], 4
+                if ti == 0x0040:
+                    return "float", 4
+                if ti == 0x0041:
+                    return "double", 8
+                if ti == 0x0603:
+                    return "void*", 8
+                if ti == 0x0020:
+                    return "uint8_t", 1
+                if ti == 0x0021:
+                    return "uint16_t", 2
+                if ti == 0x0075:
+                    return "uint32_t", 4
+                if ti == 0x0077:
+                    return "uint64_t", 8
+                if ti == 0x0070:
+                    return "int8_t", 1
+                if ti == 0x0072:
+                    return "int16_t", 2
+                if ti == 0x0074:
+                    return "int32_t", 4
+                if ti == 0x0076:
+                    return "int64_t", 8
+                return f"type_0x{ti:x}", 4
+
+            curr_ti = ti_min
+            while rec_off + 4 <= end_off:
+                rec_len, = struct.unpack_from("<H", tpi_stream, rec_off)
+                if rec_len < 2 or rec_off + 2 + rec_len > len(tpi_stream):
+                    break
+                leaf, = struct.unpack_from("<H", tpi_stream, rec_off + 2)
+                body = tpi_stream[rec_off + 4 : rec_off + 2 + rec_len]
+                next_rec_off = rec_off + 2 + rec_len
+
+                if leaf == 0x1203:  # LF_FIELDLIST
+                    sub_off = 0
+                    m_list: List[StructMember] = []
+                    v_list: List[EnumVariant] = []
+                    while sub_off + 4 <= len(body):
+                        sub_leaf, = struct.unpack_from("<H", body, sub_off)
+                        if sub_leaf == 0x150D:  # LF_MEMBER
+                            attr, type_ti = struct.unpack_from("<HI", body, sub_off + 2)
+                            curr = sub_off + 8
+                            if curr + 2 > len(body):
+                                break
+                            f_offset, = struct.unpack_from("<H", body, curr)
+                            if f_offset < 0x8000:
+                                curr += 2
+                            elif f_offset == 0x8004 and curr + 6 <= len(body):
+                                curr += 2
+                                f_offset, = struct.unpack_from("<I", body, curr)
+                                curr += 4
+                            else:
+                                curr += 2
+                            null_pos = body.find(b"\x00", curr)
+                            m_name = body[curr:null_pos].decode("utf-8", errors="replace") if null_pos != -1 else "field"
+                            curr = (null_pos + 1 if null_pos != -1 else len(body))
+                            curr = (curr + 3) & ~3
+                            t_name, t_size = cv_type_to_str(type_ti)
+                            m_list.append(StructMember(name=m_name, type_id=t_name, offset=f_offset, size=t_size))
+                            sub_off = curr
+                        elif sub_leaf == 0x1502:  # LF_ENUMERATE
+                            attr, = struct.unpack_from("<H", body, sub_off + 2)
+                            curr = sub_off + 4
+                            if curr + 2 > len(body):
+                                break
+                            v_val, = struct.unpack_from("<H", body, curr)
+                            if v_val < 0x8000:
+                                curr += 2
+                            elif v_val == 0x8004 and curr + 6 <= len(body):
+                                curr += 2
+                                v_val, = struct.unpack_from("<I", body, curr)
+                                curr += 4
+                            else:
+                                curr += 2
+                            null_pos = body.find(b"\x00", curr)
+                            v_name = body[curr:null_pos].decode("utf-8", errors="replace") if null_pos != -1 else "VAR"
+                            curr = (null_pos + 1 if null_pos != -1 else len(body))
+                            curr = (curr + 3) & ~3
+                            v_list.append(EnumVariant(name=v_name, value=v_val))
+                            sub_off = curr
+                        else:
+                            sub_off += 1
+
+                    field_lists[curr_ti] = m_list
+                    field_enum_variants[curr_ti] = v_list
+                    curr_ti += 1
+
+                elif leaf == 0x1505:  # LF_STRUCTURE
+                    if len(body) >= 16:
+                        count, prop, flist_ti, derived, vshape = struct.unpack_from("<HHIII", body, 0)
+                        curr = 16
+                        st_size, = struct.unpack_from("<H", body, curr)
+                        if st_size < 0x8000:
+                            curr += 2
+                        elif st_size == 0x8004 and curr + 6 <= len(body):
+                            curr += 2
+                            st_size, = struct.unpack_from("<I", body, curr)
+                            curr += 4
+                        else:
+                            curr += 2
+                        null_pos = body.find(b"\x00", curr)
+                        st_name = body[curr:null_pos].decode("utf-8", errors="replace") if null_pos != -1 else f"struct_{curr_ti}"
+                        members = field_lists.get(flist_ti, [])
+                        member_count += len(members)
+                        self.register_type(name=st_name, kind=TypeKind.STRUCT, byte_size=st_size, local_id=st_name, members=members)
+                        type_names[curr_ti] = st_name
+                        struct_count += 1
+                    curr_ti += 1
+
+                elif leaf == 0x1507:  # LF_ENUM
+                    if len(body) >= 12:
+                        count, prop, utype, flist_ti = struct.unpack_from("<HHII", body, 0)
+                        curr = 12
+                        null_pos = body.find(b"\x00", curr)
+                        enum_name = body[curr:null_pos].decode("utf-8", errors="replace") if null_pos != -1 else f"enum_{curr_ti}"
+                        variants = field_enum_variants.get(flist_ti, [])
+                        self.register_type(name=enum_name, kind=TypeKind.ENUM, byte_size=4, local_id=enum_name, variants=variants)
+                        type_names[curr_ti] = enum_name
+                        enum_count += 1
+                    curr_ti += 1
+                else:
+                    curr_ti += 1
+
+                rec_off = next_rec_off
+
+        # Parse Symbols: parse real DBI header and inspect referenced symbol streams
+        streams_to_check: Set[int] = set()
+        if len(streams) > 3 and len(streams[3]) >= 24:
+            # Real DBI Header (64 bytes):
+            # VersionSignature: i32, VersionHeader: u32, Age: u32, GlobalStreamIndex: u16, BuildNumber: u16, PublicStreamIndex: u16
+            sig, ver, age, gsym_idx, bld, psym_idx = struct.unpack_from("<iIIHHH", streams[3], 0)
+            if 0 < psym_idx < len(streams) and psym_idx != 0xFFFF:
+                streams_to_check.add(psym_idx)
+            if 0 < gsym_idx < len(streams) and gsym_idx != 0xFFFF:
+                streams_to_check.add(gsym_idx)
+        if not streams_to_check:
+            if len(streams) > 5:
+                streams_to_check.add(5)
+            elif len(streams) > 3:
+                streams_to_check.add(3)
+
+        for s_idx in streams_to_check:
+            s_bytes = streams[s_idx]
+            if len(s_bytes) < 8:
+                continue
+
+            off = 0
+            if len(s_bytes) >= 16:
+                h0, h1, h2 = struct.unpack_from("<III", s_bytes, 0)
+                if h2 == len(s_bytes) - 12:
+                    off = 12
+
+            while off + 4 <= len(s_bytes):
+                rec_len, = struct.unpack_from("<H", s_bytes, off)
+                if rec_len < 4 or off + 2 + rec_len > len(s_bytes):
+                    off += 2
+                    continue
+                rec_type, = struct.unpack_from("<H", s_bytes, off + 2)
+                if rec_type == 0x110E:  # S_PUB32
+                    rec_body = s_bytes[off + 4 : off + 2 + rec_len]
+                    sym_name = ""
+                    rva = 0
+                    if len(rec_body) >= 10:
+                        pub_flags, rva, seg = struct.unpack_from("<IIH", rec_body, 0)
+                        null_idx = rec_body.find(b"\x00", 10)
+                        if null_idx != -1:
+                            sym_name = rec_body[10:null_idx].decode("utf-8", errors="replace")
+                    if not sym_name and len(rec_body) >= 8:
+                        flags, rva = struct.unpack_from("<HI", rec_body, 0)
+                        null_idx = rec_body.find(b"\x00", 8)
+                        if null_idx != -1:
+                            sym_name = rec_body[8:null_idx].decode("utf-8", errors="replace")
+                    if sym_name:
+                        self.register_symbol(
+                            name=sym_name,
+                            address=base_address + rva,
+                            size=0,
+                            section=".text",
+                        )
+                    off += 2 + rec_len
+                else:
+                    off += 2 + rec_len
+
+        return {
+            "types": len(self.canonical_types),
+            "symbols": len(self.symbols),
+            "structs": struct_count,
+            "members": member_count,
+            "enums": enum_count,
+        }
+
 
 # ==============================================================================
 # Ultra-Fast SQLite & JSON Off-Heap Type Store
@@ -706,6 +1428,33 @@ class OffHeapTypeStore:
             )
 
         self._conn.commit()
+
+    def ingest_dwarf5_elf(self, elf_bytes: bytes, dedup: Optional[TypeDeduplicator] = None) -> Dict[str, int]:
+        """
+        Parses a 64-bit ELF container with DWARF 5 sections directly into the off-heap store.
+        Uses structural deduplication to eliminate redundant types before SQLite insertion.
+        """
+        if dedup is None:
+            dedup = TypeDeduplicator()
+        stats = dedup.ingest_dwarf5_elf_bytes(elf_bytes)
+        self.ingest_from_deduplicator(dedup)
+        return stats
+
+    def ingest_pdb(
+        self,
+        pdb_bytes: bytes,
+        dedup: Optional[TypeDeduplicator] = None,
+        base_address: int = 0x140000000,
+    ) -> Dict[str, int]:
+        """
+        Parses a Microsoft MSF 7.00 PDB container directly into the off-heap store.
+        Extracts TPI type records (structs, members, enums) and DBI/Public symbol records.
+        """
+        if dedup is None:
+            dedup = TypeDeduplicator()
+        stats = dedup.ingest_pdb_bytes(pdb_bytes, base_address=base_address)
+        self.ingest_from_deduplicator(dedup)
+        return stats
 
     # --- Query Methods ---
 
