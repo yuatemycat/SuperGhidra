@@ -150,63 +150,53 @@ Test status (2026-10-18, Windows 11 x64): **SuperGhidra 376 passed** (`python -m
 
 ---
 
-## 📁 Repository Structure
+## 📁 Repository Structure (Progressive Discovery Layout)
+
+> **AI Agents:** Start at [`AGENTS.md`](AGENTS.md) (<150 lines) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for domain-scoped routing and `code-review-graph` MCP queries.
 
 ```
 E:\02_Projects\SuperGhidra\
-├── __init__.py                           # Unified module exports (Phase 1, 2, 3, Frontiers 1-6)
+├── AGENTS.md                             # Progressive discovery entry point & decision matrix (<150 lines)
+├── ARCHITECTURE.md                       # Layered domain map & Mermaid architecture diagram (<150 lines)
+├── README.md                             # Public project documentation & benchmarks
+├── PLAN.md                               # Architectural roadmap & status
+├── pyproject.toml                        # Canonical package + backward-compat shim definitions
+├── __init__.py                           # Root package exports
 │
-├── storage_compression_prototype.py      # LZ4/Zstd 16 KB block codec & 64-bit slot directory
-├── ghidra_oracle.py                      # Persistent lock-free TCP daemon (Port 5073) & CLI
-├── headless_analyzer_tuner.py            # PreScript generator disabling FindNoReturnFunctionsAnalyzer
-├── gpu_adrp_scanner.py                   # WGPU / CUDA / SIMD ARM64 ADRP+ADD pattern scanner
-├── binary_diff_engine.py                 # Batched cosine-similarity diffing & struct offset tracking
-├── evidence_ledger.py                    # ReconstructionObligationLedger formal invariant verification
+├── superghidra/                          # Canonical 7-domain package root
+│   ├── __init__.py                       # PEP 562 lazy package exports
+│   ├── core/                             # ghidra_oracle, resource_governor, shm_decompiler_bridge, dependency_cache_dag, headless_analyzer_tuner, cross_platform_headless_harness, native_decompiler_pgo_builder + README.md
+│   ├── storage/                          # storage_compression_prototype, ghidra_extension_packager + README.md
+│   ├── acceleration/                     # gpu_adrp_scanner, gpu_function_seeder + README.md
+│   ├── diff/                             # binary_diff_engine, struct_shift_migrator, evidence_ledger, semantic_delta_log + README.md
+│   ├── lifters/                          # pcode_lifter_bridge, smt_pcode_verifier, arm_thumb_decode, x86_decode + README.md
+│   ├── formats/                          # binary_loader, dwarf_pdb_preindexer, synthetic_symbol_exporter, msvc_class_recovery, serialize_trace, mfc_archive + README.md
+│   └── integrations/                     # apk_jni_cross_referencer, emulator_memory_sidecar, colab_cloud_orchestrator, neural_decompiler_pipeline + README.md
 │
-├── shm_decompiler_bridge.py              # Zero-copy shared-memory view & lock-free ring buffer
-├── gpu_function_seeder.py                # Parallel ARM64 instruction classifier & function seeder
-├── dependency_cache_dag.py               # Call & type dependency DAG with 1-hop cache invalidation
-├── semantic_delta_log.py                 # Git-mergeable .ghidra-delta.jsonl append-only event log
-├── dwarf_pdb_preindexer.py               # Off-heap DWARF 5 / PDB structural deduplicator & ELF ingester
+├── tests/                                # Domain-isolated Pytest suites (402 tests across 25 suites)
+│   ├── conftest.py
+│   ├── core/                             # test_oracle_governor_cache, test_resource_governor, test_dag_and_delta, test_g1_regressions, test_phase2_suite
+│   ├── storage/                          # test_storage_and_tuner
+│   ├── acceleration/                     # test_ipc_and_seeder, test_superghidra_suite, test_g2b_regressions
+│   ├── diff/                             # test_diff_and_ledger, test_multiarch
+│   ├── lifters/                          # test_arm_thumb_decode, test_x86_decode, test_symbol_and_smt, test_g2_regressions
+│   ├── formats/                          # test_binary_loader, test_msvc_class_recovery, test_serialize_trace, test_g3b_regressions
+│   └── integrations/                     # test_extension_and_cloud, test_sidecar_and_migrator, test_reformation_spec, test_spec_reformation_suite, test_g3a_regressions, test_mcp_38_tools
 │
-├── apk_jni_cross_referencer.py           # Unified APK DEX + NDK RegisterNatives cross-referencer
-├── cross_platform_headless_harness.py    # Multi-OS & Colab headless execution harness
-├── pcode_lifter_bridge.py                # Expanded 22-class Zero-JVM ARM64 P-Code IR lifter
-├── native_decompiler_pgo_builder.py      # Native C++ decompiler LTO/PGO builder & RuleFoldJniBridgeThunk
-├── neural_decompiler_pipeline.py         # Two-phase Skeleton-to-Skin neural lifter & LLMDecompilerClient
-├── resource_governor.py                  # Speed-vs-CPU Governor (eco/balanced/turbo/auto)
+├── templates/                            # Reusable developer & AI agent scaffolds
+│   ├── SUBSYSTEM_DOC_TEMPLATE.md
+│   ├── NEW_MODULE_TEMPLATE.py
+│   ├── NEW_MCP_TOOL_TEMPLATE.py
+│   ├── TEST_CASE_TEMPLATE.py
+│   └── AGENT_TASK_BRIEF_TEMPLATE.md
 │
-├── synthetic_symbol_exporter.py          # Frontier 1: Standalone DWARF 5, PDB, Breakpad & Map exporter
-├── smt_pcode_verifier.py                 # Frontier 2: Z3 SMT-backed decompilation equivalence verifier
-├── ghidra_extension_packager.py          # Frontier 3: Java extension packager & ZIP integrity verifier
-├── colab_cloud_orchestrator.py           # Frontier 4: Cloud Colab TPU v5e / T4 pipeline orchestrator
-├── emulator_memory_sidecar.py            # Frontier 5: Live Android emulator memory sidecar & FleetGuard
-├── struct_shift_migrator.py              # Frontier 6: Cross-version automated struct shift migrator
+├── docs/                                 # Architecture specifications & benchmark reports
+│   ├── benchmarks/                       # BENCHMARK_REPORT.txt, PHASE2_BENCHMARK_REPORT.txt, SPEC_REFORMATION_BENCHMARK_REPORT.txt
+│   └── specs/                            # GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md(1).docx
 │
 ├── ghidra_extension_skeleton/            # Frontier 3: In-engine Java BufferFile extension source tree
-│   ├── src/main/java/superghidra/codec/  # CompressionAlgorithm, SuperGhidraBufferFileAdapter, Plugin
-│   ├── extension.properties              # Extension metadata (Ghidra 12.1-DEV compatible)
-│   ├── Module.manifest                   # Ghidra module manifest
-│   └── build.gradle                      # Gradle build script for extension distribution
-│
-├── dist/                                 # Built extension distribution archives
-│   └── SuperGhidraCodec-1.0.0.zip        # Certified Ghidra extension distribution package
-│
-├── test_superghidra.py                   # Phase 1 unit tests (10 tests)
-├── test_superghidra_suite.py             # Phase 1 benchmark & regression suite (9 tests)
-├── test_ipc_and_seeder.py                # SHM bridge and GPU seeder test suite (14 tests)
-├── test_dag_and_delta.py                 # Dependency DAG and Semantic Delta test suite (10 tests)
-├── test_phase2_suite.py                  # Phase 2 integrated test suite (17 tests)
-├── test_spec_reformation_suite.py        # Sections 5-7 spec test suite (14 tests)
-├── test_resource_governor.py             # Section 8 Resource Governor test suite (6 tests)
-├── test_oracle_governor_cache.py         # Section 8 Governor & L2 Cache integration tests (28 tests)
-├── test_extension_and_cloud.py           # Frontier 3 & 4 Extension & Colab Orchestrator tests (16 tests)
-├── test_symbol_and_smt.py                # Frontier 1 & 2 DWARF/PDB & Z3 SMT verifier tests (25 tests)
-├── test_sidecar_and_migrator.py          # Frontier 5 & 6 Sidecar & Struct Shift Migrator tests (18 tests)
-│
-├── BENCHMARK_REPORT.txt                  # Phase 1 storage benchmark figures
-├── PHASE2_BENCHMARK_REPORT.txt           # Phase 2 consolidated benchmark figures
-└── SPEC_REFORMATION_BENCHMARK_REPORT.txt # Master benchmark and frontier verification report
+├── dist/                                 # Built extension distribution archives (SuperGhidraCodec-1.0.0.zip)
+└── *.py                                  # Zero-overhead root backward-compatibility shims for pyghidra-mcp & external callers
 ```
 
 ---
@@ -305,7 +295,8 @@ print("Synthetic DWARF5 ELF size:", len(dwarf_bytes), "bytes")
 ---
 
 ## 📜 References & Specifications
-- `GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md(1).docx` (in the repository root)
-- [`SPEC_REFORMATION_BENCHMARK_REPORT.txt`](file:///E:/02_Projects\SuperGhidra/SPEC_REFORMATION_BENCHMARK_REPORT.txt)
-- [`PHASE2_BENCHMARK_REPORT.txt`](file:///E:/02_Projects\SuperGhidra/PHASE2_BENCHMARK_REPORT.txt)
-- [`BENCHMARK_REPORT.txt`](file:///E:/02_Projects\SuperGhidra/BENCHMARK_REPORT.txt)
+- [`AGENTS.md`](AGENTS.md) & [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- [`docs/specs/GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md(1).docx`](docs/specs/GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md(1).docx)
+- [`docs/benchmarks/SPEC_REFORMATION_BENCHMARK_REPORT.txt`](docs/benchmarks/SPEC_REFORMATION_BENCHMARK_REPORT.txt)
+- [`docs/benchmarks/PHASE2_BENCHMARK_REPORT.txt`](docs/benchmarks/PHASE2_BENCHMARK_REPORT.txt)
+- [`docs/benchmarks/BENCHMARK_REPORT.txt`](docs/benchmarks/BENCHMARK_REPORT.txt)
