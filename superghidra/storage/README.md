@@ -1,0 +1,22 @@
+# `superghidra.storage` — LZ4/Zstd Block Codec, 64-bit Slot Directory & Java BufferFile Extension
+
+> **Progressive Discovery Index:** Read this before inspecting files in `superghidra/storage/` or `ghidra_extension_skeleton/`.
+
+## 1. Domain Modules & Primary Exports
+
+| Module | Primary Exports | Purpose |
+| :--- | :--- | :--- |
+| [`storage_compression_prototype.py`](storage_compression_prototype.py) | `DataBuffer`, `SlotDirectory`, `SlotDirectoryEntry`, `CompressedLocalManagedBufferFile`, `StorageCompressionBenchmark`, `GhidraPageSimulator` | 16 KB block compression (LZ4 for in-flight working buffers, Zstd L3 for snapshots), 20-byte 64-bit slot directory, and Python `<->` Java `.sgdb` container interop. |
+| [`ghidra_extension_packager.py`](ghidra_extension_packager.py) | `GhidraExtensionPackager`, `ExtensionValidationError` | Compiles `ghidra_extension_skeleton/` Java sources against Ghidra framework JARs, packages `dist/SuperGhidraCodec-1.0.0.zip`, verifies ZIP integrity, and installs into Ghidra `Extensions/`. |
+
+## 2. Key Data Structures & Invariants
+- **`SlotDirectoryEntry` Layout (20 Bytes):** Packed `<IQII` (`block_id: uint32`, `offset: uint64`, `compressed_len: uint32`, `original_len: uint32`), eliminating sparse B-tree page bloat (~79% LZ4 / ~86% Zstd reduction).
+- **Java `.sgdb` Interop Container (`SGDB` Magic):**
+  - Append-only frame writes with crash-safe two-phase `sync()` (slot directory + parameters + free-list written first, `fsync()`, then header directory pointer updated, `fsync()`).
+  - Frame compression flag always records the actual codec stored (`NONE=0`, `LZ4=1`, `ZSTD=2`), falling back to uncompressed when random data is incompressible.
+- **Extension Structure Invariant:** `SuperGhidraCodec-1.0.0.zip` must root all entries under `SuperGhidraCodec/` with `extension.properties`, `Module.manifest`, and `lib/SuperGhidraCodec.jar`.
+
+## 3. Quick-Test Command
+```powershell
+python -m pytest tests/storage -q
+```

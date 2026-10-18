@@ -245,11 +245,11 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
   - Full MCP tool exposure with `migrate_struct_shifts` registered and schema distributed.
 
 ### Frontier 7: Multi-Architecture Binaries & Windows Class Recovery
-- [x] **Unified loader** ([`binary_loader.py`](binary_loader.py)): ELF 32/64 LE/BE, PE32/PE32+ EXE/DLL, Mach-O thin/universal; exports, imports, function starts, PDB path; stripped-section-table fallback.
-- [x] **x86 decoder** ([`x86_decode.py`](x86_decode.py)): 16/32/64-bit, VEX/EVEX; Capstone-verified lengths. Diff engine and struct migrator routed through loader + decoder (32-bit x86, SSE/AVX accesses, DLL export-name matching).
-- [x] **MSVC RTTI + MFC CRuntimeClass recovery** ([`msvc_class_recovery.py`](msvc_class_recovery.py)) with `Serialize()` resolution; MCP tools `inspect_binary`, `recover_cpp_classes`.
-- [ ] ARM32/Thumb-2 decoding for CFG extraction, struct migration and seeding (loader already identifies ARM/Thumb binaries).
-- [ ] CArchive stream decoder driven by recovered `Serialize()` layouts (LiquidWork integration).
+- [x] **Unified loader** ([`binary_loader.py`](file:///E:/02_Projects/SuperGhidra/binary_loader.py)): ELF 32/64 LE/BE, PE32/PE32+ EXE/DLL, Mach-O thin/universal; exports, imports, function starts, PDB path; stripped-section-table fallback.
+- [x] **x86 decoder** ([`x86_decode.py`](file:///E:/02_Projects/SuperGhidra/x86_decode.py)): 16/32/64-bit, VEX/EVEX; Capstone-verified lengths. Diff engine and struct migrator routed through loader + decoder (32-bit x86, SSE/AVX accesses, DLL export-name matching).
+- [x] **MSVC RTTI + MFC CRuntimeClass recovery** ([`msvc_class_recovery.py`](file:///E:/02_Projects/SuperGhidra/msvc_class_recovery.py)) with `Serialize()` resolution; MCP tools `inspect_binary`, `recover_cpp_classes`.
+- [x] **ARM32/Thumb-2 decoder** ([`arm_thumb_decode.py`](file:///E:/02_Projects/SuperGhidra/arm_thumb_decode.py)): 16-bit Thumb, 32-bit Thumb-2, 32-bit ARM state; memory displacement extraction (`LDR`/`STR`/`LDRB`/`STRB`/`LDRH`/`STRH`/`LDRD`/`STRD`), branch and call target resolution, prologue/epilogue detection. Integrated into [`struct_shift_migrator.py`](file:///E:/02_Projects/SuperGhidra/struct_shift_migrator.py) and [`binary_diff_engine.py`](file:///E:/02_Projects/SuperGhidra/binary_diff_engine.py) (`extract_cfgs_from_arm32_bytes`).
+- [x] **CArchive stream decoder driven by recovered `Serialize()` layouts (LiquidWork integration)** ([`src/mfc_decoder.rs`](file:///E:/02_Projects/LiquidWork/src/mfc_decoder.rs)): pure Rust deserializer, schema-driven layout engine, SolidWorks `Contents/Config-0-ResolvedFeatures` bidirectional extractor and in-place dimension mutator.
 
 ---
 

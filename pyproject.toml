@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "superghidra"
-version = "0.1.0"
+version = "0.2.0"
 description = "SuperGhidra: High-Performance Ghidra Architecture & GPU Acceleration Suite"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,8 +28,19 @@ all = [
 ]
 
 [tool.setuptools]
+packages = [
+    "superghidra",
+    "superghidra.core",
+    "superghidra.storage",
+    "superghidra.acceleration",
+    "superghidra.diff",
+    "superghidra.lifters",
+    "superghidra.formats",
+    "superghidra.integrations",
+]
 py-modules = [
     "apk_jni_cross_referencer",
+    "arm_thumb_decode",
     "binary_diff_engine",
     "binary_loader",
     "colab_cloud_orchestrator",
@@ -60,6 +71,7 @@ py-modules = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["."]
+testpaths = ["tests"]
+pythonpath = [".", "tests/formats"]
 python_files = ["test_*.py"]
-norecursedirs = ["scratch", ".*", "build", "dist", "*.egg"]
+norecursedirs = ["scratch", ".*", "build", "dist", "*.egg", "templates", "docs", "ghidra_extension_skeleton", "scripts"]
