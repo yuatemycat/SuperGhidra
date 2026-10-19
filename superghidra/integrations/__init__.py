@@ -37,6 +37,23 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "DecompiledSkeleton": ("superghidra.integrations.neural_decompiler_pipeline", "DecompiledSkeleton"),
     "NeuralPrediction": ("superghidra.integrations.neural_decompiler_pipeline", "NeuralPrediction"),
     "VerifiedNeuralCommit": ("superghidra.integrations.neural_decompiler_pipeline", "VerifiedNeuralCommit"),
+    "DLiftRewardEngine": ("superghidra.integrations.d_lift_verifier", "DLiftRewardEngine"),
+    "DLiFTPipeline": ("superghidra.integrations.d_lift_verifier", "DLiFTPipeline"),
+    "InMemClangSyntaxGate": ("superghidra.integrations.d_lift_verifier", "InMemClangSyntaxGate"),
+    "ClangSyntaxGate": ("superghidra.integrations.d_lift_verifier", "ClangSyntaxGate"),
+    "Z3SemanticEquivalenceGate": ("superghidra.integrations.d_lift_verifier", "Z3SemanticEquivalenceGate"),
+    "SemanticEquivalenceGate": ("superghidra.integrations.d_lift_verifier", "SemanticEquivalenceGate"),
+    "ReadabilityGate": ("superghidra.integrations.d_lift_verifier", "ReadabilityGate"),
+    "GRPORewardManager": ("superghidra.integrations.d_lift_verifier", "GRPORewardManager"),
+    "DScoreResult": ("superghidra.integrations.d_lift_verifier", "DScoreResult"),
+    "DScoreReport": ("superghidra.integrations.d_lift_verifier", "DScoreReport"),
+    "SyntaxCheckResult": ("superghidra.integrations.d_lift_verifier", "SyntaxCheckResult"),
+    "SemanticCheckResult": ("superghidra.integrations.d_lift_verifier", "SemanticCheckResult"),
+    "ReadabilityMetrics": ("superghidra.integrations.d_lift_verifier", "ReadabilityMetrics"),
+    "CFunctionSymbolicLifter": ("superghidra.integrations.d_lift_verifier", "CFunctionSymbolicLifter"),
+    "build_dlift_benchmark_candidates": ("superghidra.integrations.d_lift_verifier", "build_dlift_benchmark_candidates"),
+    "symbolic_write_retry_oracle": ("superghidra.integrations.d_lift_verifier", "symbolic_write_retry_oracle"),
+    "run_dlift_verification_suite": ("superghidra.integrations.d_lift_verifier", "run_dlift_verification_suite"),
 }
 
 __all__ = list(_EXPORTS.keys()) + ["build_synthetic_dex_bytes", "build_synthetic_jni_elf_bytes"]

@@ -10,6 +10,8 @@
 | [`emulator_memory_sidecar.py`](emulator_memory_sidecar.py) | `EmulatorFleetGuard`, `FleetSafetyViolationError`, `BaseMemoryReader`, `Win32ProcessMemoryReader`, `FridaMemoryReader`, `MockMemoryReader`, `verify_vtable_pointer`, `verify_struct_field`, `extract_dynamic_encryption_keys`, `EmulatorSidecarShmServer`, `EmulatorSidecarShmClient` | Live/mock process memory introspection sidecar with strict fleet isolation, VTable/struct pointer verification, Shannon entropy key extraction, and SHM streaming. |
 | [`colab_cloud_orchestrator.py`](colab_cloud_orchestrator.py) | `ColabCloudOrchestrator`, `CloudConfig`, `CloudRuntimeTier` | Google Colab Cloud TPU v5e / NVIDIA T4 pipeline orchestrator with ELF64 `.text` slicing (`extract_elf_executable_slice`), boundary-aware seeding, and HuggingFace Hub streaming. |
 | [`neural_decompiler_pipeline.py`](neural_decompiler_pipeline.py) | `NeuralDecompilerPipeline`, `LLMDecompilerClient`, `SkeletonExtractor`, `DecompiledSkeleton`, `NeuralPrediction`, `VerifiedNeuralCommit` | Two-phase Skeleton-to-Skin neural decompiler normalizing raw C skeletons, querying OpenAI/vLLM/Ollama/Gemini HTTP endpoints, and gating commits via `EvidenceLedger`. |
+| [`d_lift_verifier.py`](d_lift_verifier.py) | `DLiftRewardEngine`, `InMemClangSyntaxGate`, `Z3SemanticEquivalenceGate`, `ReadabilityGate`, `GRPORewardManager`, `DScoreResult` | D-LiFT + Z3 self-verifying neural decompiler backend with 3-gate hierarchical reward (`max(R_syn) < min(R_sem) < min(R_read)`), constant-drift counterexamples, and GRPO advantage normalization. |
+
 
 ## 2. Key Data Structures & Invariants
 - **`EmulatorFleetGuard` Safety Invariant:**
