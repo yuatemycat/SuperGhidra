@@ -33,6 +33,25 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "CCodeParser": ("superghidra.lifters.smt_pcode_verifier", "CCodeParser"),
     "CSymbolicEvaluator": ("superghidra.lifters.smt_pcode_verifier", "CSymbolicEvaluator"),
     "SMTPcodeVerifier": ("superghidra.lifters.smt_pcode_verifier", "SMTPcodeVerifier"),
+    # E-Graph & MLIR Pipeline (Section 1)
+    "StagedPCodePassManager": ("superghidra.lifters.egraph_mlir_pipeline", "StagedPCodePassManager"),
+    "EGraphMBADeobfuscatorPass": ("superghidra.lifters.egraph_mlir_pipeline", "EGraphMBADeobfuscatorPass"),
+    "SymbolicCFFDeflattenerPass": ("superghidra.lifters.egraph_mlir_pipeline", "SymbolicCFFDeflattenerPass"),
+    "MLIRGotoFreeRestructurer": ("superghidra.lifters.egraph_mlir_pipeline", "MLIRGotoFreeRestructurer"),
+    "EGraph": ("superghidra.lifters.egraph_mlir_pipeline", "EGraph"),
+    "EquivalenceProver": ("superghidra.lifters.egraph_mlir_pipeline", "EquivalenceProver"),
+    "PCodeMaturityStage": ("superghidra.lifters.egraph_mlir_pipeline", "PCodeMaturityStage"),
+    "ZeroCopyShmBridge": ("superghidra.lifters.egraph_mlir_pipeline", "ZeroCopyShmBridge"),
+    "ShmVarnodeRecord": ("superghidra.lifters.egraph_mlir_pipeline", "ShmVarnodeRecord"),
+    "ENode": ("superghidra.lifters.egraph_mlir_pipeline", "ENode"),
+    "EClassData": ("superghidra.lifters.egraph_mlir_pipeline", "EClassData"),
+    "ExprTree": ("superghidra.lifters.egraph_mlir_pipeline", "ExprTree"),
+    "PCodeBasicBlock": ("superghidra.lifters.egraph_mlir_pipeline", "PCodeBasicBlock"),
+    "PCodeFunction": ("superghidra.lifters.egraph_mlir_pipeline", "PCodeFunction"),
+    "RegionNode": ("superghidra.lifters.egraph_mlir_pipeline", "RegionNode"),
+    "BlockRegion": ("superghidra.lifters.egraph_mlir_pipeline", "BlockRegion"),
+    "SeqRegion": ("superghidra.lifters.egraph_mlir_pipeline", "SeqRegion"),
+    "IfElseRegion": ("superghidra.lifters.egraph_mlir_pipeline", "IfElseRegion"),
 }
 
 __all__ = list(_EXPORTS.keys())
