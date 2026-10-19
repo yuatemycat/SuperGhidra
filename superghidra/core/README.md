@@ -14,6 +14,7 @@
 | [`cross_platform_headless_harness.py`](cross_platform_headless_harness.py) | `HeadlessProfile`, `HeadlessEnvironmentConfigurator` | Multi-OS (`PeLoader`/`ElfLoader`), RAM disk (`/dev/shm`), JADX, and Colab hardware tier flags. |
 | [`native_decompiler_pgo_builder.py`](native_decompiler_pgo_builder.py) | `DecompilerBuildConfig`, `NativeDecompilerPGOBuilder` | CMake/Ninja LTO + 2-phase PGO builder for native `decompile` and `RuleFoldJniBridgeThunk` C++ patches. |
 | [`evidence_ledger.py`](evidence_ledger.py) | `ReconstructionObligationLedger`, `ProofObligation`, `VTableSlotVerifier`, `FieldDisplacementVerifier`, `AllocationSizeVerifier` | Re-export of [`superghidra.diff.evidence_ledger`](../diff/evidence_ledger.py) for core consumers. |
+| [`mitigation_roadmap_engine.py`](mitigation_roadmap_engine.py) | `GNNPCodeTensorEncoder`, `LeafXRefInversionEngine`, `ABIShimAndStructShiftAdapter`, `EmulatorMemorySidecar`, `OffHeapDWARF5SQLiteIndexer`, `MSVCAndMFCRecoveryEngine`, `ResourceGovernorAndCacheDAG` | Countermeasures M1–M7 for Section 5 IDA Pro parity gap mitigations. |
 
 ## 2. Key Data Structures & Invariants
 - **Read-Only Project Invariant:** `GhidraOracleSession` opens `.rep` databases exclusively with `readOnly=True`. Mutations are persisted to `WriteOverlay` (`ghidra_overlay.json`) and `SemanticDeltaLog` (`.ghidra-delta.jsonl`).
