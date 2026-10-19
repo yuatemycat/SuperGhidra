@@ -16,16 +16,16 @@ Before reading raw `.py` files, query the structural AST graph via `code-review-
 ```
 SuperGhidra/
 ├── superghidra/                  # Canonical Python package
-│   ├── core/                     # Daemon, Oracle, Resource Governor, SHM IPC, Cache DAG, Headless, Evidence Ledger
+│   ├── core/                     # Daemon, Oracle, Resource Governor, SHM IPC, Cache DAG, Headless, Parity Engine (Gaps 1-7 & Sparse Datalog VSA)
 │   ├── storage/                  # LZ4/Zstd 16 KB Codec, 64-bit Slot Directory, Java BufferFile Extension Packager
 │   ├── acceleration/             # WGPU/CUDA/SIMD ARM64 ADRP Scanner, Parallel Function Seeder
-│   ├── diff/                     # Batched Cosine CFG Diff Engine, Struct Shift Migrator, Evidence Ledger, Delta Log
-│   ├── lifters/                  # Zero-JVM ARM64/x86_64 P-Code Lifter, Z3 SMT Verifier, ARM/Thumb & x86 Decoders
+│   ├── diff/                     # Batched Cosine CFG Diff Engine, Struct Shift Migrator, CRDT Swarms, Next-Gen Leapfrog Engine
+│   ├── lifters/                  # Zero-JVM ARM64/x86_64 P-Code Lifter, Z3 SMT Verifier, E-Graph MBA Simplifier, MLIR Goto-Free Restructurer
 │   ├── formats/                  # Multi-Arch Binary Loader, DWARF/PDB Pre-indexer, Symbol Exporters, MSVC/MFC CArchive
 │   └── integrations/             # APK JNI Cross-Referencer, Emulator Memory Sidecar, Colab Orchestrator, Neural Pipeline
-├── tests/<domain>/               # Domain-isolated Pytest suites (402 tests across 25 test files)
+├── tests/<domain>/               # Domain-isolated Pytest suites (527 tests, 45 subtests across 34 test files)
 ├── templates/                    # Standard scaffolds for modules, MCP tools, tests, docs, and agent briefs
-├── docs/{benchmarks,specs}/      # Empirical benchmark reports and architectural specifications
+├── docs/{benchmarks,specs}/      # Empirical benchmark reports, gap analysis, and architectural specifications
 └── *.py                          # Zero-overhead root backward-compatibility shims (for pyghidra-mcp & external callers)
 ```
 
@@ -35,14 +35,14 @@ SuperGhidra/
 
 | If your task is... | Only read Subsystem Index | And inspect Canonical Files | Domain Verification Command |
 | :--- | :--- | :--- | :--- |
-| **Daemon, TCP Oracle, L2 Cache, Resource Governor, SHM IPC, or Cache DAG** | [`superghidra/core/README.md`](superghidra/core/README.md) | `superghidra/core/ghidra_oracle.py`<br>`superghidra/core/resource_governor.py`<br>`superghidra/core/shm_decompiler_bridge.py`<br>`superghidra/core/dependency_cache_dag.py` | `python -m pytest tests/core -q` |
+| **Daemon, TCP Oracle, L2 Cache, Resource Governor, SHM IPC, Cache DAG, or Parity Engine (Gaps 1-7, __usercall, Appcall, Sparse Datalog VSA, Section 5 Mitigations M1-M7)** | [`superghidra/core/README.md`](superghidra/core/README.md) | `superghidra/core/ghidra_oracle.py`<br>`superghidra/core/resource_governor.py`<br>`superghidra/core/shm_decompiler_bridge.py`<br>`superghidra/core/parity_engine.py`<br>`superghidra/core/mitigation_roadmap_engine.py` | `python -m pytest tests/core -q` |
 | **Headless Tuning, Cascade Shield, or Native C++ Decompiler PGO** | [`superghidra/core/README.md`](superghidra/core/README.md) | `superghidra/core/headless_analyzer_tuner.py`<br>`superghidra/core/cross_platform_headless_harness.py`<br>`superghidra/core/native_decompiler_pgo_builder.py` | `python -m pytest tests/core tests/storage -q` |
 | **LZ4/Zstd Buffer Compression, 64-bit Slot Directory, or `SuperGhidraCodec.jar`** | [`superghidra/storage/README.md`](superghidra/storage/README.md) | `superghidra/storage/storage_compression_prototype.py`<br>`superghidra/storage/ghidra_extension_packager.py`<br>`ghidra_extension_skeleton/` | `python -m pytest tests/storage -q` |
 | **GPU ARM64 `ADRP+ADD/LDR` Sweeps or Function Prologue Seeding** | [`superghidra/acceleration/README.md`](superghidra/acceleration/README.md) | `superghidra/acceleration/gpu_adrp_scanner.py`<br>`superghidra/acceleration/gpu_function_seeder.py` | `python -m pytest tests/acceleration -q` |
-| **Cross-Version Binary Diffing, Struct Shift Migration, Evidence Ledger, or Delta Log** | [`superghidra/diff/README.md`](superghidra/diff/README.md) | `superghidra/diff/binary_diff_engine.py`<br>`superghidra/diff/struct_shift_migrator.py`<br>`superghidra/diff/evidence_ledger.py`<br>`superghidra/diff/semantic_delta_log.py` | `python -m pytest tests/diff -q` |
-| **Zero-JVM P-Code Lifting, Z3 SMT Verification, or ARM/Thumb/x86 Decoding** | [`superghidra/lifters/README.md`](superghidra/lifters/README.md) | `superghidra/lifters/pcode_lifter_bridge.py`<br>`superghidra/lifters/smt_pcode_verifier.py`<br>`superghidra/lifters/arm_thumb_decode.py`<br>`superghidra/lifters/x86_decode.py` | `python -m pytest tests/lifters -q` |
+| **Cross-Version Binary Diffing, Struct Shift Migration, CRDT Swarms, Whole-Binary Type Lattice, Next-Gen Benchmark Scorecard, or Phase 1 & 2 Kill-Shots 1-5 (Patchestry MLIR, Rellic Goto-Free, D-LiFT GRPO, CSR VSA, Template Collapser, Concolic Trace)** | [`superghidra/diff/README.md`](superghidra/diff/README.md) | `superghidra/diff/binary_diff_engine.py`<br>`superghidra/diff/struct_shift_migrator.py`<br>`superghidra/diff/benchmark_and_nextgen_engine.py`<br>`superghidra/diff/phase1_phase2_roadmap_engine.py` | `python -m pytest tests/diff -q` |
+| **Zero-JVM P-Code Lifting, Z3 SMT Verification, ARM/Thumb/x86 Decoding, or E-Graph MBA & MLIR Goto-Free Restructuring** | [`superghidra/lifters/README.md`](superghidra/lifters/README.md) | `superghidra/lifters/pcode_lifter_bridge.py`<br>`superghidra/lifters/smt_pcode_verifier.py`<br>`superghidra/lifters/egraph_mlir_pipeline.py` | `python -m pytest tests/lifters -q` |
 | **ELF/PE/Mach-O Loading, DWARF5/PDB Indexing/Export, or MSVC RTTI & MFC `CArchive`** | [`superghidra/formats/README.md`](superghidra/formats/README.md) | `superghidra/formats/binary_loader.py`<br>`superghidra/formats/dwarf_pdb_preindexer.py`<br>`superghidra/formats/synthetic_symbol_exporter.py`<br>`superghidra/formats/msvc_class_recovery.py`<br>`superghidra/formats/serialize_trace.py`<br>`superghidra/formats/mfc_archive.py` | `python -m pytest tests/formats -q` |
-| **APK JNI Cross-Ref, Android Emulator Sidecar, Colab TPU/T4, or Neural Skinning** | [`superghidra/integrations/README.md`](superghidra/integrations/README.md) | `superghidra/integrations/apk_jni_cross_referencer.py`<br>`superghidra/integrations/emulator_memory_sidecar.py`<br>`superghidra/integrations/colab_cloud_orchestrator.py`<br>`superghidra/integrations/neural_decompiler_pipeline.py` | `python -m pytest tests/integrations -q` |
+| **APK JNI Cross-Ref, Android Emulator Sidecar, Colab TPU/T4, Neural Skinning, or D-LiFT Z3 Neural Verification Backend & GRPO Engine** | [`superghidra/integrations/README.md`](superghidra/integrations/README.md) | `superghidra/integrations/apk_jni_cross_referencer.py`<br>`superghidra/integrations/emulator_memory_sidecar.py`<br>`superghidra/integrations/colab_cloud_orchestrator.py`<br>`superghidra/integrations/neural_decompiler_pipeline.py`<br>`superghidra/integrations/d_lift_verifier.py` | `python -m pytest tests/integrations -q` |
 | **Adding a New Module, MCP Tool, Test Suite, or Agent Sub-Task** | [`templates/`](templates/) | `templates/NEW_MODULE_TEMPLATE.py`<br>`templates/NEW_MCP_TOOL_TEMPLATE.py`<br>`templates/TEST_CASE_TEMPLATE.py`<br>`templates/AGENT_TASK_BRIEF_TEMPLATE.md` | `python -m pytest tests/integrations/test_mcp_38_tools.py -q` |
 
 ---
