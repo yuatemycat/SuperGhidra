@@ -202,3 +202,75 @@ from .colab_cloud_orchestrator import (
     CloudConfig,
     ColabCloudOrchestrator,
 )
+
+# Section 1: E-Graph, MLIR & Staged P-Code Pass Manager
+from .egraph_mlir_pipeline import (
+    EGraphMBADeobfuscatorPass,
+    SymbolicCFFDeflattenerPass,
+    MLIRGotoFreeRestructurer,
+    EGraph,
+    EquivalenceProver,
+)
+
+# Section 2: D-LiFT Neural Verification Backend & GRPO Reward Engine
+from .d_lift_verifier import (
+    DLiftRewardEngine,
+    InMemClangSyntaxGate,
+    Z3SemanticEquivalenceGate,
+    ReadabilityGate,
+    GRPORewardManager,
+    DScoreResult,
+    SyntaxCheckResult,
+    SemanticCheckResult,
+    ReadabilityMetrics,
+)
+
+# Section 3: IDA Pro Parity Engine (Gaps 1-7 & Sparse Datalog VSA)
+from .parity_engine import (
+    SymbolicCFGDeflattener,
+    UsercallPrototypeCompiler,
+    AppcallMarshaller,
+    CFGSignatureIndex,
+    ClangHeaderImporter,
+    SGDBBlockStore,
+    SparseMatrixDatalogEngine,
+    SuperGhidraSection3MCPServer,
+)
+
+# Section 4: Next-Gen Leapfrog, CRDT Swarms, Whole-Binary Type Lattice & D-LiFT
+from .benchmark_and_nextgen_engine import (
+    CRDTSessionForkManager,
+    CrossVersionDiffEngine,
+    GlobalTypeLatticeSolver,
+    AndroidJNIFusionEngine,
+    AndroidJNIFusionGraph,
+    DLiFTVerificationGate,
+    Section4ComparisonMatrixHarness,
+)
+
+# Section 5: Current Mitigation Roadmap Engine (Countermeasures M1–M7)
+from .mitigation_roadmap_engine import (
+    GNNPCodeTensorEncoder,
+    LeafXRefInversionEngine,
+    ABIShimAndStructShiftAdapter,
+    OffHeapDWARF5SQLiteIndexer,
+    MSVCAndMFCRecoveryEngine,
+    ResourceGovernorAndCacheDAG,
+    run_section5_mitigation_demonstration,
+)
+
+# Sections 6 & 7: Phase 1 Parity & Phase 2 Next-Gen Kill-Shot Engine
+from .phase1_phase2_roadmap_engine import (
+    CFGNodeSpec,
+    RellicGotoFreeRestructurer,
+    PatchestryMLIRPipeline,
+    DLiFTCandidateCompletion,
+    DLiFTGRPOEngine,
+    CSRSparseMatrixVSAEngine,
+    InlinedTemplateSubgraph,
+    MonomorphizedTemplateCollapser,
+    BranchConstraint,
+    ConcolicAndTraceMergeEngine,
+    run_phase1_phase2_demonstration,
+)
+
