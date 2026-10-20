@@ -23,6 +23,7 @@ SolidWorks' Contents/Config-*-ResolvedFeatures.
 
 from __future__ import annotations
 
+import os
 import re
 import struct
 from dataclasses import asdict, dataclass, field
@@ -453,6 +454,48 @@ def _scan_mfc(view: _View) -> List[MfcRuntimeClass]:
     return sorted(found.values(), key=lambda c: c.name)
 
 
+_SIBLING_VIEWS: Dict[str, Optional[Tuple[_View, Dict[str, int]]]] = {}
+
+
+def _sibling_view(view: _View, library: Optional[str]) -> Optional[Tuple[_View, Dict[str, int]]]:
+    """(view, export map) of `library` loaded from the same folder as the image, or None."""
+    if not library or not view.img.path:
+        return None
+    path = os.path.join(os.path.dirname(view.img.path), library)
+    key = os.path.normcase(os.path.abspath(path))
+    if key not in _SIBLING_VIEWS:
+        loaded = None
+        try:
+            if os.path.isfile(path):
+                img = binary_loader.load_binary(path)
+                loaded = (_View(img), img.export_map())
+        except (OSError, ValueError):
+            pass
+        _SIBLING_VIEWS[key] = loaded
+    return _SIBLING_VIEWS[key]
+
+
+def _imported_forward_slot(view: _View, insn: x86_decode.X86Insn) -> Optional[int]:
+    """Slot K when an imported function (in a DLL next to the image) is a virtual forwarder.
+
+    SolidWorks' main modules inherit `su_CObject::Serialize(CArchive&)` from swccu.dll,
+    which is `mov rax,[rcx]; jmp [rax+0x28]`: the class's own body sits in slot 5.
+    """
+    if insn.mem is None:
+        return None
+    imp = view.iat.get(insn.mem.effective_address(insn.end))
+    if imp is None or not imp.name:
+        return None
+    sibling = _sibling_view(view, imp.library)
+    if sibling is None:
+        return None
+    other, exports = sibling
+    target = exports.get(imp.name)
+    if target is None:
+        return None
+    return _virtual_forward_slot(other, _follow_thunks(other, target))
+
+
 def _resolve_serialize(view: _View, funcs: List[int]) -> Tuple[Optional[int], Optional[int], Optional[str]]:
     """(body VA, slot, imported name) for the Serialize virtual of a vftable."""
     slot = MFC_SLOT_SERIALIZE
@@ -464,6 +507,10 @@ def _resolve_serialize(view: _View, funcs: List[int]) -> Tuple[Optional[int], Op
         if insn is not None and insn.flow == "jmp_ind":
             imported = _import_slot(view, insn)
             if imported:
+                nxt = _imported_forward_slot(view, insn)
+                if nxt is not None and nxt != slot and nxt < len(funcs):
+                    slot = nxt
+                    continue
                 return None, slot, imported
         nxt = _virtual_forward_slot(view, body)
         if nxt is None or nxt == slot:
