@@ -18,7 +18,33 @@
 - **MSF 7.0 / PDB Layout Invariant:** `PDBExporter` reserves Free Page Map blocks 1 and 2, writes a valid 64-byte DBI header (`PublicStreamIndex` at offset 16, `Machine` at 58/60), pads CodeView field lists with `LF_PAD` (`0xF0 | rem`), and serializes a valid named-stream hash map.
 - **Serialize Mirror Self-Check:** `SerializeTrace.mirrored` verifies whether recovered `loading` and `storing` operation sequences match structurally.
 
-## 3. Quick-Test Command
+## 3. SOLIDWORKS (`su_CArchive`) Support
+Full SOLIDWORKS installs keep the per-class save code in `sldmodu.dll` and the archive in
+`swccu.dll`. To trace them:
+
+- **Serialize lives in vtable slot 5.** Slot 2 (`Serialize(CArchive&)`) is the shared
+  `su_CObject::Serialize` imported from `swccu.dll`, a `mov rax,[rcx]; jmp [rax+0x28]`
+  forwarder. `msvc_class_recovery` loads the DLL next to the image and follows it.
+- **Archive operators are imported members** (`??6su_CArchive@@QEAAAEAV0@J@Z`) or object
+  operators (`operator<<(su_CArchive&, moNodeName_c*)`); both are classified, the latter
+  as `object` with the expected class kept as `callee`.
+- **Mode queries are imported** (`IsStoring`, `IsLoading`, `IsDBStream`). `IsDBStream` is
+  treated as off (binary format), which removes the database-stream branches.
+- **Unknown call results gate branches** as `ret@0x...` conditions, and `mfc_archive`
+  decodes exactly one side of an `if`/`else` (`or` gates are evaluated against earlier
+  assumptions).
+- **Pointer members** are typed from `m_p = new X(...)` or from member calls made on them
+  (`m_p->RemoveAll()` gives `su_CObList`), so `if (m_p) m_p->Serialize(ar)` expands.
+- **Shared class numbering:** a feature-tree stream can refer to classes defined in another
+  stream; `ArchiveReader` learns them from the expected class of the object operator.
+
+To trace a full install, give every DLL to `SerializeTracer` and expand with
+`class_layouts(others=...)`: `sldmodu.dll`, `sldMoPartu.dll`, `sldmfcu.dll`,
+`sldarchiveu.dll`, `swccu.dll`. Ground truth for layouts comes from LiquidWork's
+`scripts/sw_readtrace.py`, which records SOLIDWORKS' own reads (see LiquidWork
+`docs/SOLIDWORKS_RESEARCH_TOOLS.md`).
+
+## 4. Quick-Test Command
 ```powershell
 python -m pytest tests/formats -q
 ```
