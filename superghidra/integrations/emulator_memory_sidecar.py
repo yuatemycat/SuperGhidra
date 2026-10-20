@@ -7,7 +7,7 @@ Features:
 1. Strict adherence to android-emulator-fleet-safety rules:
    - Targets identified before any inspection or adb execution.
    - Device fleet routing matrix:
-     * emulator-5564 (Optimumu_HayDay): Live Farm Automation (STRICTLY OFF LIMITS for mutations).
+     * emulator-5564 (ProtectedFarm): Protected live instance (STRICTLY OFF LIMITS for mutations).
      * emulator-5580 (Resurrection_API30): Meteor / Sandbox (authorized root target).
      * 127.0.0.1:21513 (MEmu_1): Authorized ODM-Native target.
      * 127.0.0.1:21503 (MEmu_0): System / Default (DO NOT TOUCH).
@@ -74,8 +74,8 @@ class EmulatorDeviceInfo:
 FLEET_DEVICE_MAP: Dict[str, EmulatorDeviceInfo] = {
     "emulator-5564": EmulatorDeviceInfo(
         serial="emulator-5564",
-        instance_name="Optimumu_HayDay",
-        purpose="Live Farm Automation",
+        instance_name="ProtectedFarm",
+        purpose="Protected live instance",
         authorized_for_experiments=False,
         is_live_farm_automation=True,
         requires_explicit_readonly_ack=True,

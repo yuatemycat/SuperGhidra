@@ -17,10 +17,7 @@ from superghidra.core.compilable_filter import CompilableDecompilerFilter
 
 
 # Large stripped ARM64 ELF to test against; set SUPERGHIDRA_TEST_ARM64_ELF to enable.
-REAL_LIBG = os.environ.get(
-    "SUPERGHIDRA_TEST_ARM64_ELF",
-    r"E:\02_Projects\Intra-farm\APK\libg.so",
-)
+REAL_LIBG = os.environ.get("SUPERGHIDRA_TEST_ARM64_ELF", "")
 REAL_KERNEL32 = r"C:\Windows\System32\kernel32.dll"
 REAL_MFC64 = r"C:\Windows\System32\mfc140u.dll"
 

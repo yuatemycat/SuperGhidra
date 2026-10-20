@@ -62,9 +62,9 @@ class TestAPKJNICrossReferencerDEX(unittest.TestCase):
     def test_02_dex_native_method_extraction(self):
         """Tests parsing native methods from a synthesized binary DEX."""
         methods_to_encode = [
-            ("com.supercell.titan.GameApp", "nativeInit", "()V", 0x0109),  # ACC_PUBLIC | ACC_STATIC | ACC_NATIVE
-            ("com.supercell.titan.GameApp", "updateDisplay", "(II)V", 0x0101),  # ACC_PUBLIC | ACC_NATIVE
-            ("com.supercell.titan.NativeDialog", "onDialogDismissed", "(ILjava/lang/String;)Z", 0x0101),
+            ("com.example.app.GameApp", "nativeInit", "()V", 0x0109),  # ACC_PUBLIC | ACC_STATIC | ACC_NATIVE
+            ("com.example.app.GameApp", "updateDisplay", "(II)V", 0x0101),  # ACC_PUBLIC | ACC_NATIVE
+            ("com.example.app.NativeDialog", "onDialogDismissed", "(ILjava/lang/String;)Z", 0x0101),
         ]
         dex_bytes = APKJNICrossReferencer.build_synthetic_dex_bytes(methods_to_encode)
         self.assertTrue(dex_bytes.startswith(b"dex\n035\x00"))
@@ -80,7 +80,7 @@ class TestAPKJNICrossReferencerDEX(unittest.TestCase):
         # Check static method flag
         init_m = next(m for m in xr.native_methods if m.method_name == "nativeInit")
         self.assertTrue(init_m.is_static)
-        self.assertEqual(init_m.class_name, "com.supercell.titan.GameApp")
+        self.assertEqual(init_m.class_name, "com.example.app.GameApp")
         self.assertEqual(init_m.signature, "()V")
 
         # Check virtual method flag
@@ -139,8 +139,8 @@ class TestAPKJNICrossReferencerELF(unittest.TestCase):
     def test_02_elf64_exports_and_register_natives(self):
         """Tests extracting static exports and RegisterNatives tables from ELF64."""
         exports = {
-            "Java_com_supercell_titan_GameApp_nativeInit": 0x101100,
-            "Java_com_supercell_titan_GameApp_onLowMemory": 0x101200,
+            "Java_com_example_app_GameApp_nativeInit": 0x101100,
+            "Java_com_example_app_GameApp_onLowMemory": 0x101200,
         }
         reg_natives = [
             ("updateDisplay", "(II)V", 0x101300),
@@ -158,8 +158,8 @@ class TestAPKJNICrossReferencerELF(unittest.TestCase):
 
         self.assertEqual(stats["exports_loaded"], 2)
         self.assertEqual(stats["registered_natives_found"], 2)
-        self.assertIn("Java_com_supercell_titan_GameApp_nativeInit", xr.elf_exports)
-        self.assertEqual(xr.elf_exports["Java_com_supercell_titan_GameApp_nativeInit"], 0x101100)
+        self.assertIn("Java_com_example_app_GameApp_nativeInit", xr.elf_exports)
+        self.assertEqual(xr.elf_exports["Java_com_example_app_GameApp_nativeInit"], 0x101100)
         self.assertEqual(len(xr.registered_natives), 2)
 
         # Check registered native fields
@@ -196,17 +196,17 @@ class TestAPKJNICrossReferencerELF(unittest.TestCase):
         """
         # 1. Define Java methods
         dex_methods = [
-            ("com.supercell.titan.GameApp", "nativeInit", "()V", 0x0109),
-            ("com.supercell.titan.GameApp", "onLowMemory", "()V", 0x0109),
-            ("com.supercell.titan.GameApp", "updateDisplay", "(II)V", 0x0101),
-            ("com.supercell.titan.GameApp", "processPacket", "([B)I", 0x0101),
+            ("com.example.app.GameApp", "nativeInit", "()V", 0x0109),
+            ("com.example.app.GameApp", "onLowMemory", "()V", 0x0109),
+            ("com.example.app.GameApp", "updateDisplay", "(II)V", 0x0101),
+            ("com.example.app.GameApp", "processPacket", "([B)I", 0x0101),
         ]
         dex_bytes = APKJNICrossReferencer.build_synthetic_dex_bytes(dex_methods)
 
         # 2. Define ELF exports and RegisterNatives
         exports = {
-            "Java_com_supercell_titan_GameApp_nativeInit": 0x101100,
-            "Java_com_supercell_titan_GameApp_onLowMemory": 0x101200,
+            "Java_com_example_app_GameApp_nativeInit": 0x101100,
+            "Java_com_example_app_GameApp_onLowMemory": 0x101200,
         }
         reg_natives = [
             ("updateDisplay", "(II)V", 0x101300),
@@ -318,10 +318,10 @@ class TestGhidraScriptAndJsonExport(unittest.TestCase):
 
     def test_01_script_and_json_export(self):
         dex_methods = [
-            ("com.supercell.titan.GameApp", "nativeInit", "()V", 0x0109),
+            ("com.example.app.GameApp", "nativeInit", "()V", 0x0109),
         ]
         dex_bytes = APKJNICrossReferencer.build_synthetic_dex_bytes(dex_methods)
-        exports = {"Java_com_supercell_titan_GameApp_nativeInit": 0x101100}
+        exports = {"Java_com_example_app_GameApp_nativeInit": 0x101100}
         elf_bytes = APKJNICrossReferencer.build_synthetic_jni_elf_bytes(exports=exports)
 
         xr = APKJNICrossReferencer(image_base=0x100000)

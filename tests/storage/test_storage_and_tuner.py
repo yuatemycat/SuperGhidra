@@ -42,6 +42,16 @@ from headless_analyzer_tuner import (
 )
 
 
+def _java_tool(name: str) -> str:
+    """Finds a JDK tool on PATH or under $JAVA_HOME/bin; returns "" if missing."""
+    java_home = os.environ.get("JAVA_HOME")
+    found = shutil.which(name) or (java_home and shutil.which(name, path=os.path.join(java_home, "bin")))
+    return found or ""
+
+
+_GHIDRA_DIR = Path(os.environ.get("GHIDRA_INSTALL_DIR", ""))
+
+
 class TestStorageCompressionLayer(unittest.TestCase):
     """Tests for the storage compression layer, 64-bit slot directory format, and Python <-> Java SGDB interoperability."""
 
@@ -156,13 +166,13 @@ class TestStorageCompressionLayer(unittest.TestCase):
             self.assertGreater(res_lz4.decompress_mb_per_sec, 200.0)
 
     @unittest.skipUnless(
-        (shutil.which("javac") or os.path.isfile(r"E:\03_Devops\JDK\bin\javac.exe"))
-        and (shutil.which("java") or os.path.isfile(r"E:\03_Devops\JDK\bin\java.exe"))
+        _java_tool("javac")
+        and _java_tool("java")
         and (
-            (Path(os.environ.get("GHIDRA_INSTALL_DIR", r"E:\03_Devops\Ghidra")) / "Ghidra" / "Extensions" / "SuperGhidraCodec" / "lib" / "SuperGhidraCodec.jar").is_file()
+            (_GHIDRA_DIR / "Ghidra" / "Extensions" / "SuperGhidraCodec" / "lib" / "SuperGhidraCodec.jar").is_file()
             or (Path(__file__).resolve().parents[2] / "ghidra_extension_skeleton" / "build" / "lib" / "SuperGhidraCodec.jar").is_file()
         )
-        and (Path(os.environ.get("GHIDRA_INSTALL_DIR", r"E:\03_Devops\Ghidra")) / "Ghidra" / "Framework" / "DB" / "lib" / "DB.jar").is_file(),
+        and (_GHIDRA_DIR / "Ghidra" / "Framework" / "DB" / "lib" / "DB.jar").is_file(),
         "Requires Java/JDK and Ghidra framework jars",
     )
     def test_python_java_sgdb_interoperability_roundtrip(self):
@@ -174,12 +184,12 @@ class TestStorageCompressionLayer(unittest.TestCase):
         3. Loads the modified .sgdb file back in Python via load_java_sgdb_file() and verifies 100% bit-exact
            contents across all blocks, parameters, and freeIndexes.
         """
-        javac_bin = shutil.which("javac") or r"E:\03_Devops\JDK\bin\javac.exe"
-        java_bin = shutil.which("java") or r"E:\03_Devops\JDK\bin\java.exe"
+        javac_bin = _java_tool("javac")
+        java_bin = _java_tool("java")
         self.assertTrue(os.path.isfile(javac_bin), f"javac not found at {javac_bin}")
         self.assertTrue(os.path.isfile(java_bin), f"java not found at {java_bin}")
 
-        ghidra_dir = Path(os.environ.get("GHIDRA_INSTALL_DIR", r"E:\03_Devops\Ghidra"))
+        ghidra_dir = _GHIDRA_DIR
         codec_jar = ghidra_dir / "Ghidra" / "Extensions" / "SuperGhidraCodec" / "lib" / "SuperGhidraCodec.jar"
         if not codec_jar.exists():
             codec_jar = Path(__file__).resolve().parents[2] / "ghidra_extension_skeleton" / "build" / "lib" / "SuperGhidraCodec.jar"
@@ -403,13 +413,13 @@ class TestHeadlessAnalyzerTuner(unittest.TestCase):
     def test_headless_command_builder(self):
         """Tests analyzeHeadless CLI argument construction."""
         builder = HeadlessCommandBuilder(
-            ghidra_install_dir="E:\\03_Devops\\Ghidra",
-            project_location="E:\\02_Projects\\SuperGhidra\\workspace",
+            ghidra_install_dir="C:\\tools\\Ghidra",
+            project_location="C:\\work\\workspace",
             project_name="TestProject",
-            import_target="E:\\03_Devops\\libc_arm64.so",
+            import_target="C:\\work\\libc_arm64.so",
             pre_script="SuperGhidraPreScript.java",
             post_script="SuperGhidraLazyNoReturnPostScript.java",
-            script_dir="E:\\02_Projects\\SuperGhidra\\scripts",
+            script_dir="C:\\work\\scripts",
             timeout_seconds=300,
             max_cpu=8,
             read_only=True,
@@ -419,7 +429,7 @@ class TestHeadlessAnalyzerTuner(unittest.TestCase):
         cli_str = builder.build_cli_string()
 
         self.assertIn("-import", args)
-        self.assertIn("E:\\03_Devops\\libc_arm64.so", args)
+        self.assertIn("C:\\work\\libc_arm64.so", args)
         self.assertIn("-preScript", args)
         self.assertIn("SuperGhidraPreScript.java", args)
         self.assertIn("-postScript", args)

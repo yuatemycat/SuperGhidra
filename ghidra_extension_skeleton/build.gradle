@@ -12,7 +12,7 @@ else if (project.hasProperty("GHIDRA_INSTALL_DIR")) {
     ghidraInstallDir = project.getProperty("GHIDRA_INSTALL_DIR")
 }
 else {
-    ghidraInstallDir = "E:/03_Devops/Ghidra"
+    throw new GradleException("Set GHIDRA_INSTALL_DIR (env var or -PGHIDRA_INSTALL_DIR=...) to your Ghidra install")
 }
 
 apply plugin: 'java'

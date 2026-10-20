@@ -54,10 +54,13 @@ class GhidraExtensionPackager:
         base_dir = _here.parents[1] if (_here.parents[1] / "ghidra_extension_skeleton").exists() else _here
         self.skeleton_dir = Path(skeleton_dir) if skeleton_dir else base_dir / "ghidra_extension_skeleton"
         self.ghidra_install_dir = Path(
-            ghidra_install_dir
-            or os.environ.get("GHIDRA_INSTALL_DIR", r"E:\03_Devops\Ghidra")
+            ghidra_install_dir or os.environ.get("GHIDRA_INSTALL_DIR", "")
         )
         self.output_dir = Path(output_dir) if output_dir else base_dir / "dist"
+
+    def _require_ghidra_dir(self) -> None:
+        if not str(self.ghidra_install_dir) or str(self.ghidra_install_dir) == ".":
+            raise FileNotFoundError("Ghidra install not set: pass ghidra_install_dir or set GHIDRA_INSTALL_DIR")
 
     def parse_extension_properties(self) -> Dict[str, str]:
         """Parses and validates extension.properties."""
@@ -135,13 +138,11 @@ class GhidraExtensionPackager:
 
         # Locate javac
         javac_bin = shutil.which("javac")
+        if not javac_bin and os.environ.get("JAVA_HOME"):
+            javac_bin = shutil.which("javac", path=os.path.join(os.environ["JAVA_HOME"], "bin"))
         if not javac_bin:
-            # Fallback to standard Devops JDK
-            devops_javac = Path(r"E:\03_Devops\JDK\bin\javac.exe")
-            if devops_javac.exists():
-                javac_bin = str(devops_javac)
-            else:
-                raise FileNotFoundError("javac compiler not found on PATH or in E:\\03_Devops\\JDK\\bin")
+            raise FileNotFoundError("javac not found on PATH or in $JAVA_HOME/bin")
+        self._require_ghidra_dir()
 
         # Build classpath from Ghidra jars
         jars = [
@@ -251,13 +252,14 @@ class GhidraExtensionPackager:
     def install_extension(self, target_extensions_dir: Optional[Path | str] = None) -> Path:
         """
         Installs the packaged extension into Ghidra's Extensions directory.
-        Extracts dist/SuperGhidraCodec-1.0.0.zip into E:\\03_Devops\\Ghidra\\Ghidra\\Extensions\\SuperGhidraCodec.
+        Extracts dist/SuperGhidraCodec-1.0.0.zip into <GHIDRA_INSTALL_DIR>/Ghidra/Extensions/SuperGhidraCodec.
         """
         props = self.parse_extension_properties()
         ext_name = props["name"]
         ext_version = props["version"]
 
         if target_extensions_dir is None:
+            self._require_ghidra_dir()
             dest_dir = self.ghidra_install_dir / "Ghidra" / "Extensions" / ext_name
         else:
             p = Path(target_extensions_dir)

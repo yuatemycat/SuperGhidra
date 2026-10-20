@@ -4,9 +4,6 @@ test_mcp_38_tools.py
 ====================
 Comprehensive unit test suite for all 38 MCP tools in pyghidra-mcp / SuperGhidraMCP:
   - Verifies all 38 tools are registered on `pyghidra_mcp.server.mcp`
-  - Verifies all 38 `.json` schema files exist and are valid in both:
-      * C:\\Users\\X\\.gemini\\antigravity-cli\\mcp\\SuperghidraMCP
-      * C:\\Users\\X\\.gemini\\antigravity-cli\\mcp\\pyghidra
   - Verifies `verify_smt_equivalence` with `arch="x86_64"` and `target_reg="rax"` on x86_64 machine hex bytes
   - Verifies `verify_smt_equivalence` with `target_reg="d0"` on ARM64 FP machine hex bytes (`FADD D0, D0, D1`)
   - Verifies `CIntrinsic` is exported in `SuperGhidra.__init__`
@@ -23,16 +20,22 @@ import sys
 import tempfile
 import unittest
 
-SUPERGHIDRA_DIR = r"E:\02_Projects\SuperGhidra"
-PYGHIDRA_MCP_SRC = r"E:\02_Projects\pyghidra-mcp\src"
+import pytest
+
+SUPERGHIDRA_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# pyghidra-mcp source tree: SUPERGHIDRA_PYGHIDRA_MCP_SRC, else a sibling checkout.
+PYGHIDRA_MCP_SRC = os.environ.get(
+    "SUPERGHIDRA_PYGHIDRA_MCP_SRC",
+    os.path.join(os.path.dirname(SUPERGHIDRA_DIR), "pyghidra-mcp", "src"),
+)
 
 if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
-if PYGHIDRA_MCP_SRC not in sys.path:
+if os.path.isdir(PYGHIDRA_MCP_SRC) and PYGHIDRA_MCP_SRC not in sys.path:
     sys.path.insert(0, PYGHIDRA_MCP_SRC)
 
-from pyghidra_mcp import mcp_tools
-from pyghidra_mcp.server import mcp
+mcp_tools = pytest.importorskip("pyghidra_mcp.mcp_tools", reason="pyghidra-mcp not installed or found")
+mcp = pytest.importorskip("pyghidra_mcp.server", reason="pyghidra-mcp not installed or found").mcp
 
 EXPECTED_38_TOOLS = [
     "decompile_function",
@@ -88,9 +91,6 @@ EXPECTED_EXTRA_TOOLS = [
     "query_binary_dataflow",
     "solve_global_type_lattice",
 ]
-
-SUPERGHIDRA_MCP_SCHEMA_DIR = r"C:\Users\X\.gemini\antigravity-cli\mcp\SuperghidraMCP"
-PYGHIDRA_MCP_SCHEMA_DIR = r"C:\Users\X\.gemini\antigravity-cli\mcp\pyghidra"
 
 
 class TestMCP38ToolsAndSMTBridge(unittest.TestCase):

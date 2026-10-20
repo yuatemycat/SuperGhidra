@@ -297,11 +297,13 @@ public:
 """
         return xml
 
-    def inspect_live_decompiler(self, ghidra_install_dir: str = r"E:\03_Devops\Ghidra") -> Dict[str, Any]:
+    def inspect_live_decompiler(self, ghidra_install_dir: Optional[str] = None) -> Dict[str, Any]:
         """
         Locates Ghidra's live decompile executable, parses its PE or ELF header,
         validates machine architecture and sections, and audits C++ decompiler source files.
+        Defaults to the install at GHIDRA_INSTALL_DIR.
         """
+        ghidra_install_dir = ghidra_install_dir or os.environ.get("GHIDRA_INSTALL_DIR", "")
         ghidra_path = Path(ghidra_install_dir)
 
         # Candidate paths for native decompile executable
@@ -413,14 +415,19 @@ public:
             "readiness": "ready_for_pgo" if ready_for_pgo else "sources_missing",
         }
 
-    def generate_portable_devops_build_script(self, devops_root: str = r"E:\03_Devops") -> str:
+    def generate_portable_devops_build_script(self, devops_root: Optional[str] = None) -> str:
         """
         Generates a portable Windows batch script that:
-        1. Activates the E:\\03_Devops build environment (env.bat).
+        1. Activates the toolchain folder's env.bat (devops_root, or SUPERGHIDRA_DEVOPS_ROOT).
         2. Applies custom P-Code simplification rule RuleFoldJniBridgeThunk to C++ source directory.
-        3. Configures CMake with Ninja generator in E:\\03_Devops.
+        3. Configures CMake with Ninja from that toolchain folder.
         4. Compiles high-performance native decompile.exe with -O3, LTO, and PGO.
+
+        The folder is expected to hold env.bat and a Ghidra install under Ghidra\\.
         """
+        devops_root = devops_root or os.environ.get("SUPERGHIDRA_DEVOPS_ROOT")
+        if not devops_root:
+            raise ValueError("Pass devops_root or set SUPERGHIDRA_DEVOPS_ROOT")
         devops_clean = devops_root.replace("/", "\\")
         patch_text = self.generate_custom_pcode_rule_patch().strip()
         lines = [

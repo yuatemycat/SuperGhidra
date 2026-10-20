@@ -100,7 +100,7 @@ def construct_static_jni_symbol(
 @dataclasses.dataclass
 class JavaNativeMethod:
     """Represents a declared native method in DEX bytecode."""
-    class_name: str         # e.g. "com.supercell.titan.NativeDialog"
+    class_name: str         # e.g. "com.example.app.NativeDialog"
     method_name: str        # e.g. "onDialogDismissed"
     signature: str          # e.g. "(ILjava/lang/String;)V"
     is_static: bool = True

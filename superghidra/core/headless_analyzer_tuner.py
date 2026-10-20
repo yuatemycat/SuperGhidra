@@ -382,7 +382,7 @@ class HeadlessCommandBuilder:
         delete_project: bool = False,
         jvm_max_mem: str = "8G",
     ):
-        self.ghidra_install_dir = ghidra_install_dir or os.environ.get("GHIDRA_INSTALL_DIR", "E:\\03_Devops\\Ghidra")
+        self.ghidra_install_dir = ghidra_install_dir or os.environ.get("GHIDRA_INSTALL_DIR", "")
         self.project_location = project_location
         self.project_name = project_name
         self.import_target = import_target
@@ -445,9 +445,9 @@ def main():
     parser = argparse.ArgumentParser(description="SuperGhidra Headless Analyzer Tuner")
     parser.add_argument("--profile", type=str, choices=["lean", "decomp_ready", "full_guarded"], default="decomp_ready",
                         help="Analyzer optimization profile (default: decomp_ready)")
-    parser.add_argument("--output-dir", type=str, default="E:\\02_Projects\\SuperGhidra\\scripts",
+    parser.add_argument("--output-dir", type=str, default="scripts",
                         help="Output directory for generated Ghidra scripts")
-    parser.add_argument("--project-dir", type=str, default="E:\\02_Projects\\SuperGhidra\\workspace",
+    parser.add_argument("--project-dir", type=str, default="workspace",
                         help="Ghidra project directory path")
     parser.add_argument("--project-name", type=str, default="SuperGhidraProject",
                         help="Ghidra project name")

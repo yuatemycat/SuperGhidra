@@ -141,10 +141,10 @@
     - Crash-Safe sync():      Atomically persists directory headers and codec parameters.
     - Packager & Distribution: Automatically packages dist/SuperGhidraCodec-1.0.0.zip.
     - Engine Installation:    Installed SuperGhidraCodec.jar in
-                              E:\03_Devops\Ghidra\Ghidra\Extensions\SuperGhidraCodec\lib\.
+                              <GHIDRA_INSTALL_DIR>\Ghidra\Extensions\SuperGhidraCodec\lib\.
     - JVM Tuning:             Configured launch.properties with Generational ZGC
                               (-XX:+UseZGC -XX:+ZGenerational), string deduplication,
-                              and E:/03_Devops/Ghidra/.cache redirection.
+                              and <GHIDRA_INSTALL_DIR>/.cache redirection.
     - Unit Test Status:       PASS (16/16 tests in TestFrontier3ExtensionSkeleton)
 
 7.4 FRONTIER 4: CLOUD COLAB TPU v5e / T4 PIPELINE ORCHESTRATOR
@@ -166,7 +166,7 @@
     (emulator_memory_sidecar.py)
     - ADB Memory Probing:     Inspects /proc/<pid>/maps and reads live process memory via ADB.
     - EmulatorFleetGuard:     Enforces workstation emulator mapping rules to strictly safeguard
-                              active Intra-farm game instances and isolate test sandboxes.
+                              protected emulator instances and isolate test sandboxes.
     - Zero-Copy SHM Loading:  Loads extracted .so mappings directly into ShmBinaryView.from_elf_bytes()
                               for zero-copy symbol auditing and decompiler verification.
     - Unit Test Status:       PASS (10/10 tests in TestEmulatorMemorySidecar)
@@ -188,7 +188,7 @@
 ==============================================================================
 8. MASTER BENCHMARK CONSOLIDATION & SYSTEM INTEGRATION METRICS
 ==============================================================================
-  1. Unit Test Matrix Across All 11 Suites (E:\02_Projects\SuperGhidra):
+  1. Unit Test Matrix Across All 11 Suites:
      - test_superghidra.py:             10 / 10 tests passed (0.085s)   -> PASS
      - test_superghidra_suite.py:        9 /  9 tests passed (7.710s)   -> PASS
      - test_ipc_and_seeder.py:          14 / 14 tests passed (2.633s)   -> PASS

@@ -2,12 +2,12 @@ r"""
 NEW_MCP_TOOL_TEMPLATE.py — Boilerplate for Adding a New Tool to SuperGhidraMCP (`pyghidra-mcp`).
 
 Integration Checklist:
-  1. Pydantic Response Model (`E:\02_Projects\pyghidra-mcp\src\pyghidra_mcp\models.py`):
+  1. Pydantic Response Model (`pyghidra-mcp/src/pyghidra_mcp/models.py`):
      Define `<ToolName>Item` and `<ToolName>Result(BaseModel)` with explicit types and defaults.
-  2. Tool Handler (`E:\02_Projects\pyghidra-mcp\src\pyghidra_mcp\mcp_tools.py`):
+  2. Tool Handler (`pyghidra-mcp/src/pyghidra_mcp/mcp_tools.py`):
      Decorate with `@mcp_error_handler`, validate inputs, call `_ensure_superghidra_imported()`,
      resolve paths via `_resolve_safe_path()`, and return `<ToolName>Result`.
-  3. Server Registration (`E:\02_Projects\pyghidra-mcp\src\pyghidra_mcp\server.py`):
+  3. Server Registration (`pyghidra-mcp/src/pyghidra_mcp/server.py`):
      Register with `mcp.tool()(mcp_tools.<tool_name>)`.
   4. Unit Test (`tests/integrations/test_mcp_38_tools.py`):
      Add `<tool_name>` to `EXPECTED_EXTRA_TOOLS` and add a smoke test verifying end-to-end execution.

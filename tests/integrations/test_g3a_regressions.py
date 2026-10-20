@@ -122,11 +122,11 @@ class TestG3aFleetGuardRegressions(unittest.TestCase):
         """validate_process defaults allow_readonly_farm=False and requires explicit opt-in."""
         # Blocked by default on live farm device
         with self.assertRaises(FleetSafetyViolationError):
-            EmulatorFleetGuard.validate_process("emulator-5564", "com.supercell.hayday")
+            EmulatorFleetGuard.validate_process("emulator-5564", "com.example.game")
 
         # Allowed only with explicit opt-in
         ok = EmulatorFleetGuard.validate_process(
-            "emulator-5564", "com.supercell.hayday", allow_readonly_farm=True
+            "emulator-5564", "com.example.game", allow_readonly_farm=True
         )
         self.assertTrue(ok)
 

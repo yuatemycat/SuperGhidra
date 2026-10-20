@@ -1035,7 +1035,7 @@ class Section4ComparisonMatrixHarness:
         jni_fusion = AndroidJNIFusionGraph()
         jni_fusion.register_natives([
             JNINativeMethodEntry(
-                java_class="com/supercell/titan/GameApp",
+                java_class="com/example/app/GameApp",
                 method_name="nativeDeliverOrder",
                 jni_signature="(IJLjava/lang/String;D)Z",
                 native_rva=0x00884210,

@@ -123,7 +123,7 @@ class TestEmulatorFleetSafety(unittest.TestCase):
     def test_validate_process(self):
         """Process name must be non-empty before inspection."""
         self.assertTrue(
-            EmulatorFleetGuard.validate_process("emulator-5580", "com.supercell.clashroyale")
+            EmulatorFleetGuard.validate_process("emulator-5580", "com.example.sandbox")
         )
         with self.assertRaises(ValueError):
             EmulatorFleetGuard.validate_process("emulator-5580", "")
@@ -238,10 +238,10 @@ class TestLiveVerifiers(unittest.TestCase):
     def test_struct_field_verification(self):
         """Verifies struct field validation against expected values and ranges."""
         struct_base = 0x7F10000000
-        # Layout: +0x14 = uint32(100), +0x18 = float(99.5), +0x20 = string("Supercell")
+        # Layout: +0x14 = uint32(100), +0x18 = float(99.5), +0x20 = string("ExampleCo")
         self.reader.write_memory(struct_base + 0x14, struct.pack("<I", 100))
         self.reader.write_memory(struct_base + 0x18, struct.pack("<f", 99.5))
-        self.reader.write_memory(struct_base + 0x20, b"Supercell\x00")
+        self.reader.write_memory(struct_base + 0x20, b"ExampleCo\x00")
 
         # Range check on uint32 field
         res1 = verify_struct_field(
@@ -271,10 +271,10 @@ class TestLiveVerifiers(unittest.TestCase):
             base_ptr=struct_base,
             offset=0x20,
             expected_type="string",
-            expected_val="Supercell",
+            expected_val="ExampleCo",
         )
         self.assertTrue(res3.is_valid)
-        self.assertEqual(res3.actual_value, "Supercell")
+        self.assertEqual(res3.actual_value, "ExampleCo")
 
     def test_dynamic_encryption_key_extraction(self):
         """Verifies extraction and Shannon entropy computation for cryptographic keys."""

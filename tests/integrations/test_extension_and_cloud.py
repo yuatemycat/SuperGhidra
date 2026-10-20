@@ -46,6 +46,8 @@ from ghidra_extension_packager import GhidraExtensionPackager, ExtensionValidati
 import native_decompiler_pgo_builder
 from native_decompiler_pgo_builder import DecompilerBuildConfig, NativeDecompilerPGOBuilder
 
+_GHIDRA_DIR = Path(os.environ.get("GHIDRA_INSTALL_DIR", ""))
+_INSTALLED_JAR = Path("Ghidra", "Extensions", "SuperGhidraCodec", "lib", "SuperGhidraCodec.jar")
 
 class TestFrontier3ExtensionSkeleton(unittest.TestCase):
     """Test suite for Frontier 3: Ghidra Extension Skeleton and Packager."""
@@ -194,12 +196,12 @@ class TestFrontier3ExtensionSkeleton(unittest.TestCase):
                 self.assertIn("META-INF/MANIFEST.MF", jnames)
 
     @unittest.skipUnless(
-        Path("E:/03_Devops/Ghidra/Ghidra/Extensions/SuperGhidraCodec/lib/SuperGhidraCodec.jar").is_file(),
-        "Requires installed SuperGhidraCodec.jar in Ghidra Extensions",
+        (_GHIDRA_DIR / _INSTALLED_JAR).is_file(),
+        "Requires SuperGhidraCodec.jar installed in $GHIDRA_INSTALL_DIR/Ghidra/Extensions",
     )
     def test_07_buffer_file_adapter_lru_and_elision_and_compact_contract(self):
         """Verifies SuperGhidraBufferFileAdapter LRU cache, CRC32 write-elision, compact defragmentation, and compiled jar."""
-        installed_jar = Path("E:/03_Devops/Ghidra/Ghidra/Extensions/SuperGhidraCodec/lib/SuperGhidraCodec.jar")
+        installed_jar = _GHIDRA_DIR / _INSTALLED_JAR
         self.assertTrue(installed_jar.is_file(), f"Installed jar not found: {installed_jar}")
 
         with zipfile.ZipFile(installed_jar, "r") as jf:
@@ -252,8 +254,8 @@ class TestFrontier3NativeDecompilerPGO(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.config = DecompilerBuildConfig(
-            src_dir="E:/03_Devops/Ghidra/Ghidra/Features/Decompiler/src/decompile/cpp",
-            output_bin_dir="E:/03_Devops/Ghidra/Ghidra/Features/Decompiler/os/win64",
+            src_dir="C:/tools/Ghidra/Ghidra/Features/Decompiler/src/decompile/cpp",
+            output_bin_dir="C:/tools/Ghidra/Ghidra/Features/Decompiler/os/win64",
             target_os="windows",
         )
         cls.builder = NativeDecompilerPGOBuilder(cls.config)
@@ -293,16 +295,16 @@ class TestFrontier3NativeDecompilerPGO(unittest.TestCase):
 
     def test_04_live_decompiler_inspection_and_devops_script(self):
         """Verifies inspect_live_decompiler() and generate_portable_devops_build_script()."""
-        report = self.builder.inspect_live_decompiler(r"E:\03_Devops\Ghidra")
+        report = self.builder.inspect_live_decompiler(str(_GHIDRA_DIR) if str(_GHIDRA_DIR) != "." else None)
         self.assertIn(report["status"], ["ready", "found", "not_found"])
         if report["status"] in ("ready", "found"):
-            self.assertEqual(report["format"], "PE")
+            self.assertIn(report["format"], ("PE", "ELF"))
             self.assertEqual(report["machine_name"], "x86_64")
             self.assertGreater(report["size_bytes"], 100000)
             self.assertEqual(len(report["sha256"]), 64)
 
-        script = self.builder.generate_portable_devops_build_script(r"E:\03_Devops")
-        self.assertIn(r"E:\03_Devops", script)
+        script = self.builder.generate_portable_devops_build_script(r"C:\toolchain")
+        self.assertIn(r"C:\toolchain", script)
         self.assertIn("env.bat", script)
         self.assertIn("RuleFoldJniBridgeThunk", script)
         self.assertIn("ninja decompile", script)

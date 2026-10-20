@@ -89,27 +89,27 @@ class TestAPKJNICrossReferencer(unittest.TestCase):
         self.assertEqual(mangled, "com_example_my_1test_1app_MainActivity")
 
         # Static export symbol generation
-        sym_short = construct_static_jni_symbol("com.supercell.titan.NativeDialog", "showDialog")
-        self.assertEqual(sym_short, "Java_com_supercell_titan_NativeDialog_showDialog")
+        sym_short = construct_static_jni_symbol("com.example.app.NativeDialog", "showDialog")
+        self.assertEqual(sym_short, "Java_com_example_app_NativeDialog_showDialog")
 
         # Overloaded signature symbol generation
         sym_long = construct_static_jni_symbol(
-            "com.supercell.titan.NativeDialog",
+            "com.example.app.NativeDialog",
             "showDialog",
             signature="(ILjava/lang/String;)V",
             is_overloaded=True
         )
-        self.assertTrue(sym_long.startswith("Java_com_supercell_titan_NativeDialog_showDialog__"))
+        self.assertTrue(sym_long.startswith("Java_com_example_app_NativeDialog_showDialog__"))
 
     def test_static_and_dynamic_cross_referencing(self):
         ref = APKJNICrossReferencer(image_base=0x100000, is_64bit=True)
 
         # 1. Register Java DEX native methods
-        ref.add_java_method("com.supercell.titan.NativeDialog", "dismiss", "()V")
-        ref.add_java_method("com.supercell.titan.NativeDialog", "onClick", "(I)V")
+        ref.add_java_method("com.example.app.NativeDialog", "dismiss", "()V")
+        ref.add_java_method("com.example.app.NativeDialog", "onClick", "(I)V")
 
         # 2. Add static ELF export for dismiss
-        ref.add_elf_export("Java_com_supercell_titan_NativeDialog_dismiss", 0x00150240)
+        ref.add_elf_export("Java_com_example_app_NativeDialog_dismiss", 0x00150240)
 
         # 3. Synthesize .rodata memory containing JNINativeMethod array for onClick
         # JNINativeMethod { const char *name, const char *sig, void *fnPtr }
@@ -126,7 +126,7 @@ class TestAPKJNICrossReferencer(unittest.TestCase):
             string_table=string_table,
             text_vaddr_start=0x00100000,
             text_vaddr_end=0x00300000,
-            class_context="com.supercell.titan.NativeDialog"
+            class_context="com.example.app.NativeDialog"
         )
         self.assertEqual(len(discovered), 1)
         self.assertEqual(discovered[0].method_name, "onClick")

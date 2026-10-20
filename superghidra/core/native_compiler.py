@@ -3,9 +3,8 @@
 The skin-path differential oracle and the HumanEval harness both call
 `compile_and_run`. gcc/g++ or clang win when they are on PATH. Otherwise a
 portable MSVC install is used. Set SUPERGHIDRA_MSVC_ROOT to a folder holding
-`VC/Tools/MSVC/<ver>` and `Windows Kits/10`. When that variable is unset, the
-portable tree at `E:\\03_Devops\\msvc` is used if it is present. INCLUDE and
-LIB are set on the child process only.
+`VC/Tools/MSVC/<ver>` and `Windows Kits/10`. INCLUDE and LIB are set on the
+child process only.
 """
 
 from __future__ import annotations
@@ -29,14 +28,9 @@ def _newest_subdir(parent: Path) -> str:
 
 
 def _resolve_msvc_root() -> Path:
-    """Portable MSVC tree. The environment variable overrides the known install."""
+    """Portable MSVC tree from SUPERGHIDRA_MSVC_ROOT, or an empty path when unset."""
     env = os.environ.get("SUPERGHIDRA_MSVC_ROOT", "").strip()
-    if env:
-        return Path(env)
-    default = Path(r"E:\03_Devops\msvc")
-    if (default / "VC" / "Tools" / "MSVC").is_dir():
-        return default
-    return Path()
+    return Path(env) if env else Path()
 
 
 _MSVC_ROOT = _resolve_msvc_root()

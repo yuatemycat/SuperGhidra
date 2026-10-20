@@ -48,7 +48,7 @@ SuperGhidra/
 ---
 
 ## 4. Critical Architectural Invariants (Never Violate)
-1. **Non-Breaking Root Shims:** External consumers (`E:\02_Projects\pyghidra-mcp\src\pyghidra_mcp\mcp_tools.py`) import top-level module names (`import gpu_adrp_scanner`, `import binary_loader`, `import msvc_class_recovery`, etc.). Every module in `superghidra/<domain>/<mod>.py` **must** retain its root `<mod>.py` `sys.modules` alias shim.
+1. **Non-Breaking Root Shims:** External consumers (the sibling checkout `../pyghidra-mcp/src/pyghidra_mcp/mcp_tools.py`) import top-level module names (`import gpu_adrp_scanner`, `import binary_loader`, `import msvc_class_recovery`, etc.). Every module in `superghidra/<domain>/<mod>.py` **must** retain its root `<mod>.py` `sys.modules` alias shim.
 2. **Read-Only Ghidra Database Safety:** `ghidra_oracle.py` opens `.rep` projects with `readOnly=True`; symbol renames/comments go to `WriteOverlay` (`ghidra_overlay.json`) and `.ghidra-delta.jsonl`. Never auto-delete fresh `.lock` files.
 3. **EvidenceLedger Gate:** No neural or automated symbol/struct commit may bypass `ReconstructionObligationLedger` verification (`VTableSlotVerifier`, `FieldDisplacementVerifier`, `AllocationSizeVerifier`).
 4. **Android Emulator Fleet Guard:** `EmulatorFleetGuard` strictly blocks protected farm devices (`emulator-5564` / `127.0.0.1:5565`, `MEmu_0` / `127.0.0.1:21503`) and denies unknown serials by default.

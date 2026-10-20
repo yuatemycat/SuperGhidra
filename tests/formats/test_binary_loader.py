@@ -355,7 +355,7 @@ class TestRawAndErrors(unittest.TestCase):
 REAL_FILES = {
     "kernel32_x64": r"C:\Windows\System32\kernel32.dll",
     "kernel32_x86": r"C:\Windows\SysWOW64\kernel32.dll",
-    "libg_arm64": r"E:\02_Projects\Intra-farm\APK\libg.so",
+    "libg_arm64": os.environ.get("SUPERGHIDRA_TEST_ARM64_ELF", ""),
 }
 
 

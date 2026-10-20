@@ -854,8 +854,8 @@ _ORDINAL_TABLES: Dict[str, Dict[int, str]] = {}
 
 def _ghidra_symbol_dirs(bits: int) -> List[str]:
     sub = "win64" if bits == 64 else "win32"
-    roots = [os.environ.get("GHIDRA_INSTALL_DIR"), r"E:\03_Devops\Ghidra"]
-    return [os.path.join(r, "Ghidra", "Features", "Base", "data", "symbols", sub) for r in roots if r]
+    root = os.environ.get("GHIDRA_INSTALL_DIR")
+    return [os.path.join(root, "Ghidra", "Features", "Base", "data", "symbols", sub)] if root else []
 
 
 def _ordinal_table(path: str) -> Dict[int, str]:

@@ -21,11 +21,8 @@ from superghidra.core.live_binary_tools import (
 )
 from superghidra.formats.binary_loader import BinaryImage, load_binary
 
-# Large stripped ARM64 ELF. SUPERGHIDRA_TEST_ARM64_ELF overrides the on-disk default.
-REAL_LIBG = os.environ.get(
-    "SUPERGHIDRA_TEST_ARM64_ELF",
-    r"E:\02_Projects\Intra-farm\APK\libg.so",
-)
+# Large stripped ARM64 ELF to test against; set SUPERGHIDRA_TEST_ARM64_ELF to enable.
+REAL_LIBG = os.environ.get("SUPERGHIDRA_TEST_ARM64_ELF", "")
 REAL_KERNEL32 = r"C:\Windows\System32\kernel32.dll"
 _REAL_BINARIES = [REAL_LIBG, REAL_KERNEL32]
 

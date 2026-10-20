@@ -661,32 +661,32 @@ class TestGPUFunctionSeeder(unittest.TestCase):
                 os.remove(java_path)
 
 
+_GHIDRA_DIR = Path(os.environ.get("GHIDRA_INSTALL_DIR", ""))
+
+
 @unittest.skipUnless(
-    Path("E:/03_Devops/Ghidra/support/launch.properties").is_file(),
-    "Requires local Ghidra installation at E:/03_Devops/Ghidra",
+    os.environ.get("SUPERGHIDRA_CHECK_TUNED_GHIDRA") == "1"
+    and (_GHIDRA_DIR / "support" / "launch.properties").is_file(),
+    "Opt-in: set SUPERGHIDRA_CHECK_TUNED_GHIDRA=1 and GHIDRA_INSTALL_DIR to check a tuned Ghidra install",
 )
 class TestGhidraStockInstallationTuning(unittest.TestCase):
-    """Unit tests for stock Ghidra installation tuning configs in E:\\03_Devops\\Ghidra\\support\\."""
+    """Checks the launch tuning applied to the Ghidra install at GHIDRA_INSTALL_DIR."""
 
     def test_launch_properties_tuning(self):
-        launch_prop_path = Path("E:/03_Devops/Ghidra/support/launch.properties")
+        launch_prop_path = _GHIDRA_DIR / "support" / "launch.properties"
         self.assertTrue(launch_prop_path.is_file(), f"launch.properties not found at {launch_prop_path}")
 
         content = launch_prop_path.read_text(encoding="utf-8")
-        self.assertIn("JAVA_HOME_OVERRIDE=E:/03_Devops/JDK", content)
+        self.assertIn("JAVA_HOME_OVERRIDE=", content)
         self.assertIn("VMARGS=-XX:+UseZGC", content)
         self.assertIn("VMARGS=-XX:+ZGenerational", content)
         self.assertIn("VMARGS=-XX:+UseStringDeduplication", content)
-        self.assertIn("VMARGS=-Dapplication.cachedir=E:/03_Devops/Ghidra/.cache", content)
-        self.assertIn("VMARGS=-Dapplication.tempdir=E:/03_Devops/Ghidra/.temp", content)
+        self.assertIn("VMARGS=-Dapplication.cachedir=", content)
+        self.assertIn("VMARGS=-Dapplication.tempdir=", content)
         self.assertIn("VMARGS=-Dsuperghidra.codec.active=true", content)
 
-        # Cache & Temp directories existence
-        self.assertTrue(Path("E:/03_Devops/Ghidra/.cache").is_dir(), "E:/03_Devops/Ghidra/.cache does not exist")
-        self.assertTrue(Path("E:/03_Devops/Ghidra/.temp").is_dir(), "E:/03_Devops/Ghidra/.temp does not exist")
-
     def test_analyze_headless_bat_tuning(self):
-        headless_bat_path = Path("E:/03_Devops/Ghidra/support/analyzeHeadless.bat")
+        headless_bat_path = _GHIDRA_DIR / "support" / "analyzeHeadless.bat"
         self.assertTrue(headless_bat_path.is_file(), f"analyzeHeadless.bat not found at {headless_bat_path}")
 
         content = headless_bat_path.read_text(encoding="utf-8")
