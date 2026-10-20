@@ -1,6 +1,36 @@
 # SuperGhidra: High-Performance Ghidra Architecture & GPU Acceleration Suite
 
-**SuperGhidra** is an enterprise-grade performance, storage, and GPU offloading engine for NSA Ghidra and headless reverse-engineering pipelines. It systematically addresses Ghidra's three primary bottlenecks:
+<div align="center">
+
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](https://opensource.org/licenses/Apache-2.0)
+[![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Tests: 535 Passing](https://img.shields.io/badge/Tests-535%20Passing-brightgreen.svg?style=for-the-badge&logo=pytest&logoColor=white)]()
+[![Ghidra: 11.x | 12.x](https://img.shields.io/badge/Ghidra-11.x%20|%2012.x-EA4335.svg?style=for-the-badge)]()
+[![GPU Acceleration: WGPU](https://img.shields.io/badge/GPU-Vulkan%20|%20DX12%20|%20Metal-orange.svg?style=for-the-badge)]()
+[![SMT: Z3 Verified](https://img.shields.io/badge/SMT-Z3%20Verified-blueviolet.svg?style=for-the-badge)](https://github.com/Z3Prover/z3)
+[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg?style=for-the-badge)](CONTRIBUTING.md)
+
+**An enterprise-grade performance, storage compression, and GPU offloading engine for NSA Ghidra and headless reverse-engineering pipelines.**
+
+[Key Highlights](#-key-highlights) • [Architecture](#-key-architectural-pillars--frontiers) • [Quick Start](#️-quick-start-guide) • [Python API](#4-programmatic-python-api) • [Contributing](CONTRIBUTING.md) • [License](LICENSE)
+
+</div>
+
+---
+
+### ⚡ Key Highlights
+| Capability | Vanilla Ghidra | SuperGhidra | Multiplier |
+| :--- | :--- | :--- | :--- |
+| **Storage Footprint** | 16 KB uncompressed raw B-trees | **LZ4/Zstd + 64-bit Slot Directory** | **~85% disk reduction** |
+| **Daemon & Query Latency** | 5–15s cold JVM startup per invocation | **Sub-millisecond L2 SQLite cache** (<0.01 ms) | **>100x speedup** |
+| **ARM64 ADRP Sweeps** | Sequential CPU interpretation | **WGPU compute shaders** | **50M+ insns/sec (<1 ms)** |
+| **P-Code Lifter & SMT** | Heavy Java PCodeOp AST | **Zero-JVM 22-class lifter + Z3 SMT proofs** | **Formal mathematical equivalence** |
+| **Lock Contention** | Heavy `<project>.lock` OS file collisions | **In-memory JSON write-overlay & read-only engine** | **Zero lock contention** |
+| **LLM & Tool Ecosystem** | Custom single-threaded Python scripts | **38-tool Model Context Protocol (MCP) server** | **Autonomous agent workflows** |
+
+---
+
+**SuperGhidra** systematically addresses Ghidra's three primary bottlenecks:
 
 1. **Storage Layer Bloat & Lock Contention:** Compresses uncompressed 16 KB raw `db.buffers` via LZ4/Zstd, packs sparse B-trees with a 64-bit slot directory (shrinking `.rep` disk usage by ~85%), and eliminates OS file lock collisions (`<project>.lock`) via an in-memory / WAL multi-reader architecture and an in-engine Java BufferFile extension (`SuperGhidraCodec.jar`).
 2. **CPU Algorithmic Waste:** Replaces cold-start JVM invocations with a persistent lock-free daemon (`127.0.0.1:5073`), disables pathological cascade analyzers (`FindNoReturnFunctionsAnalyzer`), decouples AST token renames from expensive C++ SSA re-solving, verifies decompilation transformations mathematically via Z3 SMT, and implements an adaptive Speed-vs-CPU Resource Governor (`eco`, `balanced`, `turbo`, `auto`).
@@ -300,3 +330,21 @@ print("Synthetic DWARF5 ELF size:", len(dwarf_bytes), "bytes")
 - [`docs/benchmarks/SPEC_REFORMATION_BENCHMARK_REPORT.txt`](docs/benchmarks/SPEC_REFORMATION_BENCHMARK_REPORT.txt)
 - [`docs/benchmarks/PHASE2_BENCHMARK_REPORT.txt`](docs/benchmarks/PHASE2_BENCHMARK_REPORT.txt)
 - [`docs/benchmarks/BENCHMARK_REPORT.txt`](docs/benchmarks/BENCHMARK_REPORT.txt)
+
+---
+
+## 🤝 Community & Contributing
+
+We welcome contributions from reverse engineers, systems architects, and compiler developers!
+- **Contributing Guidelines:** Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) for safety invariants, testing workflows, and PR requirements.
+- **Code of Conduct:** Review our [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) for community standards.
+- **Security Policy:** To report vulnerabilities or security issues, refer to [`SECURITY.md`](SECURITY.md).
+- **Discussions & Issues:** Submit bugs via [Issue Templates](.github/ISSUE_TEMPLATE/) or start a [GitHub Discussion](https://github.com/yuatemycat/SuperGhidra/discussions).
+
+---
+
+## ⚖️ License
+
+SuperGhidra is open-source software released under the **[Apache License 2.0](LICENSE)**.
+Copyright © 2026 yuatemycat and SuperGhidra Contributors.
+

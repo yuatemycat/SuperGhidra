@@ -522,7 +522,7 @@ class SymbolicCFGDeflattener:
         cfg.recompute_predecessors()
         return removed_edges
 
-    def deflatten_state_machine(self, cfg: PCodeCFG) -> Dict[str, Any]:
+    def deflatten_state_machine(self, cfg: PCodeCFG, explicit_dispatcher_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Identifies the dispatcher header block (dominating a multi-way switch back-edge loop),
         maps state constants (`state_guard`) to worker basic blocks, resolves constant and
@@ -534,14 +534,17 @@ class SymbolicCFGDeflattener:
         dominators = cfg.compute_dominators()
 
         dispatcher_id: Optional[int] = None
-        for bid, blk in cfg.blocks.items():
-            if len(blk.successors) >= 3:
-                dominated_cases = [
-                    s for s in blk.successors if bid in dominators.get(s, set())
-                ]
-                if len(dominated_cases) >= 2:
-                    dispatcher_id = bid
-                    break
+        if explicit_dispatcher_id is not None and explicit_dispatcher_id in cfg.blocks:
+            dispatcher_id = explicit_dispatcher_id
+        else:
+            for bid, blk in cfg.blocks.items():
+                if len(blk.successors) >= 2:
+                    dominated_cases = [
+                        s for s in blk.successors if bid in dominators.get(s, set())
+                    ]
+                    if len(dominated_cases) >= 2 or len(blk.successors) >= 3:
+                        dispatcher_id = bid
+                        break
 
         if dispatcher_id is None:
             return {

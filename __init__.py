@@ -274,3 +274,5 @@ from .phase1_phase2_roadmap_engine import (
     run_phase1_phase2_demonstration,
 )
 
+from .superghidra.core.compilable_filter import CompilableDecompilerFilter
+
