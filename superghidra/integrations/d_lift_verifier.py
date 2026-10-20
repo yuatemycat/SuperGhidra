@@ -86,9 +86,36 @@ class ClangSyntaxGate:
 
     def verify_syntax(self, c_code: str) -> SyntaxCheckResult:
         t0 = time.perf_counter()
-        if self.compiler:
-            return self._verify_with_system_compiler(c_code, t0)
-        return self._verify_with_structural_parser(c_code, t0)
+        structural = self._verify_with_structural_parser(c_code, t0)
+        if not self.compiler:
+            return structural
+        compiled = self._verify_with_system_compiler(c_code, t0)
+        # gcc -fsyntax-only misses some rejects the structural gate must keep
+        # (missing return is a warning; brace diagnostics do not use the test strings).
+        if structural.passed and compiled.passed:
+            return compiled
+        diags: List[str] = []
+        for line in structural.diagnostics + compiled.diagnostics:
+            if line not in diags:
+                diags.append(line)
+        if not structural.passed and not compiled.passed:
+            reward = min(structural.reward, compiled.reward)
+            err_cnt = max(structural.error_count, compiled.error_count)
+        elif not structural.passed:
+            reward = structural.reward
+            err_cnt = structural.error_count
+        else:
+            reward = compiled.reward
+            err_cnt = compiled.error_count
+        return SyntaxCheckResult(
+            passed=False,
+            reward=round(reward, 4),
+            compiler_used=os.path.basename(self.compiler or compiled.compiler_used),
+            error_count=max(err_cnt, 1),
+            warning_count=compiled.warning_count + structural.warning_count,
+            diagnostics=diags,
+            elapsed_ms=round((time.perf_counter() - t0) * 1000.0, 3),
+        )
 
     def _verify_with_system_compiler(self, c_code: str, t0: float) -> SyntaxCheckResult:
         full_src = self.PREAMBLE + "\n" + c_code + "\n"
@@ -782,6 +809,151 @@ ssize_t safe_rw(int fd, const void *buf, size_t count) {
     }
 
 
+_DIFF_EXEC_INPUTS: Tuple[int, ...] = (0, 1, -1, 7, 16, 22, 100)  # 22 == 0x16
+_FN_DEF_RE = re.compile(r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^)]*)\)\s*\{")
+_FN_DEF_KEYWORDS = {"if", "while", "for", "switch", "catch", "sizeof"}
+
+
+def _rename_function_definition(source: str, new_name: str) -> Tuple[str, str]:
+    """Rename the first function definition so two translations can share one driver."""
+    for match in _FN_DEF_RE.finditer(source):
+        if match.group("name") in _FN_DEF_KEYWORDS:
+            continue
+        renamed = source[: match.start("name")] + new_name + source[match.end("name") :]
+        return renamed, match.group("params")
+    raise ValueError("no function definition found")
+
+
+def _c_param_arity(params: str) -> int:
+    text = params.strip()
+    if not text or text == "void":
+        return 0
+    depth = 0
+    count = 1
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            count += 1
+    return count
+
+
+def _differential_driver(original_c: str, candidate_c: str, arity: int) -> str:
+    """One gcc translation unit: orig_fn and cand_fn compared on a fixed integer input set."""
+    inputs = ", ".join(str(value) for value in _DIFF_EXEC_INPUTS)
+    if arity <= 0:
+        loop = """
+        {
+            long long ro = (long long)orig_fn();
+            long long rc = (long long)cand_fn();
+            if (ro != rc) {
+                fprintf(stderr, "MISMATCH orig=%lld cand=%lld\\n", ro, rc);
+                return 1;
+            }
+        }
+"""
+    else:
+        arg_list = ", ".join(f"sg_args[{index}]" for index in range(arity))
+        loop = f"""
+        int sg_idx[{arity}] = {{0}};
+        for (;;) {{
+            int sg_args[{arity}];
+            int sg_k;
+            for (sg_k = 0; sg_k < {arity}; ++sg_k) sg_args[sg_k] = sg_inputs[sg_idx[sg_k]];
+            long long ro = (long long)orig_fn({arg_list});
+            long long rc = (long long)cand_fn({arg_list});
+            if (ro != rc) {{
+                fprintf(stderr, "MISMATCH");
+                for (sg_k = 0; sg_k < {arity}; ++sg_k)
+                    fprintf(stderr, " a%d=%d", sg_k, sg_args[sg_k]);
+                fprintf(stderr, " orig=%lld cand=%lld\\n", ro, rc);
+                return 1;
+            }}
+            {{
+                int sg_p = 0;
+                while (sg_p < {arity}) {{
+                    sg_idx[sg_p]++;
+                    if (sg_idx[sg_p] < sg_ninputs) break;
+                    sg_idx[sg_p] = 0;
+                    sg_p++;
+                }}
+                if (sg_p == {arity}) break;
+            }}
+        }}
+"""
+    return (
+        "#include <stdio.h>\n"
+        "#include <stdint.h>\n"
+        "#include <stddef.h>\n"
+        "#include <stdbool.h>\n"
+        "\n"
+        f"{original_c}\n"
+        "\n"
+        f"{candidate_c}\n"
+        "\n"
+        "int main(void) {\n"
+        f"    static const int sg_inputs[] = {{ {inputs} }};\n"
+        "    const int sg_ninputs = (int)(sizeof(sg_inputs) / sizeof(sg_inputs[0]));\n"
+        "    (void)sg_ninputs;\n"
+        f"{loop}"
+        '    printf("MATCH\\n");\n'
+        "    return 0;\n"
+        "}\n"
+    )
+
+
+def differential_execution_oracle(
+    original_c: str,
+    candidate_c: str,
+) -> tuple[bool, float, str | None]:
+    """
+    Gate 2 on the live skin path: compile original and candidate and compare
+    return values. gcc is used when it is on PATH; otherwise the portable
+    MSVC cl.exe is. A mismatch or compile failure is a counterexample.
+    This oracle never falls back to constant-set comparison.
+    """
+    from superghidra.core.native_compiler import compile_and_run
+
+    try:
+        orig_src, orig_params = _rename_function_definition(original_c, "orig_fn")
+        cand_src, cand_params = _rename_function_definition(candidate_c, "cand_fn")
+    except ValueError as exc:
+        return False, 0.0, f"compile failure: {exc}"
+
+    orig_arity = _c_param_arity(orig_params)
+    cand_arity = _c_param_arity(cand_params)
+    if orig_arity != cand_arity:
+        return (
+            False,
+            0.0,
+            f"MISMATCH arity orig={orig_arity} cand={cand_arity}",
+        )
+
+    driver = _differential_driver(orig_src, cand_src, orig_arity)
+    try:
+        ok, output, error = compile_and_run(
+            driver,
+            language="C",
+            timeout_compile=20.0,
+            timeout_run=10.0,
+        )
+    except OSError as exc:
+        return False, 0.0, f"compile failure: {exc}"
+
+    combined = f"{output or ''}\n{error or ''}"
+    mismatch = next((line.strip() for line in combined.splitlines() if "MISMATCH" in line), None)
+    if mismatch:
+        return False, 0.0, mismatch
+    if ok and "MATCH" in (output or ""):
+        return True, 1.0, None
+    detail = (error or output or "compile failed").strip().replace("\n", " | ")
+    if ok:
+        return False, 0.0, f"MISMATCH execution: {detail[:500]}"
+    return False, 0.0, f"compile failure: {detail[:500]}"
+
+
 def symbolic_write_retry_oracle(original_c: str, candidate_c: str) -> Tuple[bool, float, Optional[str]]:
     """
     Symbolic & Concolic Co-Execution Oracle for `safe_rw` / `FUN_0011c6ec`:
@@ -915,6 +1087,7 @@ __all__ = [
     "DLiftRewardEngine",
     "build_dlift_benchmark_candidates",
     "symbolic_write_retry_oracle",
+    "differential_execution_oracle",
     "run_dlift_verification_suite",
 ]
 

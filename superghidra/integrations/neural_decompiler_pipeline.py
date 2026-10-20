@@ -445,6 +445,45 @@ class NeuralDecompilerPipeline:
             error=None,
         )
 
+    def skin_refine(
+        self,
+        original_c: str,
+        candidate_c: str,
+        function_address: int = 0x101000,
+    ) -> dict:
+        """
+        Live skin path. Gate 2 is always differential execution of original C
+        against candidate C. Readability runs only after syntax and semantics pass.
+        """
+        from superghidra.integrations.d_lift_verifier import (
+            DLiFTPipeline,
+            differential_execution_oracle,
+        )
+
+        report = DLiFTPipeline().evaluate_candidate(
+            candidate_name=f"skin_{function_address:x}",
+            candidate_c=candidate_c,
+            original_c=original_c,
+            func_name=f"skin_{function_address:x}",
+            oracle_runner=differential_execution_oracle,
+        )
+        syntax_passed = bool(report.syntax and report.syntax.passed)
+        semantics_passed = bool(report.semantics and report.semantics.passed)
+        readability_ran = bool(
+            syntax_passed and semantics_passed and report.readability is not None
+        )
+        semantics_method = report.semantics.method if report.semantics is not None else None
+        counterexample = report.semantics.counterexample if report.semantics is not None else None
+        return {
+            "accepted": syntax_passed and semantics_passed,
+            "syntax_passed": syntax_passed,
+            "semantics_passed": semantics_passed,
+            "semantics_method": semantics_method,
+            "readability_ran": readability_ran,
+            "counterexample": counterexample,
+            "d_score": report.d_score,
+        }
+
     def verify_and_commit(
         self,
         skeleton: DecompiledSkeleton,
@@ -542,27 +581,35 @@ class NeuralDecompilerPipeline:
             except Exception as e:
                 logger.warning(f"[NeuralDecompilerPipeline] SMT verification invocation failed: {e}")
 
-        # D-LiFT 3-Gate Neural Refinement Verification (U4)
+        # D-LiFT 3-Gate Neural Refinement Verification (U4).
+        # Live skin path: differential execution, never the constant-set fallback.
         if c_code_snippet is not None:
             try:
-                from superghidra.integrations.d_lift_verifier import DLiFTPipeline
-                dlift_pipeline = DLiFTPipeline()
-                dlift_rep = dlift_pipeline.evaluate_candidate(
-                    candidate_name=prediction.predicted_function_name,
-                    candidate_c=c_code_snippet,
+                skin = self.skin_refine(
                     original_c=skeleton.raw_source or c_code_snippet,
-                    func_name=prediction.predicted_function_name,
+                    candidate_c=c_code_snippet,
+                    function_address=skeleton.function_address,
                 )
-                if dlift_rep.syntax and not dlift_rep.syntax.passed:
-                    logger.warning(f"[NeuralDecompilerPipeline] D-LiFT Gate 1 syntax check failed: {dlift_rep.d_score}")
+                if not skin["syntax_passed"]:
+                    logger.warning(
+                        f"[NeuralDecompilerPipeline] D-LiFT Gate 1 syntax check failed: {skin['d_score']}"
+                    )
                     is_safe = False
-                elif dlift_rep.semantics and not dlift_rep.semantics.passed:
-                    logger.warning(f"[NeuralDecompilerPipeline] D-LiFT Gate 2 semantic check failed: {dlift_rep.semantics.counterexample}")
+                elif not skin["semantics_passed"]:
+                    logger.warning(
+                        "[NeuralDecompilerPipeline] D-LiFT Gate 2 semantic check failed: "
+                        f"{skin['counterexample']}"
+                    )
                     is_safe = False
                 else:
-                    proof_hashes.append(f"DLIFT_PROOF_{prediction.predicted_function_name[:12]}_{round(dlift_rep.d_score, 2)}")
+                    proof_hashes.append(
+                        f"DLIFT_PROOF_{prediction.predicted_function_name[:12]}_{round(skin['d_score'], 2)}"
+                    )
             except Exception as e:
-                logger.debug(f"[NeuralDecompilerPipeline] D-LiFT gate evaluation skipped: {e}")
+                is_safe = False
+                recorded = f"DLIFT_EXCEPTION_{type(e).__name__}: {e}"
+                logger.warning(f"[NeuralDecompilerPipeline] D-LiFT gate evaluation failed: {recorded}")
+                proof_hashes.append(recorded[:300])
 
         # If a ReconstructionObligationLedger is wired, register formal obligations
         if self.ledger is not None:

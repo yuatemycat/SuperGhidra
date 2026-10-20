@@ -111,37 +111,14 @@ OVERLAY_FILENAME = "ghidra_overlay.json"
 DAEMON_LOG_FILENAME = "ghidra_oracle_daemon.log"
 L2_CACHE_FILENAME = "ghidra_oracle_cache.db"
 
-DEFAULT_PROJECT_CANDIDATES = [
-    # 1. Intra-farm libg_analysis
-    (
-        r"E:\02_Projects\Intra-farm\pyghidra_mcp_projects",
-        "libg_analysis",
-        "libg_17381_exact.so-3c8447",
-    ),
-    # 2. Intra-farm hayday_startup
-    (
-        r"E:\02_Projects\Intra-farm\Emulator\ghidra_proj\hayday_startup",
-        "hayday_startup",
-        "libg.so",
-    ),
-    # 3. Intra-farm old_my_project
-    (
-        r"E:\02_Projects\Intra-farm\pyghidra_mcp_projects\old_my_project",
-        "my_project",
-        "libndk_translation_orig.so-012633",
-    ),
-    # 4. SuperGhidra / custom project dir if placed in local directory
-    (
-        r"E:\02_Projects\SuperGhidra\pyghidra_mcp_projects",
-        "libg_analysis",
-        "libg_17381_exact.so-3c8447",
-    ),
-]
+# No built-in projects: pass --project-dir/--project-name, or set
+# SUPERGHIDRA_PROJECTS to "dir,name[,program]" entries separated by ";".
+DEFAULT_PROJECT_CANDIDATES: List[Tuple[str, str, Optional[str]]] = []
 PROJECT_CANDIDATES = list(DEFAULT_PROJECT_CANDIDATES)
 
 
 def get_project_candidates() -> List[Tuple[str, str, Optional[str]]]:
-    """Returns candidate project tuples, checking SUPERGHIDRA_PROJECTS env var first."""
+    """Returns candidate project tuples from the SUPERGHIDRA_PROJECTS env var."""
     env_projects = os.environ.get("SUPERGHIDRA_PROJECTS")
     candidates: List[Tuple[str, str, Optional[str]]] = []
     if env_projects:
@@ -171,24 +148,16 @@ logger = logging.getLogger("ghidra_oracle")
 def setup_environment(ghidra_dir: Optional[str] = None, java_home: Optional[str] = None):
     """Configures JDK 21 and Ghidra environment paths before starting PyGhidra."""
     g_dir = ghidra_dir or os.environ.get("GHIDRA_INSTALL_DIR")
-    if not g_dir:
-        default_ghidra = r"E:\03_Devops\Ghidra"
-        if os.path.exists(default_ghidra):
-            g_dir = default_ghidra
     if g_dir:
         os.environ["GHIDRA_INSTALL_DIR"] = g_dir
 
     j_home = java_home or os.environ.get("JAVA_HOME")
-    if not j_home:
-        default_jdk = r"E:\03_Devops\JDK"
-        if os.path.exists(default_jdk):
-            j_home = default_jdk
     if j_home:
         os.environ["JAVA_HOME"] = j_home
         java_bin = os.path.join(j_home, "bin")
         cur_path = os.environ.get("PATH", "")
-        if java_bin not in cur_path:
-            os.environ["PATH"] = java_bin + ";" + cur_path
+        if java_bin not in cur_path.split(os.pathsep):
+            os.environ["PATH"] = java_bin + os.pathsep + cur_path
 
 
 # ==============================================================================
@@ -611,6 +580,7 @@ class WriteOverlay:
         self._lock = threading.Lock()
         self.renames: Dict[str, str] = {}
         self.comments: Dict[str, str] = {}
+        self.prototypes: Dict[str, str] = {}
         self.load()
 
     def load(self) -> None:
@@ -621,6 +591,7 @@ class WriteOverlay:
                         data = json.load(f)
                         self.renames = {normalize_hex_key(k): v for k, v in data.get("renames", {}).items()}
                         self.comments = {normalize_hex_key(k): v for k, v in data.get("comments", {}).items()}
+                        self.prototypes = {normalize_hex_key(k): v for k, v in data.get("prototypes", {}).items()}
                 except Exception as e:
                     logger.warning(f"Failed to load write-overlay from {self.filepath}: {e}")
 
@@ -630,7 +601,11 @@ class WriteOverlay:
                 temp_file = self.filepath + ".tmp"
                 with open(temp_file, "w", encoding="utf-8") as f:
                     json.dump(
-                        {"renames": self.renames, "comments": self.comments},
+                        {
+                            "renames": self.renames,
+                            "comments": self.comments,
+                            "prototypes": self.prototypes,
+                        },
                         f,
                         indent=2,
                     )
@@ -658,6 +633,23 @@ class WriteOverlay:
             for k in [normalize_hex_key(va), normalize_hex_key(rva)]:
                 if k in self.renames:
                     return self.renames[k]
+        return None
+
+    def set_prototype(self, addr_input: Any, prototype_text: str) -> None:
+        """Record an IDA-style prototype binding. Never writes a Ghidra ``.rep``."""
+        key = normalize_hex_key(addr_input)
+        with self._lock:
+            self.prototypes[key] = prototype_text
+        self.save()
+
+    def get_prototype(self, va: int, rva: Optional[int] = None) -> Optional[str]:
+        with self._lock:
+            keys = [normalize_hex_key(va)]
+            if rva is not None:
+                keys.append(normalize_hex_key(rva))
+            for k in keys:
+                if k in self.prototypes:
+                    return self.prototypes[k]
         return None
 
     def get_comment(self, va: int, rva: int) -> Optional[str]:
@@ -716,6 +708,7 @@ class WriteOverlay:
         with self._lock:
             self.renames.clear()
             self.comments.clear()
+            self.prototypes.clear()
         self.save()
 
 
@@ -927,6 +920,11 @@ class GhidraOracleSession:
             if is_explicit:
                 raise RuntimeError(
                     f"Failed to open requested Ghidra project '{self.project_name}' in '{self.project_dir}': {last_err}"
+                )
+            if not candidates:
+                raise RuntimeError(
+                    "No Ghidra project configured. Pass --project-dir and --project-name, "
+                    "or set SUPERGHIDRA_PROJECTS=\"<dir>,<name>[,<program>]\"."
                 )
             raise RuntimeError(
                 f"Could not open any Ghidra project candidates in read-only mode! Last error: {last_err}"

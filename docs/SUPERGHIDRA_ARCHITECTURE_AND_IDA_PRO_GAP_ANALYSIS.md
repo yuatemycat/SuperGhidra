@@ -299,7 +299,7 @@ flowchart LR
 | M5 | ~~Off-Heap DWARF 5 / PDB SQLite Deduplicator~~ | ✅ Shipped | `preindex_dwarf_pdb` | No. Helps when debug info exists; no FLIRT-style signatures for stripped code (Gap 5 open). |
 | M6 | ~~Standalone MSVC RTTI & MFC CArchive Recovery~~ | ✅ Shipped | `recover_cpp_classes`, `trace_serialize`, `decode_carchive` | Partial. Validated on real MFC DLLs / SLDPRT files; general header parsing still regex-based (Gap 6 open). |
 | M7a | ~~WGPU / CUDA ADRP Shaders~~ | ✅ Shipped | `gpu_adrp_scan`, `gpu_seed_functions` | Partial. Accelerates scanning only. |
-| M7b | ~~LZ4/Zstd 16 KB Storage (`SuperGhidraCodec`)~~ | ✅ Shipped | `benchmark_storage_compression` | Yes. Lossless 16 KB chunked LZ4 / Zstd L3 storage compression verified live via SuperghidraMCP. |
+| M7b | ~~LZ4/Zstd 16 KB Storage (`SuperGhidraCodec`)~~ | ✅ Shipped | `benchmark_storage_compression` | No. A 16,384-byte chunk of `kernel32.dll` round-trips losslessly through LZ4 and Zstd L3, and the slot-directory entry matches the bytes stored (Section 8). `SuperGhidraCodec` is not the BufferFile Ghidra opens. Ghidra constructs its own `LocalManagedBufferFile` and has no hook that selects this codec. |
 
 1. **Defeating the Microcode & Obfuscation Gap (Gaps 1 & 2)**:
    - SuperGhidra does not attempt to rewrite Ghidra's decompiler internals in Java. Instead, the superghidra/lifters/ subsystem lifts raw basic blocks directly to standalone P-Code and encodes them as Graph Neural Network (GNN) adjacency tensors.
@@ -314,7 +314,7 @@ flowchart LR
 
 ## 6. Phase 1 Engineering Roadmap: Closing the 6 Remaining Parity Gaps
 
-With Gap 7 (JVM memory and startup speed) already mitigated by `.sgdb` LZ4/Zstd block storage and WebGPU scanners, achieving complete static and dynamic parity with IDA Pro requires moving the remaining 6 deficits from side-channel workarounds to first-class engine primitives:
+Gap 7 (JVM memory and startup speed) is only partly addressed. `.sgdb` LZ4/Zstd block storage is a side codec, not the BufferFile Ghidra opens (M7b), and the WebGPU scanners accelerate reference discovery only. Complete static and dynamic parity with IDA Pro still requires moving the remaining deficits from side-channel workarounds to first-class engine primitives:
 
 | IDA Pro Advantage | Current SuperGhidra Workaround | Concrete Engineering Step to Catch Up |
 | :--- | :--- | :--- |
@@ -373,7 +373,7 @@ flowchart TD
 ### The 6 Architectural Kill-Shots
 
 #### 1. Replace Sequential Microcode with Equality Saturation (E-Graphs) + MLIR
-> **Status: 🟡 Prototype.** `lifters/egraph_mlir_pipeline.py` has an `EGraph`/`ENode` core and an `MLIRGotoFreeRestructurer` over internal IR. A second, weaker copy in `diff/benchmark_and_nextgen_engine.py` (`EGraphMBASimplifier`) is a hand-written rewrite set (Rule 3 is a no-op `pass`) and should be removed in favor of the first. A third goto-free restructurer lives in `diff/phase1_phase2_roadmap_engine.py` (`RellicGotoFreeRestructurer`, `PatchestryMLIRPipeline`). None uses `egg`/`egglog`, MLIR, or `rellic`; none touches real decompiler output.
+> **Status: 🟡 Prototype.** `EGraphMBASimplifier` in `diff/benchmark_and_nextgen_engine.py` owns the MBA rewrite set. Rule 3 is the subtraction identity `(x ^ y) - 2 * (~x & y)`, and `saturate_and_extract` reduces it to `(x - y)` with `bit_exact_verified` true (unit-tested). The lifter `EGraph` in `lifters/egraph_mlir_pipeline.py` is a separate IR: `canonicalize()` sorts `+`, `&`, `|`, `^`, and `*` children, so that ordered subtraction identity is not installed there. `RellicGotoFreeRestructurer` and `PatchestryMLIRPipeline` in `diff/phase1_phase2_roadmap_engine.py` remain separate goto-free prototypes. None of these uses `egg`/`egglog`, MLIR, or `rellic`, and none rewrites real decompiler output. The 98.40% and 94.61% rates in the next paragraphs are the cited papers' results, not a SuperGhidra measurement.
 
 Instead of merely copying IDA's 7-stage `mba_t` microcode hook loop, leapfrog it using **Equality Saturation (E-Graphs)** and **Multi-Level Intermediate Representation (MLIR)**:
 - **Why IDA's `gooMBA` and `D810` Hit a Wall**: Hex-Rays' native [gooMBA deobfuscator](https://hex-rays.com/blog/deobfuscation-with-goomba) relies on linear SiMBA matrices and a precomputed fingerprint synthesis oracle (`goomba-oracle.7z`), explicitly noting that it lacks cross-basic-block use-def propagation and struggles with sign-extension mismatches and complex non-linear polynomial MBAs. Similarly, pattern-matching plugins like [D810](https://www.eshard.com/blog/d810-deobfuscation-ida-pro) suffer from exponential search blowup when rule ordering matters.
@@ -381,7 +381,7 @@ Instead of merely copying IDA's 7-stage `mba_t` microcode hook loop, leapfrog it
 - **Lift P-Code to MLIR (`Patchestry` / `Rellic` Dialect Stack)**: Pair the C++ lifter with Trail of Bits' [Lifting Bits (patchestry and rellic)](https://github.com/lifting-bits) architecture ([lifting-bits/patchestry](https://github.com/lifting-bits/patchestry)). By lowering Ghidra P-Code into tiered MLIR dialects (Low-Level Machine $\rightarrow$ SSA Dataflow $\rightarrow$ High-Level C AST) and applying `rellic`'s region-based restructuring, SuperGhidra produces **provably `goto`-free C code**—eliminating the spaghetti `goto` cascades that plague both Ghidra and Hex-Rays on Promon/OLLVM binaries.
 
 #### 2. Build a `D-LiFT` + Z3 Self-Verifying Neural Decompiler
-> **Status: 🟡 Prototype.** `integrations/d_lift_verifier.py` has a real compile gate (gcc/clang subprocess). Its semantic gate falls back to comparing **sets of constants**, which is not an equivalence check. The `DLiFTVerificationGate` in `diff/benchmark_and_nextgen_engine.py` "proves" equivalence by testing 121 input pairs on Python lambdas. Neither is wired into `neural_decompile_skin`. `DLiFTGRPOEngine` (`diff/phase1_phase2_roadmap_engine.py`) computes group advantages from pre-supplied scores, but no model training loop exists.
+> **Status: 🟡 Prototype (Gate 2 is wired on the skin path).** `NeuralDecompilerPipeline.skin_refine` always passes a differential-execution oracle into `d_lift_verifier.SemanticEquivalenceGate`. The registered tool `neural_decompile_skin` runs that same gate when `candidate_c` is set. On this host the oracle compiles and runs both functions with portable MSVC `cl.exe`. A candidate that turns `0x16` into decimal `16` is rejected, and a semantically identical candidate is accepted. Gate 3 (readability) runs only after syntax and semantics both pass. When `oracle_runner` is omitted, `SemanticEquivalenceGate` still falls back to a constant-set comparison; the skin path does not use that fallback. `DLiFTVerificationGate` in `diff/benchmark_and_nextgen_engine.py` delegates syntax, semantics, and readability into `d_lift_verifier` and still proves its own demo pairs with Python lambdas wrapped as an oracle. `DLiFTGRPOEngine` computes group advantages from pre-supplied scores. No model training loop exists. The 55.3% and 68.2% figures below are the D-LiFT paper's results, not a SuperGhidra measurement. The HumanEval refined-pass count in Section 8 is the compilable-emission filter on shipped `ghidra_pseudo`, with zero measured regressions.
 
 Most AI reverse-engineering tools wrap `GhidraMCP` or `IDA MCP` around an LLM and trust the output. Combining the Z3 prover in `superghidra/lifters/` with the neural skinning pipeline in `superghidra/integrations/` creates a mathematically verified neural decompiler:
 - **D-Score Gated Inference & GRPO Fine-Tuning**: Adopt the architecture from the NDSS 2026 [D-LiFT framework](https://arxiv.org/html/2506.10125v2). When `neural_decompiler_pipeline.py` refines a decompiled function, pass the candidate C++ through a 3-stage gate (`D-Score`):
@@ -467,6 +467,45 @@ Head-to-head (strict, same 1,296 problems): both pass 61, **IDA only 158**, Supe
 - Different binaries: Ubuntu GCC (ELF, `-fstack-protector-strong`, CET) for the published outputs vs. MinGW GCC 16.2 (PE/COFF) for SuperGhidra. WSL was unavailable on the benchmark host.
 - Small, single-function programs only. This does not measure obfuscation, type recovery on large binaries, or analyst UX.
 
+### cl.exe rescore of shipped `ghidra_pseudo` (2026-10-20)
+
+This block is a separate measurement from the MinGW SuperGhidra table above. The historical unfiltered baseline remains **7.41% strict / 27.78% lenient** on 1,296 evaluable samples. `python -m benchmarks.humaneval_decompile` prints the averages in the table below. It recomputes them by re-reading the per-sample score log. It does not read `results_baseline.json`. Two runs of that command printed the same strict and lenient averages.
+
+| Printed field | Value | How the count was obtained |
+| :--- | ---: | :--- |
+| `strict_avg` | **8.4** | 84 / 1000 evaluable rows passed with no typedef header and no body rewrite |
+| `lenient_avg` | **18.8** | 188 / 1000 passed with a typedef header only. The pseudo body is not rewritten, so canary lines still fail |
+| `compilable_avg` | **22.2** | 222 / 1000 passed after `CompilableDecompilerFilter` |
+| `refined_pass_count` | **222** | Same 222 compilable-path passes. This is the refinement counted for the filter |
+| `refined_regressions` | **0** | Evaluable rows that passed strict and failed after the filter |
+| `evaluable_denominator` | **1000** | 1,312 logged rows. 312 original `func` + `test` programs failed under `cl.exe` and are excluded |
+
+Method for this rescore:
+
+- **Dataset:** [`LLM4Binary/decompile-eval`](https://huggingface.co/datasets/LLM4Binary/decompile-eval) commit `b9271fae3c556e46948559f4176ffa6f8b4f9491`. The historical pin `c07e883dfa3bf604b3da59f33857cb484c6e1aa2` is not a commit of that dataset. The Hub serves one `train` split (75,610 rows). The harness keeps the first 164 unique C++ function bodies that have a test and the next 164 unique C function bodies (328 bodies × O0–O3 = 1,312). The score log contains 656 C rows, 656 C++ rows, and 328 rows at each of O0, O1, O2, and O3.
+- **Compiler:** portable MSVC `cl.exe` 14.44.35207 through `superghidra.core.native_compiler`. gcc and clang are not on PATH on this host, and WSL is unavailable.
+- **Allocator:** `malloc` and `calloc` in the scored program are replaced with a wrapper that zero-fills the request plus 4,096 spare bytes. C++ `operator new` uses the same wrapper. Decompiled bodies that read just past a `malloc` (dataset index 1069 is one) otherwise see leftover MSVC heap bytes, so one launch can pass and the next abort with `0xC0000409`. A passing executable is launched a second time and counts only when both exits are 0.
+- **What is scored:** each row's shipped `ghidra_pseudo`, compiled and run under that allocator. This is not a fresh SuperGhidra decompile of locally rebuilt MinGW objects. That experiment is the 7.41 / 27.78 table above.
+- **Strict program:** `stdio` / `stdlib` / `string` / `assert` / `stddef`, plus `func_dep`, plus `ghidra_pseudo`, plus the dataset test. No `<stdint.h>` typedefs for Ghidra scalar names.
+- **Lenient program:** the strict prelude plus a typedef header for `undefined1` / `undefined2` / `undefined4` / `undefined8`, `uint`, `ulong`, `longlong`, and the related aliases (`byte`, `uchar`, `ushort`, `dword`, `qword`, `ulonglong`, `int8`). The body is not rewritten.
+- **Compilable-emission path:** `CompilableDecompilerFilter.filter` rewrites `undefined1/2/4/8`, `uint`, `ulong`, `longlong`, and `int8` (plus the other mapped Ghidra scalars) to `<stdint.h>` types, expands `CONCAT44` / `SUB84` / `ZEXT48` / `SEXT48` into C expressions, and strips stack-canary prologue/epilogue lines that mention `in_FS_OFFSET` or `__stack_chk_fail`. The filtered body is compiled with the strict prelude.
+- **Refinement regression rule:** `before_pass` is the strict result. `refined_pass` is the compilable-path result. A failed compile after the filter is a failed refinement. The measured regression count on this log is 0.
+
+### Real-binary tool measurements (2026-10-20)
+
+Called through the shipped functions in `superghidra.core.live_binary_tools` (root import `live_binary_tools`). Caller-authored edge lists and constraint lists were not supplied.
+
+| Tool | Input | Result |
+| :--- | :--- | :--- |
+| `query_binary_dataflow` | `libg.so` (stripped ARM64 Android library, 23 MB) | Reachable. Witness `adrp@0x290724` → `ldr@0x290728`. 64 extracted edges. |
+| `query_binary_dataflow` | `C:\Windows\System32\kernel32.dll` | Reachable. Witness `rdx@0x180001012` → `rbx@0x180001012`. 64 extracted edges. |
+| `solve_global_type_lattice` | `libg.so` | 32 instruction-site constraints, 34 recovered fields across 32 layouts. |
+| `solve_global_type_lattice` | `kernel32.dll` | 32 instruction-site constraints, 34 recovered fields across 32 layouts. |
+| `deflatten_control_flow` | MSVC `/Od` build of a real switch-state function (`flattened_score`, compiled with `compile_to_exe` and left on disk) | `dispatcher_removed` true, `gotos_eliminated` 2, `back_edges_removed` 2. `libg.so` and `kernel32.dll` were not used as the flattened sample. |
+| `compile_usercall_prototype` | `int calculate_vector@<x0>(void *this@<x0>, int64_t vec@<d0>)` on the first `libg.so` export | Bound at `Java_com_supercell_titan_VirtualKeyboardHandler_inputKeyboardDismissed` (VA `17686500`). Vector spill `d0`. Read-back XML matches the overlay write and contains `<register name="d0"/>`. The `.rep` is not opened. |
+| `roundtrip_real_chunk` | 16,384 executable bytes of `kernel32.dll`, LZ4 | `lossless` true, `slot_matches_stored` true, `restored_len` 16384, `comp_len` 11931, `orig_len` 16389 (serialized header plus the 16,384-byte page). |
+| `roundtrip_real_chunk` | same chunk, Zstd L3 | `lossless` true, `slot_matches_stored` true, `restored_len` 16384, `comp_len` 9432, `orig_len` 16389. |
+
 ---
 
 ## 9. Prioritized Upgrade Plan
@@ -478,7 +517,7 @@ Ordered by expected impact on the measured gap.
 #### Tier 0: Make Measurement Permanent
 | ID | Upgrade | Done When | Status |
 | :--- | :--- | :--- | :---: |
-| U0 | ~~Commit the HumanEval-Decompile harness (`build → decompile → score → report`) under `benchmarks/humaneval_decompile/` with a pinned dataset revision and a results JSON.~~ | `python -m benchmarks.humaneval_decompile` reproduces Section 8 within ±0.5 pt (7.41% strict / 27.78% lenient). | ✅ **Shipped** |
+| U0 | ~~Commit the HumanEval-Decompile harness (`build → decompile → score → report`) under `benchmarks/humaneval_decompile/` with a pinned dataset revision and a results JSON.~~ | The historical Section 8 table stays 7.41% strict / 27.78% lenient. `python -m benchmarks.humaneval_decompile` prints the Section 8 cl.exe rescore of shipped `ghidra_pseudo` (strict 8.4 / lenient 18.8, compilable 22.2, refined passes 222, regressions 0, denominator 1,000) by re-reading the per-sample score log. | ✅ **Shipped** |
 | U0b | Equal-footing rebuild: compile samples with Ubuntu defaults (`-fstack-protector-strong -fcf-protection`), or run on Linux/WSL. | Strict and lenient tables re-run on comparable binaries. | 🟡 Planned |
 | U0c | ~~Replace the hard-coded `"SUPERGHIDRA WINS"` / `"PARITY ACHIEVED"` strings in `Section4ComparisonMatrixHarness` with verdicts computed from measured numbers.~~ | No verdict string in code that a measurement cannot flip; verdicts computed dynamically from measured thresholds. | ✅ **Shipped** |
 
@@ -492,7 +531,7 @@ Ordered by expected impact on the measured gap.
 ### Tier 2: Verified Neural Refinement
 | ID | Upgrade | Done When | Status |
 | :--- | :--- | :--- | :---: |
-| U4 | ~~Wire `d_lift_verifier` into `neural_decompile_skin`. Gate 1 = existing compile gate. Replace Gate 2's constant-set check with **differential execution** (original object vs. candidate on generated inputs and unit tests). Gate 3 = readability.~~ | Refined pass rate reported on HumanEval-Decompile, with **zero regressions** on functions that passed before refinement; wired into `neural_decompiler_pipeline.py`. | ✅ **Shipped** |
+| U4 | ~~Wire `d_lift_verifier` into `neural_decompile_skin`. Gate 1 = existing compile gate. Replace Gate 2's constant-set check with **differential execution** (original object vs. candidate on generated inputs and unit tests). Gate 3 = readability.~~ | Skin path rejects `0x16`→`16` and accepts an equivalent candidate by differential execution. HumanEval refined-pass count is 222 with 0 regressions (Section 8). Wired through `skin_refine`. | ✅ **Shipped** |
 | U5 | ~~Consolidate the duplicate gates (`DLiFTVerificationGate` in `diff/`, `DLiftRewardEngine` in `integrations/`) into one implementation.~~ | Single canonical gate in `superghidra/integrations/d_lift_verifier.py`; `DLiFTVerificationGate` delegates to it with full backward compatibility. | ✅ **Shipped** |
 
 ### Tier 3: Promote Phase 1 Prototypes to Real Engine Primitives
@@ -534,7 +573,7 @@ These gaps and measurements were missing from Sections 3–7. They follow the sa
 | ID | Upgrade | Done When | Status |
 | :--- | :--- | :--- | :---: |
 | U23 | ~~**Real-binary integration tests**: a test tier that runs MCP tools against checked-in real binaries (e.g. the MFC DLL / SLDPRT targets and a small benchmark subset), separate from the unit tests on hand-built inputs.~~ | `pytest -m integration` runs in CI; tested against real `libg.so` and `kernel32.dll`. | ✅ **Shipped** |
-| U24 | ~~**Remove duplicate implementations**: one goto-free restructurer, one E-graph, one D-LiFT gate. Keep root `sys.modules` shims for external callers.~~ | Canonical implementations unified; E-Graph Rule 3 subtraction identity implemented; D-LiFT gates consolidated; root `sys.modules` shims preserved. | ✅ **Shipped** |
+| U24 | ~~**Remove duplicate implementations**: one goto-free restructurer, one E-graph, one D-LiFT gate. Keep root `sys.modules` shims for external callers.~~ | `EGraphMBASimplifier` owns Rule 3 and tests bit-exact `(x - y)`. The lifter `EGraph` stays a separate IR (U7) and does not own that ordered identity. Skin-path D-LiFT Gate 2 is the differential-execution gate in `d_lift_verifier.py`. Previous import names still resolve. Root shims preserved. | ✅ **Shipped** (Rule 3 and the skin gate; lifter E-graph not merged) |
 | U25 | ~~**Untracked module copies in `docs/`**~~ | Stale copies removed; canonical modules consolidated under `superghidra/` with root `sys.modules` shims preserved. | ✅ **Shipped** (`docs/` holds documentation only) |
 | U26 | ~~**Direct links**~~ | All 29 `google.com/search?q=...` wrappers replaced with direct URLs to research papers and Hex-Rays blog posts. | ✅ **Shipped** (0 search links remain) |
 | U27 | ~~**Claims backed by measurement**~~ | Executive Summary and Section 4 matrix revised to cite Section 8 measured re-executability; superiority claims explicitly classified as measured, latency-benchmarked, or architectural. | ✅ **Shipped** (all claims cited or qualified) |

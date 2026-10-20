@@ -65,6 +65,7 @@ from superghidra.diff.benchmark_and_nextgen_engine import (
     SessionForkState,
     TypeConfidenceTier,
     TypeConstraint,
+    compute_matrix_verdicts,
 )
 
 
@@ -348,6 +349,22 @@ class TestEGraphMBASimplifier(unittest.TestCase):
         self.assertEqual(res["simplified_expr"], "0")
         self.assertTrue(res["bit_exact_verified"])
 
+    def test_subtraction_mba_identity(self) -> None:
+        # (x ^ y) - 2 * (~x & y) == x - y   Rule 3, operand order is fixed (~x & y), not (y & ~x)
+        expr = ExprNode("-", (
+            ExprNode("^", (ExprNode("var", ("x",)), ExprNode("var", ("y",)))),
+            ExprNode("*", (
+                ExprNode("const", (2,)),
+                ExprNode("&", (
+                    ExprNode("~", (ExprNode("var", ("x",)),)),
+                    ExprNode("var", ("y",)),
+                )),
+            )),
+        ))
+        res = EGraphMBASimplifier.saturate_and_extract(expr)
+        self.assertEqual(res["simplified_expr"], "(x - y)")
+        self.assertTrue(res["bit_exact_verified"])
+
     def test_eval_expr_operators(self) -> None:
         env = {"x": 10, "y": 4}
         expr = ExprNode(
@@ -450,6 +467,88 @@ class TestSection4ComparisonMatrixHarness(unittest.TestCase):
 
         # Check latency SLA (< 500 ms for complete matrix execution)
         self.assertLess(report["benchmark_elapsed_ms"], 500.0)
+
+    def test_compute_matrix_verdicts_flip_when_measurement_fails(self) -> None:
+        success = {
+            "mba_bit_exact": True,
+            "mba_simplified": "(x + y)",
+            "gotos_eliminated": 3,
+            "dispatcher_removed": 1,
+            "jni_prototype": "jdouble arg3@<d0>",
+            "appcall_mutations": 2,
+            "signature_cosine": 1.0,
+            "lattice_layouts": {"callee_arg0": {"0x18": "FLOAT_32"}},
+            "elapsed_ms": 12.5,
+            "agent_latency_ms": 1.2,
+            "tie_break_type": "float",
+            "tie_break_count": 1,
+            "dataflow_reachable": True,
+            "scan_ms": 0.4,
+            "scan_budget_ms": 5000,
+            "good_accepted": True,
+            "bad_accepted": False,
+            "shift_delta_bytes": 8,
+            "insertion_pivot_offset": "0x10",
+        }
+        failure = {
+            "mba_bit_exact": False,
+            "mba_simplified": "0",
+            "gotos_eliminated": 0,
+            "dispatcher_removed": 0,
+            "jni_prototype": "",
+            "appcall_mutations": 0,
+            "signature_cosine": 0.0,
+            "lattice_layouts": {},
+            "elapsed_ms": 6000,
+            "agent_latency_ms": 500,
+            "tie_break_type": "uint64_t",
+            "tie_break_count": 0,
+            "dataflow_reachable": False,
+            "scan_ms": 9000,
+            "scan_budget_ms": 5000,
+            "good_accepted": False,
+            "bad_accepted": True,
+            "shift_delta_bytes": 0,
+            "insertion_pivot_offset": "0x0",
+        }
+        ok = compute_matrix_verdicts(success)
+        bad = compute_matrix_verdicts(failure)
+        self.assertEqual(
+            ok,
+            {
+                "v1": "PARITY + LEAPFROG",
+                "v2": "PARITY + LEAPFROG",
+                "v3": "PARITY ACHIEVED",
+                "v4": "PARITY ACHIEVED",
+                "v5": "PARITY ACHIEVED",
+                "v6": "PARITY + LEAPFROG",
+                "v7": "MITIGATED",
+                "v8": "SUPERGHIDRA WINS",
+                "v9": "SUPERGHIDRA WINS",
+                "v10": "SUPERGHIDRA WINS",
+                "v11": "SUPERGHIDRA WINS",
+                "v12": "SUPERGHIDRA WINS",
+            },
+        )
+        self.assertEqual(
+            bad,
+            {
+                "v1": "DEFICIT",
+                "v2": "DEFICIT",
+                "v3": "DEFICIT",
+                "v4": "DEFICIT",
+                "v5": "DEFICIT",
+                "v6": "DEFICIT",
+                "v7": "LAGGING",
+                "v8": "SLA EXCEEDED",
+                "v9": "CONFLICT_UNRESOLVED",
+                "v10": "DEFICIT",
+                "v11": "DEFICIT",
+                "v12": "DEFICIT",
+            },
+        )
+        for key in (f"v{i}" for i in range(1, 13)):
+            self.assertNotEqual(ok[key], bad[key])
 
 
 if __name__ == "__main__":
