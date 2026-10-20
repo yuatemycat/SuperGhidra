@@ -105,6 +105,28 @@ class TestCompilableDecompilerFilter(unittest.TestCase):
         self.assertNotIn("__stack_chk_fail", res)
         self.assertEqual(res.count("{"), res.count("}"))
 
+    def test_glibc_ctype_helpers_are_defined_when_used(self):
+        ghidra_code = (
+            "int func0(int ch) {\n"
+            "    ushort **table;\n"
+            "    __int32_t **lower;\n"
+            "    table = __ctype_b_loc();\n"
+            "    lower = __ctype_tolower_loc();\n"
+            "    if (((*table)[ch] & 0x200) != 0) {\n"
+            "        return (*lower)[ch];\n"
+            "    }\n"
+            "    return ch;\n"
+            "}\n"
+        )
+        res = CompilableDecompilerFilter.filter(ghidra_code)
+        self.assertIn("static unsigned short **__ctype_b_loc(void)", res)
+        self.assertIn("static int **__ctype_tolower_loc(void)", res)
+        self.assertNotIn("__ctype_toupper_loc", res)
+        self.assertNotIn("__int32_t", res)
+        self.assertIn("int32_t **lower", res)
+        plain = CompilableDecompilerFilter.filter("int func0(int x) { return x; }\n")
+        self.assertNotIn("__ctype_b_loc", plain)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,7 @@ GHIDRA_TYPE_MAP = [
     (r"\bundefined1\b", "uint8_t"),
     (r"\buchar\b", "uint8_t"),
     (r"\bbyte\b", "uint8_t"),
+    (r"\b__int32_t\b", "int32_t"),
     (r"\bint1\b", "int8_t"),
     (r"\bint2\b", "int16_t"),
     (r"\bint4\b", "int32_t"),
@@ -189,6 +190,73 @@ class CompilableDecompilerFilter:
         return code
 
     @classmethod
+    def glibc_ctype_support(cls, code: str) -> str:
+        """Define glibc ctype helpers when the decompiler emitted them.
+
+        MinGW has no ``__ctype_b_loc``. The tables use glibc's little-endian
+        class bits and are indexed from -128, which is what those calls do.
+        Samples that never mention the helpers are left unchanged.
+        """
+        want_b = "__ctype_b_loc" in code
+        want_lower = "__ctype_tolower_loc" in code
+        want_upper = "__ctype_toupper_loc" in code
+        if not (want_b or want_lower or want_upper):
+            return code
+        parts = [
+            "static unsigned short sg_b_table[384];",
+            "static unsigned short *sg_b_mid;",
+            "static int sg_tol_table[384];",
+            "static int *sg_tol_mid;",
+            "static int sg_tou_table[384];",
+            "static int *sg_tou_mid;",
+            "static int sg_ctype_ready;",
+            "static void sg_ctype_init(void) {",
+            "  int c;",
+            "  if (sg_ctype_ready) return;",
+            "  sg_ctype_ready = 1;",
+            "  for (c = -128; c <= 255; c++) {",
+            "    unsigned short bits = 0;",
+            "    int lower = c;",
+            "    int upper = c;",
+            "    if (c >= 0 && c <= 255) {",
+            "      if (c >= 'A' && c <= 'Z') { bits = (unsigned short)(bits | 0x100u); lower = c + 32; }",
+            "      if (c >= 'a' && c <= 'z') { bits = (unsigned short)(bits | 0x200u); upper = c - 32; }",
+            "      if ((bits & 0x300u) != 0) bits = (unsigned short)(bits | 0x400u);",
+            "      if (c >= '0' && c <= '9') bits = (unsigned short)(bits | 0x800u);",
+            "      if ((bits & 0x800u) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) bits = (unsigned short)(bits | 0x1000u);",
+            "      if (c == ' ' || c == '\\t' || c == '\\n' || c == '\\v' || c == '\\f' || c == '\\r') bits = (unsigned short)(bits | 0x2000u);",
+            "      if (c == ' ' || c == '\\t') bits = (unsigned short)(bits | 0x0001u);",
+            "      if (c > 0x20 && c < 0x7f) bits = (unsigned short)(bits | 0x8000u);",
+            "      if ((bits & 0x8000u) || c == ' ') bits = (unsigned short)(bits | 0x4000u);",
+            "      if (c < 0x20 || c == 0x7f) bits = (unsigned short)(bits | 0x0002u);",
+            "      if ((bits & 0x8000u) && (bits & 0xc00u) == 0) bits = (unsigned short)(bits | 0x0004u);",
+            "      if ((bits & 0xc00u) != 0) bits = (unsigned short)(bits | 0x0008u);",
+            "    }",
+            "    sg_b_table[c + 128] = bits;",
+            "    sg_tol_table[c + 128] = lower;",
+            "    sg_tou_table[c + 128] = upper;",
+            "  }",
+            "  sg_b_mid = sg_b_table + 128;",
+            "  sg_tol_mid = sg_tol_table + 128;",
+            "  sg_tou_mid = sg_tou_table + 128;",
+            "}",
+        ]
+        if want_b:
+            parts.append(
+                "static unsigned short **__ctype_b_loc(void) { sg_ctype_init(); return &sg_b_mid; }"
+            )
+        if want_lower:
+            parts.append(
+                "static int **__ctype_tolower_loc(void) { sg_ctype_init(); return &sg_tol_mid; }"
+            )
+        if want_upper:
+            parts.append(
+                "static int **__ctype_toupper_loc(void) { sg_ctype_init(); return &sg_tou_mid; }"
+            )
+        shim = "\n".join(parts) + "\n"
+        return shim + code
+
+    @classmethod
     def filter(
         cls,
         code: str,
@@ -207,6 +275,8 @@ class CompilableDecompilerFilter:
 
         if strip_canary:
             result = cls.cleanup_canaries_and_idioms(result)
+
+        result = cls.glibc_ctype_support(result)
 
         if include_headers and "#include <stdint.h>" not in result:
             result = f"{STANDARD_HEADERS}\n{result.lstrip()}"
