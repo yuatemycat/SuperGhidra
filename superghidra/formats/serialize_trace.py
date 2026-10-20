@@ -249,7 +249,7 @@ def _is_tautology(conjs) -> bool:
 
 
 class _State:
-    __slots__ = ("regs", "gates", "cmp", "pushes", "esp")
+    __slots__ = ("regs", "gates", "cmp", "pushes", "esp", "slots")
 
     def __init__(self, regs=None, gates=(), cmp=None, pushes=(), esp=0):
         self.regs: Dict[int, tuple] = dict(regs or {})
@@ -257,9 +257,14 @@ class _State:
         self.cmp = cmp
         self.pushes: Tuple = tuple(pushes)
         self.esp = esp
+        # x64 stack slots (rsp-relative) holding the archive or `this`: callee code often
+        # spills them around a loop and reloads them afterwards.
+        self.slots: Dict[int, tuple] = {}
 
     def copy(self) -> "_State":
-        return _State(self.regs, self.gates, self.cmp, self.pushes, self.esp)
+        s = _State(self.regs, self.gates, self.cmp, self.pushes, self.esp)
+        s.slots = dict(self.slots)
+        return s
 
 
 def _merge_gates(states: List[_State]) -> Tuple:
@@ -292,7 +297,9 @@ def _merge(states: List[_State]) -> _State:
     s0 = states[0]
     regs = {r: v for r, v in s0.regs.items() if all(s.regs.get(r) == v for s in states[1:])}
     pushes = s0.pushes if all(s.pushes == s0.pushes for s in states[1:]) else ()
-    return _State(regs, _merge_gates(states), None, pushes, s0.esp)
+    merged = _State(regs, _merge_gates(states), None, pushes, s0.esp)
+    merged.slots = {k: v for k, v in s0.slots.items() if all(s.slots.get(k) == v for s in states[1:])}
+    return merged
 
 
 @dataclass
@@ -605,6 +612,19 @@ class SerializeTracer:
                 st.cmp = None
                 continue
 
+            # ---------------- x64 spills of the archive / this ----------------
+            if x64 and mp == 0 and op in (0x89, 0x8B) and mem is not None and mem.base == "rsp" \
+                    and mem.index is None and insn.operand_size == 8:
+                if op == 0x89:  # mov [rsp+d], reg
+                    v = st.regs.get(insn.reg)
+                    if v is not None and v[0] in ("ar", "this"):
+                        st.slots[mem.disp] = v
+                    else:
+                        st.slots.pop(mem.disp, None)
+                elif mem.disp in st.slots:  # mov reg, [rsp+d]
+                    st.regs[insn.reg] = st.slots[mem.disp]
+                    continue
+
             # ---------------- compares (branch conditions) ----------------
             if mp == 0 and (op in (0x3C, 0x3D) or (op in (0x80, 0x81, 0x83) and (insn.reg & 7) == 7)):
                 v = st.regs.get(0 if op in (0x3C, 0x3D) else insn.rm) if mem is None else None
@@ -747,6 +767,8 @@ class SerializeTracer:
                         src[1].member = _render(("ptr",) + tuple(loc[1:3])) if len(loc) == 3 else None
                     if op in (0x89, 0x88, 0xC7, 0xC6):
                         continue
+                if mp == 0 and op in (0x88, 0x89, 0xC6, 0xC7):
+                    continue  # a store to unknown memory leaves every register as it was
             # Anything else: forget the register the instruction writes.
             if insn.modrm is not None:
                 if mp == 1 and op in (0x10, 0x28, 0x6E, 0x7E) and mem is not None:
@@ -996,6 +1018,10 @@ class SerializeTracer:
         if imported:
             if "CStringT" in imported or "CSimpleStringT" in imported:
                 summ.uses_cstring = True
+            if self.archive_flags == 0 and imported.startswith(_SAVE_CONTEXT_QUERIES):
+                # SOLIDWORKS asks its archive helper about special save contexts (copy,
+                # undo, ...); none applies to a plain file, so the query returns 0.
+                return ("const", 0)
             if not ar_pos:
                 return None
             query = _archive_query(imported)
@@ -1130,6 +1156,17 @@ class SerializeTracer:
             self._ops_cache: Dict[Tuple[int, str], List[ArchiveOp]] = {}
         return self._mfc_by_name.get(name) if name else None
 
+    def _exported_serialize(self, name: str) -> Optional[int]:
+        """Address of an exported `?Serialize@<name>@@...CArchive...` member, if any."""
+        if not hasattr(self, "_serialize_exports"):
+            self._serialize_exports: Dict[str, int] = {}
+            for exp, va in self.img.export_map().items():
+                if exp.startswith("?Serialize@") and "CArchive@@" in exp:
+                    cls = exp[len("?Serialize@"):].split("@", 1)[0]
+                    self._serialize_exports.setdefault(cls, va)
+        va = self._serialize_exports.get(name)
+        return msvc_class_recovery._follow_thunks(self.view, va) if va is not None else None
+
     def _vtable_functions(self, cls) -> List[int]:
         rt = self._rtti_by_name.get(cls.name)
         if rt is not None:
@@ -1175,6 +1212,13 @@ class SerializeTracer:
             for other in others:
                 if other._class(name) is not None:
                     return other.class_layout(name, path, tuple(t for t in others if t is not other), _depth + 1)
+            # A plain (non-CObject) class with an exported Serialize, e.g. SOLIDWORKS'
+            # utLineWidth_c::Serialize(su_CArchive&) in sldmfcu.dll.
+            for tracer in (self,) + tuple(others):
+                func = tracer._exported_serialize(name)
+                if func is not None and _depth < 10:
+                    rest = tuple(t for t in (self,) + tuple(others) if t is not tracer)
+                    return tracer._expand(tracer._ops_of(func, path), None, path, rest, _depth + 1, func=func)
             return None
         if c.serialize:
             return self._expand(self._ops_of(c.serialize, path), c, path, others, _depth,
@@ -1219,8 +1263,16 @@ class SerializeTracer:
         seeded = not alloc_root
         for insn in self._linear(func):
             op, mp, mem = insn.opcode, insn.map, insn.mem
-            if insn.flow == "call" and insn.target is not None:
-                if 1 in this_regs:
+            if insn.flow in ("call", "call_ind") and 1 in this_regs:
+                # `member.X::X()` called on this+off (e.g. an imported su_CObArray
+                # constructor): the member's type is X even without a vtable store here.
+                ctor = self._ctor_class(insn)
+                if ctor and this_regs[1]:
+                    out.setdefault(this_regs[1], ctor)
+            if insn.flow in ("call", "call_ind"):
+                # Direct calls are followed (base/member constructors); an imported
+                # `operator new` is an indirect call, so both kinds seed the allocation.
+                if insn.flow == "call" and insn.target is not None and 1 in this_regs:
                     self._vtable_stores(msvc_class_recovery._follow_thunks(self.view, insn.target),
                                         this_regs[1], out, depth + 1)
                 for r in (0, 1, 2, 8, 9, 10, 11):
@@ -1257,6 +1309,8 @@ class SerializeTracer:
                 continue
             if op == 0xC7 and mem is not None:
                 continue
+            if op in (0x84, 0x85, 0x38, 0x39, 0x3A, 0x3B):  # test / cmp change no register
+                continue
             if insn.modrm is not None and mem is None:
                 this_regs.pop(insn.reg, None)
                 consts.pop(insn.reg, None)
@@ -1271,7 +1325,10 @@ class SerializeTracer:
                 self._vtable_stores(msvc_class_recovery._follow_thunks(self.view, cls.create_object), 0, stores, 0,
                                     alloc_root=True)
             owners = self._vtable_owner()
-            self._member_types[cls.name] = {off: owners[vt] for off, vt in stores.items() if off and vt in owners}
+            # Values are vtable addresses, or class names from constructor calls.
+            self._member_types[cls.name] = {
+                off: (vt if isinstance(vt, str) else owners[vt]) for off, vt in stores.items()
+                if off and (isinstance(vt, str) or vt in owners)}
         return self._member_types[cls.name]
 
     def _export_name(self, va: Optional[int]) -> Optional[str]:
@@ -1340,9 +1397,16 @@ class SerializeTracer:
                 continue
             if insn.modrm is not None and mem is None:
                 loaded.pop(insn.reg, None)
-        # Method calls: majority class (offsets of unrelated objects can collide); ties dropped.
+        # Method calls: calls to a base-class method (su_CObList::RemoveAll) and to a derived
+        # one (moNodeList_c::...) on the same member mean the derived class. Otherwise take
+        # the majority (offsets of unrelated objects can collide); ties are dropped.
         types: Dict[int, str] = {}
         for off, owners in used_as.items():
+            distinct = set(owners)
+            derived = [c for c in distinct if distinct - {c} <= self._bases_of(c)]
+            if len(derived) == 1:
+                types[off] = derived[0]
+                continue
             ranked = Counter(owners).most_common(2)
             if len(ranked) == 1 or ranked[0][1] > ranked[1][1]:
                 types[off] = ranked[0][0]
@@ -1350,6 +1414,12 @@ class SerializeTracer:
         types.update({off: next(iter(c)) for off, c in found.items() if len(c) == 1})
         self._ptr_types[func] = types
         return types
+
+    def _bases_of(self, name: str) -> set:
+        """All base classes of `name` from RTTI (empty when unknown)."""
+        if not hasattr(self, "_rtti_bases"):
+            self._rtti_bases = {c.name: set(c.bases or []) for c in self.report.rtti_classes}
+        return self._rtti_bases.get(name, set())
 
     def _method_class(self, insn) -> Optional[str]:
         """Class X when `insn` calls a non-static member function `?m@X@@Q.../U...` (not ctor/dtor)."""
@@ -1437,6 +1507,10 @@ class SerializeTracer:
             if ops is not None:
                 out[c.name] = ops
         return out
+
+
+# Imported queries about the save context that are false when writing a plain binary file.
+_SAVE_CONTEXT_QUERIES = ("?hasCondition@moArchiveHelper_c@@",)
 
 
 def object_operator_class(mangled: Optional[str]) -> Optional[str]:

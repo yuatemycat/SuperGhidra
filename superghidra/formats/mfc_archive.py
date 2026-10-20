@@ -171,6 +171,16 @@ class ArchiveReader:
         self.map_count = map_count
         self.map_reliable = True
         self.learned: Dict[int, str] = {}  # class indexes inferred from expected classes
+        # Indexes below the starting count belong to a parent archive whose map this stream
+        # inherited (SOLIDWORKS useCacheArchive_c); they may be referenced without being read.
+        self.base = map_count
+
+    def snapshot(self):
+        return self.pos, dict(self.map), self.map_count, dict(self.learned), self.map_reliable
+
+    def restore(self, snap) -> None:
+        self.pos, m, self.map_count, l, self.map_reliable = snap
+        self.map, self.learned = dict(m), dict(l)
 
     # ---------------- primitives ----------------
 
@@ -280,6 +290,8 @@ class ArchiveReader:
         if entry is None and expected:
             entry = self.map[idx] = ("class", expected, None)
             self.learned[idx] = expected
+        if entry is None and idx < self.base:
+            return "parent_class", idx, None, None  # class of the parent archive, unknown here
         if entry is None or entry[0] != "class":
             raise ArchiveError(f"class reference #{idx} at {self.pos - 2:#x} does not name a loaded class")
         return "class_ref", idx, entry[1], entry[2]
@@ -397,12 +409,13 @@ class _Stop(Exception):
 
 class _Decoder:
     def __init__(self, reader: ArchiveReader, layouts: Dict[str, List[LayoutOp]], env: Dict[str, object],
-                 unknown_gates: str, max_depth: int = 64):
+                 unknown_gates: str, max_depth: int = 64, parent_classes: Optional[List[str]] = None):
         self.r = reader
         self.layouts = layouts
         self.env = env
         self.unknown_gates = unknown_gates
         self.max_depth = max_depth
+        self.parent_classes = list(parent_classes or [])
 
     def read_object(self, depth: int = 0, expected: Optional[str] = None) -> ArchiveObject:
         r = self.r
@@ -415,9 +428,36 @@ class _Decoder:
             cname = entry[1].class_name if entry and entry[0] == "object" else None
             if entry is not None and entry[0] != "object":
                 raise ArchiveError(f"object reference #{idx} at {start:#x} names a class")
-            if entry is None and r.map_reliable:
+            if entry is None and r.map_reliable and idx >= r.base:
                 raise ArchiveError(f"object reference #{idx} at {start:#x} is not loaded yet")
             return ArchiveObject(start, cname, None, None, kind="reference", ref_index=idx, status="reference")
+        if kind == "parent_class":
+            return self._guess_parent_class(start, idx, depth)
+        return self._read_body(start, name, schema, depth)
+
+    def _guess_parent_class(self, start: int, idx: int, depth: int) -> ArchiveObject:
+        """An object whose class the parent archive defined: try the candidate classes and
+        keep the first whose layout decodes the object completely; remember it."""
+        r = self.r
+        snap = r.snapshot()
+        for cand in self.parent_classes:
+            if cand not in self.layouts:
+                continue
+            r.restore(snap)
+            r.map[idx] = ("class", cand, None)
+            r.learned[idx] = cand
+            try:
+                obj = self._read_body(start, cand, None, depth)
+            except (_StopWith, ArchiveError):
+                continue
+            if obj.status == "decoded":
+                obj.note = f"class #{idx} guessed as {cand} (defined by the parent stream)"
+                return obj
+        r.restore(snap)
+        raise ArchiveError(f"class reference #{idx} at {start:#x} names a class of the parent stream")
+
+    def _read_body(self, start: int, name: str, schema, depth: int) -> ArchiveObject:
+        r = self.r
         obj = ArchiveObject(start, name, schema, None, payload_offset=r.pos)
         r.register_object(obj)
         if depth > self.max_depth:
@@ -571,7 +611,8 @@ class _StopWith(Exception):
 
 def decode_stream(data: bytes, layouts: Optional[Dict[str, List[LayoutOp]]] = None, *, start: int = 0,
                   env: Optional[Dict[str, object]] = None, unknown_gates: str = "true",
-                  map_count: int = 1, max_objects: int = 100000) -> Dict[str, object]:
+                  map_count: int = 1, max_objects: int = 100000,
+                  parent_classes: Optional[List[str]] = None) -> Dict[str, object]:
     """Decode a stream of top-level CArchive objects.
 
     `layouts` maps class names to LayoutOps (see layouts_from_traces). Objects of classes
@@ -579,11 +620,14 @@ def decode_stream(data: bytes, layouts: Optional[Dict[str, List[LayoutOp]]] = No
     tag, and the load map is flagged unreliable because objects inside the skipped bytes
     were not counted. `env` supplies values for gate operands (e.g. a file version);
     `unknown_gates` is "true", "false" or "stop" for gates that cannot be evaluated.
+    `map_count` is the first free load-map index; a stream that inherited a parent
+    archive's map (SOLIDWORKS) starts above 1, and references below it are allowed.
+    `parent_classes` lists classes to try for class references into that parent map.
     """
     layouts = layouts or {}
     env = env or {}
     reader = ArchiveReader(data, start, map_count)
-    dec = _Decoder(reader, layouts, env, unknown_gates)
+    dec = _Decoder(reader, layouts, env, unknown_gates, parent_classes=parent_classes)
     tags = scan_class_tags(data, start)
     tag_offsets = [t.offset for t in tags]
     objects: List[ArchiveObject] = []
