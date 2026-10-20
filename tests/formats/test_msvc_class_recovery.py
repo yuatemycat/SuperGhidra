@@ -222,5 +222,25 @@ class TestRealSolidWorks(unittest.TestCase):
         self.assertEqual(hdr.serialize_slot, 5)  # su_CObject::Serialize forwards to slot 5
 
 
+# Full SOLIDWORKS install folder (the one holding SLDWORKS.exe and swccu.dll).
+SW_ROOT = os.environ.get("SUPERGHIDRA_TEST_SW_ROOT", "")
+
+
+class TestRealSolidWorksApp(unittest.TestCase):
+    @unittest.skipUnless(SW_ROOT and os.path.exists(os.path.join(SW_ROOT, "sldarchiveu.dll")),
+                         "set SUPERGHIDRA_TEST_SW_ROOT to a full SOLIDWORKS install")
+    def test_imported_serialize_forwarder(self):
+        # App modules import su_CObject::Serialize from swccu.dll; it forwards to slot 5.
+        rep = R.recover_classes(os.path.join(SW_ROOT, "sldarchiveu.dll"))
+        ser = [c for c in rep.mfc_classes if c.serializable]
+        self.assertTrue(ser)
+        self.assertEqual([c.name for c in ser if not c.serialize and not c.serialize_external], [])
+        self.assertEqual({c.serialize_slot for c in ser}, {5})
+        # Own bodies, except list classes that inherit suObList::Serialize from sldmfcu.dll.
+        by_name = rep.mfc_by_name()
+        self.assertIsNotNone(by_name["moHeader_c"].serialize)
+        self.assertIn("suObList", by_name["moExtObjectList_c"].serialize_external)
+
+
 if __name__ == "__main__":
     unittest.main()
