@@ -475,8 +475,8 @@ This block is a separate measurement from the MinGW SuperGhidra table above. The
 | :--- | ---: | :--- |
 | `strict_avg` | **8.4** | 84 / 1000 evaluable rows passed with no typedef header and no body rewrite |
 | `lenient_avg` | **18.8** | 188 / 1000 passed with a typedef header only. The pseudo body is not rewritten, so canary lines still fail |
-| `compilable_avg` | **22.2** | 222 / 1000 passed after `CompilableDecompilerFilter` |
-| `refined_pass_count` | **222** | Same 222 compilable-path passes. This is the refinement counted for the filter |
+| `compilable_avg` | **24.9** | 249 / 1000 passed after `CompilableDecompilerFilter` |
+| `refined_pass_count` | **249** | Same 249 compilable-path passes. This is the refinement counted for the filter |
 | `refined_regressions` | **0** | Evaluable rows that passed strict and failed after the filter |
 | `evaluable_denominator` | **1000** | 1,312 logged rows. 312 original `func` + `test` programs failed under `cl.exe` and are excluded |
 
@@ -485,11 +485,13 @@ Both runs printed:
 ```
 strict_avg: 8.4
 lenient_avg: 18.8
-compilable_avg: 22.2
-refined_pass_count: 222
+compilable_avg: 24.9
+refined_pass_count: 249
 refined_regressions: 0
 evaluable_denominator: 1000
 ```
+
+This cl.exe number does not close the IDA gap of 16.90% strict / 25.15% lenient. That gap is the gcc/MinGW table above. `int1` / `int2` / `int4` are rewritten to `int8_t` / `int16_t` / `int32_t`, and a success-side stack-canary check keeps its `return` instead of leaving a stray brace. Strict scoring still compiles the unmodified body.
 
 Method for this rescore:
 
@@ -499,7 +501,7 @@ Method for this rescore:
 - **What is scored:** each row's shipped `ghidra_pseudo`, compiled and run under that allocator. This is not a fresh SuperGhidra decompile of locally rebuilt MinGW objects. That experiment is the 7.41 / 27.78 table above.
 - **Strict program:** `stdio` / `stdlib` / `string` / `assert` / `stddef`, plus `func_dep`, plus `ghidra_pseudo`, plus the dataset test. No `<stdint.h>` typedefs for Ghidra scalar names.
 - **Lenient program:** the strict prelude plus a typedef header for `undefined1` / `undefined2` / `undefined4` / `undefined8`, `uint`, `ulong`, `longlong`, and the related aliases (`byte`, `uchar`, `ushort`, `dword`, `qword`, `ulonglong`, `int8`). The body is not rewritten.
-- **Compilable-emission path:** `CompilableDecompilerFilter.filter` rewrites `undefined1/2/4/8`, `uint`, `ulong`, `longlong`, and `int8` (plus the other mapped Ghidra scalars) to `<stdint.h>` types, expands `CONCAT44` / `SUB84` / `ZEXT48` / `SEXT48` into C expressions, and strips stack-canary prologue/epilogue lines that mention `in_FS_OFFSET` or `__stack_chk_fail`. The filtered body is compiled with the strict prelude.
+- **Compilable-emission path:** `CompilableDecompilerFilter.filter` rewrites `undefined1/2/4/8`, `uint`, `ulong`, `longlong`, `int8`, `int1`, `int2`, and `int4` (plus the other mapped Ghidra scalars) to `<stdint.h>` types, expands `CONCAT44` / `SUB84` / `ZEXT48` / `SEXT48` into C expressions, and strips stack-canary prologue/epilogue lines that mention `in_FS_OFFSET` or `__stack_chk_fail`. When the canary check's success branch is the function's `return` and `__stack_chk_fail()` follows that brace, the filter keeps the `return`. The filtered body is compiled with the strict prelude.
 - **Refinement regression rule:** `before_pass` is the strict result. `refined_pass` is the compilable-path result. A failed compile after the filter is a failed refinement. The measured regression count on this log is 0.
 
 ### Real-binary tool measurements (2026-10-20)
@@ -528,7 +530,7 @@ Ordered by expected impact on the measured gap.
 #### Tier 0: Make Measurement Permanent
 | ID | Upgrade | Done When | Status |
 | :--- | :--- | :--- | :---: |
-| U0 | ~~Commit the HumanEval-Decompile harness (`build → decompile → score → report`) under `benchmarks/humaneval_decompile/` with a pinned dataset revision and a results JSON.~~ | The historical Section 8 table stays 7.41% strict / 27.78% lenient. `python -m benchmarks.humaneval_decompile` prints the Section 8 cl.exe rescore of shipped `ghidra_pseudo` (strict 8.4 / lenient 18.8, compilable 22.2, refined passes 222, regressions 0, denominator 1,000) by re-reading the per-sample score log. | ✅ **Shipped** |
+| U0 | ~~Commit the HumanEval-Decompile harness (`build → decompile → score → report`) under `benchmarks/humaneval_decompile/` with a pinned dataset revision and a results JSON.~~ | The historical Section 8 table stays 7.41% strict / 27.78% lenient. `python -m benchmarks.humaneval_decompile` prints the Section 8 cl.exe rescore of shipped `ghidra_pseudo` (strict 8.4 / lenient 18.8, compilable 24.9, refined passes 249, regressions 0, denominator 1,000) by re-reading the per-sample score log. | ✅ **Shipped** |
 | U0b | Equal-footing rebuild: compile samples with Ubuntu defaults (`-fstack-protector-strong -fcf-protection`), or run on Linux/WSL. | Strict and lenient tables re-run on comparable binaries. | 🟡 Planned |
 | U0c | ~~Replace the hard-coded `"SUPERGHIDRA WINS"` / `"PARITY ACHIEVED"` strings in `Section4ComparisonMatrixHarness` with verdicts computed from measured numbers.~~ | No verdict string in code that a measurement cannot flip; verdicts computed dynamically from measured thresholds. | ✅ **Shipped** |
 
@@ -542,7 +544,7 @@ Ordered by expected impact on the measured gap.
 ### Tier 2: Verified Neural Refinement
 | ID | Upgrade | Done When | Status |
 | :--- | :--- | :--- | :---: |
-| U4 | ~~Wire `d_lift_verifier` into `neural_decompile_skin`. Gate 1 = existing compile gate. Replace Gate 2's constant-set check with **differential execution** (original object vs. candidate on generated inputs and unit tests). Gate 3 = readability.~~ | Skin path rejects `0x16`→`16` and accepts an equivalent candidate by differential execution. HumanEval refined-pass count is 222 with 0 regressions (Section 8). Wired through `skin_refine`. | ✅ **Shipped** |
+| U4 | ~~Wire `d_lift_verifier` into `neural_decompile_skin`. Gate 1 = existing compile gate. Replace Gate 2's constant-set check with **differential execution** (original object vs. candidate on generated inputs and unit tests). Gate 3 = readability.~~ | Skin path rejects `0x16`→`16` and accepts an equivalent candidate by differential execution. HumanEval refined-pass count is 249 with 0 regressions (Section 8). Wired through `skin_refine`. | ✅ **Shipped** |
 | U5 | ~~Consolidate the duplicate gates (`DLiFTVerificationGate` in `diff/`, `DLiftRewardEngine` in `integrations/`) into one implementation.~~ | Single canonical gate in `superghidra/integrations/d_lift_verifier.py`; `DLiFTVerificationGate` delegates to it with full backward compatibility. | ✅ **Shipped** |
 
 ### Tier 3: Promote Phase 1 Prototypes to Real Engine Primitives

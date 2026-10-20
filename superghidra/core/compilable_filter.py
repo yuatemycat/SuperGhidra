@@ -29,6 +29,9 @@ GHIDRA_TYPE_MAP = [
     (r"\bundefined1\b", "uint8_t"),
     (r"\buchar\b", "uint8_t"),
     (r"\bbyte\b", "uint8_t"),
+    (r"\bint1\b", "int8_t"),
+    (r"\bint2\b", "int16_t"),
+    (r"\bint4\b", "int32_t"),
     (r"\bint8\b", "int8_t"),
     (r"\bint16\b", "int16_t"),
     (r"\bint32\b", "int32_t"),
@@ -140,7 +143,20 @@ class CompilableDecompilerFilter:
         # 2. Strip canary initialization: [type] var = *(type *)(in_FS_OFFSET + 0x28);
         code = re.sub(r"^\s*(?:[a-zA-Z0-9_*]+\s+)*\w+\s*=\s*\*\(.*?\)\s*\(\s*in_FS_OFFSET\s*\+\s*0x28\s*\)\s*;\s*\n?", "", code, flags=re.MULTILINE)
 
-        # 3. Strip canary check blocks: if (...) { ... __stack_chk_fail(); ... }
+        # 3. Success-side canary: the real return sits inside the check, and
+        # __stack_chk_fail() follows the closing brace. Keep that return.
+        # The failure-side form (check body is the fail call) is removed below.
+        code = re.sub(
+            r"if\s*\([^;{}]*in_FS_OFFSET[^;{}]*\)\s*\{\s*"
+            r"(return\b[^;]*;)\s*\}\s*"
+            r"(?:/\*[^*]*\*/\s*)?"
+            r"__stack_chk_fail\s*\(\s*\)\s*;",
+            r"\1",
+            code,
+            flags=re.MULTILINE,
+        )
+
+        # 4. Strip canary check blocks: if (...) { ... __stack_chk_fail(); ... }
         code = re.sub(
             r"if\s*\([^;{}]*in_FS_OFFSET[^;{}]*\)\s*\{[^{}]*__stack_chk_fail\(\)\s*;[^{}]*\}\s*\n?",
             "",

@@ -81,6 +81,30 @@ class TestCompilableDecompilerFilter(unittest.TestCase):
         self.assertNotIn("undefined8", res)
         self.assertNotIn("ulonglong", res)
 
+    def test_int4_and_success_side_canary(self):
+        ghidra_code = (
+            "int4 func0(int4 x) {\n"
+            "    long in_FS_OFFSET;\n"
+            "    long local_10;\n"
+            "    int4 local_2c;\n"
+            "    local_10 = *(long *)(in_FS_OFFSET + 0x28);\n"
+            "    local_2c = x + 1;\n"
+            "    if (local_10 == *(long *)(in_FS_OFFSET + 0x28)) {\n"
+            "        return local_2c;\n"
+            "    }\n"
+            "                    /* WARNING: Subroutine does not return */\n"
+            "    __stack_chk_fail();\n"
+            "}\n"
+        )
+        res = CompilableDecompilerFilter.filter(ghidra_code)
+        self.assertIn("int32_t func0(int32_t x)", res)
+        self.assertIn("int32_t local_2c;", res)
+        self.assertIn("return local_2c;", res)
+        self.assertNotIn("int4", res)
+        self.assertNotIn("in_FS_OFFSET", res)
+        self.assertNotIn("__stack_chk_fail", res)
+        self.assertEqual(res.count("{"), res.count("}"))
+
 
 if __name__ == "__main__":
     unittest.main()
