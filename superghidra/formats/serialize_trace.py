@@ -407,7 +407,10 @@ class SerializeTracer:
             if "CObject" in name:
                 return direction, "object", None
             tail = ""
-            for marker in ("@AEAV0@", "@AAV0@"):
+            # Global operators (`??6@YAAEAVCArchive@@AEAV0@<T>`) put the operand after the
+            # archive parameter; member operators (`??6su_CArchive@@QEAAAEAV0@<T>`, x86
+            # `QAEAAV0@<T>`) put it right after the return type.
+            for marker in ("@AEAV0@", "@AAV0@", "@@QEAAAEAV0@", "@@QAEAAV0@"):
                 if marker in name:
                     tail = name.split(marker, 1)[1]
                     break
@@ -419,6 +422,10 @@ class SerializeTracer:
                 if tail.startswith(code + "@") or tail.startswith(code + "Z") or tail == code:
                     kind, size = _TYPE_CODES[code]
                     return direction, kind, size
+            # `operator<<(CArchive&, X*)` / `operator>>(CArchive&, X*&)` for a CObject-derived
+            # class X (e.g. SolidWorks' moCStringHandle_c*): an embedded WriteObject/ReadObject.
+            if tail.startswith(("PEAV", "PAV", "PEBV", "PBV")):
+                return direction, "object", None
             return None
         if name.startswith("?Serialize@"):
             return "both", "serialize", None
@@ -986,6 +993,16 @@ class SerializeTracer:
                 summ.uses_cstring = True
             if not ar_pos:
                 return None
+            query = _archive_query(imported)
+            if query is not None and ar_pos[0] == 0:
+                # Imported archive mode queries (SOLIDWORKS' swccu.dll su_CArchive):
+                # IsLoading/IsStoring give the load bit; other Is*() back-end switches
+                # (IsDBStream, ...) are off for the plain binary format.
+                if query == "IsLoading":
+                    return ("modebit", False)
+                if query == "IsStoring":
+                    return ("modebit", True)
+                return ("const", 0) if self.archive_flags == 0 else None
             cls = self._classify_import(imported)
             if cls is None:
                 return None
@@ -1020,6 +1037,15 @@ class SerializeTracer:
         if not ar_pos:
             return None
         k = ar_pos[0]
+        # A local `operator<<(CArchive&, X*)` (e.g. sldmodu's moNodeName_c operator): one
+        # embedded object of class X. Kept whole so the expected class survives.
+        local_name = self._export_name(target)
+        if local_name and k == 0 and local_name.startswith(("??5@", "??6@")):
+            cls = self._classify_import(local_name)
+            if cls is not None and cls[1] == "object":
+                member = _render(args[1]) if len(args) > 1 else None
+                emit(ArchiveOp(insn.address, cls[0], "object", None, member, local_name))
+                return ("ar",)
         name = self.serialize_names.get(target)
         if name is not None and k == 1:
             obj = args[0]
@@ -1147,7 +1173,7 @@ class SerializeTracer:
             return None
         if c.serialize:
             return self._expand(self._ops_of(c.serialize, path), c, path, others, _depth,
-                                self._typed_members(c.serialize, path))
+                                self._typed_members(c.serialize, path), func=c.serialize)
         if c.serialize_external:
             return self.class_layout(_class_of_method(c.serialize_external), path, others, _depth + 1) \
                 if _class_of_method(c.serialize_external) != name else None
@@ -1243,6 +1269,57 @@ class SerializeTracer:
             self._member_types[cls.name] = {off: owners[vt] for off, vt in stores.items() if off and vt in owners}
         return self._member_types[cls.name]
 
+    def _export_name(self, va: Optional[int]) -> Optional[str]:
+        if va is None:
+            return None
+        if not hasattr(self, "_export_names"):
+            self._export_names = {a: n for n, a in self.img.export_map().items()}
+        return self._export_names.get(va)
+
+    def _ctor_class(self, insn) -> Optional[str]:
+        """Class X when `insn` calls X's constructor (`??0X@@...`, local export or import)."""
+        va, imported = self._call_target(insn)
+        name = imported or self._export_name(va)
+        if not name or not name.startswith("??0"):
+            return None
+        cls = name[3:].split("@", 1)[0]
+        return cls or None
+
+    def pointer_member_types(self, func: int) -> Dict[int, str]:
+        """{offset: class} for `this->m_p = new X(...)` stores inside `func`.
+
+        Loading code allocates a pointer member before calling its Serialize, e.g.
+        `if (!m_p60) m_p60 = new moNodeList_c(this); m_p60->Serialize(ar);`. The class it
+        constructs types the matching `virtual_serialize this+0x60->` op on both paths.
+        Offsets that receive more than one class are left out.
+        """
+        if not hasattr(self, "_ptr_types"):
+            self._ptr_types: Dict[int, Dict[int, str]] = {}
+        if func in self._ptr_types:
+            return self._ptr_types[func]
+        found: Dict[int, set] = {}
+        holds: Dict[int, str] = {}  # register -> class of the object it may point to
+        # Instructions are scanned in address order, so the `p = NULL` side of
+        # `p = new X ? : NULL` sits between the constructor and the store. A register
+        # therefore keeps its class until the next call instead of being cleared on
+        # reassignment; the result only types members that are serialized via pointer.
+        for insn in self._instructions(func)[0]:
+            if insn.flow in ("call", "call_ind"):
+                cls = self._ctor_class(insn)
+                holds = {0: cls} if cls else {}  # a constructor returns `this` in rax/eax
+                continue
+            if insn.map != 0:
+                continue
+            mem = insn.mem
+            if insn.opcode == 0x8B and mem is None and insn.rm in holds:  # mov reg, reg
+                holds[insn.reg] = holds[insn.rm]
+                continue
+            if insn.opcode == 0x89 and mem is not None and insn.reg in holds:  # mov [base+d], reg
+                if mem.index is None and not mem.rip_relative and mem.base not in ("rsp", "rbp", "esp", "ebp"):
+                    found.setdefault(mem.disp, set()).add(holds[insn.reg])
+        self._ptr_types[func] = {off: next(iter(c)) for off, c in found.items() if len(c) == 1}
+        return self._ptr_types[func]
+
     def _typed_members(self, func: int, path: str) -> Dict[Tuple[str, ...], List[str]]:
         """Static types the *other* path gives to member Serialize calls, keyed by gates.
 
@@ -1257,7 +1334,8 @@ class SerializeTracer:
         return typed
 
     def _expand(self, ops: List[ArchiveOp], dyn, path: str, others, depth: int,
-                typed: Optional[Dict[Tuple[str, ...], List[str]]] = None) -> List[ArchiveOp]:
+                typed: Optional[Dict[Tuple[str, ...], List[str]]] = None,
+                func: Optional[int] = None) -> List[ArchiveOp]:
         out: List[ArchiveOp] = []
         for o in ops:
             sub = None
@@ -1272,6 +1350,13 @@ class SerializeTracer:
                         member_cls = self.member_types(dyn).get(int(o.member[5:], 16))
                     except ValueError:
                         member_cls = None
+                elif func is not None and o.member and o.member.startswith("this+") \
+                        and o.member.endswith("->") and o.member.count("->") == 1:
+                    # Pointer member: typed by the `new X` the loading code stores there.
+                    try:
+                        member_cls = self.pointer_member_types(func).get(int(o.member[5:-2], 16))
+                    except ValueError:
+                        member_cls = None
                 if member_cls:
                     sub = self.class_layout(member_cls, path, others, depth + 1)
             if sub is not None:
@@ -1280,7 +1365,8 @@ class SerializeTracer:
             if depth < 10 and o.kind == "serialize" and o.callee:
                 base = self._class(o.callee)
                 if base is not None and base.serialize and o.member == "base":
-                    sub = self._expand(self._ops_of(base.serialize, path), dyn, path, others, depth + 1)
+                    sub = self._expand(self._ops_of(base.serialize, path), dyn, path, others, depth + 1,
+                                       func=base.serialize)
                 else:
                     sub = self.class_layout(o.callee, path, others, depth + 1)
             elif depth < 10 and o.kind == "virtual_serialize" and o.member == "base" and dyn is not None \
@@ -1290,7 +1376,7 @@ class SerializeTracer:
                 if slot < len(funcs):
                     f = msvc_class_recovery._follow_thunks(self.view, funcs[slot])
                     if f != dyn.serialize:  # calling back into the class's own Serialize
-                        sub = self._expand(self._ops_of(f, path), dyn, path, others, depth + 1)
+                        sub = self._expand(self._ops_of(f, path), dyn, path, others, depth + 1, func=f)
             if sub is None:
                 out.append(o)
             else:
@@ -1309,6 +1395,30 @@ class SerializeTracer:
             if ops is not None:
                 out[c.name] = ops
         return out
+
+
+def object_operator_class(mangled: Optional[str]) -> Optional[str]:
+    """`moNodeName_c` for `??6@YAAEAVsu_CArchive@@AEAV0@AEAPEAVmoNodeName_c@@@Z`: the class
+    an `operator<<` / `operator>>` on an object pointer reads or writes. None otherwise."""
+    if not mangled or not mangled.startswith(("??5", "??6")):
+        return None
+    for marker in ("PEAV", "PAV", "PEBV", "PBV"):
+        i = mangled.rfind(marker)
+        if i >= 0:
+            name = mangled[i + len(marker):].split("@", 1)[0]
+            return name or None
+    return None
+
+
+def _archive_query(mangled: str) -> Optional[str]:
+    """`IsLoading` for `?IsLoading@su_CArchive@@QEBAHXZ`: a const, argument-less `Is*()`
+    member of an archive class returning int/bool. None for anything else."""
+    if not mangled.startswith("?Is") or "@@QEBAHXZ" not in mangled and "@@QBEHXZ" not in mangled \
+            and "@@QEBA_NXZ" not in mangled and "@@QBE_NXZ" not in mangled:
+        return None
+    method, _, rest = mangled[1:].partition("@")
+    owner = rest.split("@", 1)[0]
+    return method if owner.endswith("CArchive") else None
 
 
 def _class_of_method(mangled: Optional[str]) -> Optional[str]:

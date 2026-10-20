@@ -170,6 +170,7 @@ class ArchiveReader:
         self.map: Dict[int, tuple] = {}
         self.map_count = map_count
         self.map_reliable = True
+        self.learned: Dict[int, str] = {}  # class indexes inferred from expected classes
 
     # ---------------- primitives ----------------
 
@@ -250,8 +251,14 @@ class ArchiveReader:
 
     # ---------------- objects ----------------
 
-    def read_tag(self) -> Tuple[str, Optional[int], Optional[str], Optional[int]]:
-        """Read an object tag: ("null"|"ref"|"new_class"|"class_ref", index, class, schema)."""
+    def read_tag(self, expected: Optional[str] = None) -> Tuple[str, Optional[int], Optional[str], Optional[int]]:
+        """Read an object tag: ("null"|"ref"|"new_class"|"class_ref", index, class, schema).
+
+        `expected` is the class the caller's code statically writes at this point (from
+        `operator<<(CArchive&, X*)`). A class reference to an index this stream never
+        defined - SOLIDWORKS shares one class map across several streams - is then taken
+        to be that class and remembered for later references.
+        """
         w = self.u16()
         if w == BIG_OBJECT_TAG:
             ob = self.u32()
@@ -270,6 +277,9 @@ class ArchiveReader:
             return "new_class", idx, name.decode("ascii"), schema
         idx = ob & ~BIG_CLASS_TAG
         entry = self.map.get(idx)
+        if entry is None and expected:
+            entry = self.map[idx] = ("class", expected, None)
+            self.learned[idx] = expected
         if entry is None or entry[0] != "class":
             raise ArchiveError(f"class reference #{idx} at {self.pos - 2:#x} does not name a loaded class")
         return "class_ref", idx, entry[1], entry[2]
@@ -297,9 +307,22 @@ def layouts_from_traces(traces: Iterable, path: str = "storing") -> Dict[str, Li
     else:
         items = [(t.class_name, t.storing if path == "storing" else t.loading) for t in traces if t.class_name]
     for name, ops in items:
-        out[name] = [LayoutOp(o.kind, o.size, o.repeat, o.member, o.callee if o.kind == "serialize" else None,
+        out[name] = [LayoutOp(o.kind, o.size, o.repeat, o.member, _layout_callee(o),
                               list(getattr(o, "conditions", []) or [])) for o in ops]
     return out
+
+
+def _layout_callee(op) -> Optional[str]:
+    """Base class for `serialize`; the statically expected class for `object` ops written by
+    `operator<<(CArchive&, X*)` (e.g. moNodeName_c), so an unseen class index can be learned."""
+    if op.kind == "serialize":
+        return op.callee
+    if op.kind == "object" and op.callee and op.callee.startswith(("??5", "??6")):
+        for marker in ("PEAV", "PAV", "PEBV", "PBV"):
+            i = op.callee.rfind(marker)
+            if i >= 0:
+                return op.callee[i + len(marker):].split("@", 1)[0] or None
+    return None
 
 
 def _desc_value(desc: str, env: Dict[str, object], fields: Dict[str, object]):
@@ -331,6 +354,13 @@ def evaluate_condition(cond, env: Dict[str, object], fields: Optional[Dict[str, 
 
 
 _NEG_REL = {">=": "<", "<": ">=", ">": "<=", "<=": ">", "==": "!=", "!=": "=="}
+
+
+def _is_pointer_null_test(cond) -> bool:
+    """`this+0x60 != 0` / `this+0x60 == 0`: a test of a member pointer against NULL."""
+    return (isinstance(cond, (list, tuple)) and len(cond) == 3 and isinstance(cond[0], str)
+            and cond[0].startswith("this+") and "->" not in cond[0]
+            and cond[1] in ("!=", "==") and not cond[2])
 
 
 def _cond_key(cond):
@@ -374,10 +404,10 @@ class _Decoder:
         self.unknown_gates = unknown_gates
         self.max_depth = max_depth
 
-    def read_object(self, depth: int = 0) -> ArchiveObject:
+    def read_object(self, depth: int = 0, expected: Optional[str] = None) -> ArchiveObject:
         r = self.r
         start = r.pos
-        kind, idx, name, schema = r.read_tag()
+        kind, idx, name, schema = r.read_tag(expected)
         if kind == "null":
             return ArchiveObject(start, None, None, None, kind="null", status="null")
         if kind == "ref":
@@ -413,6 +443,11 @@ class _Decoder:
         decided = values.setdefault("__assumed__", {})  # per object: condition -> assumed value
         for c in op.conditions:
             v = evaluate_condition(c, self.env, values)
+            if v is None and _is_pointer_null_test(c) and values.get("__last_flag__") is not None:
+                # `ar << (long)(m_p != NULL); if (m_p) m_p->Serialize(ar);` - the presence
+                # flag written just before stands in for the pointer.
+                values[c[0]] = values["__last_flag__"]
+                v = evaluate_condition(c, self.env, values)
             if v is None:
                 key = _cond_key(c)
                 neg = _cond_key(_negate_cond(c))
@@ -476,7 +511,7 @@ class _Decoder:
             v = r.raw(op.size)
         elif k == "object":
             try:
-                v = self.read_object(depth + 1)
+                v = self.read_object(depth + 1, op.callee)
             except _StopWith as stop:
                 obj.fields.append(Field(at, k, stop.obj, op.member, r.pos - at))
                 raise _StopWith(obj, f"nested {stop.obj.class_name} could not be decoded")
@@ -493,6 +528,9 @@ class _Decoder:
         obj.fields.append(Field(at, k, v, op.member, r.pos - at))
         if op.member and isinstance(v, (int, float)):
             values[op.member] = v
+        # An unnamed integer may be a presence flag for the next `if (m_p)` gate.
+        values["__last_flag__"] = v if (op.member is None and isinstance(v, int)
+                                        and k in ("u8", "u16", "u32", "i8", "i16", "i32", "bool")) else None
         return v
 
 
