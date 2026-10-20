@@ -1,0 +1,68 @@
+name: "🐛 Bug Report"
+description: "File an actionable bug report with reproducing steps or binary context"
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug report! Please provide as much technical context as possible to help us reproduce and resolve the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe what happened and what you expected to happen.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: subsystem
+    attributes:
+      label: Affected Subsystem
+      description: Which part of SuperGhidra encountered the issue?
+      options:
+        - "Daemon / Oracle (ghidra_oracle.py)"
+        - "Storage / Codec (storage_compression_prototype.py / SuperGhidraCodec)"
+        - "GPU Compute (gpu_adrp_scanner.py / gpu_function_seeder.py)"
+        - "Binary Diff / Struct Shift (binary_diff_engine.py / struct_shift_migrator.py)"
+        - "Lifters / SMT Verifier (pcode_lifter_bridge.py / smt_pcode_verifier.py)"
+        - "Formats / Exporters (synthetic_symbol_exporter.py / binary_loader.py)"
+        - "Emulator Sidecar / Fleet Guard (emulator_memory_sidecar.py)"
+        - "Neural Decompilation / MCP"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Exact commands, script invocation, or steps to reproduce the behavior.
+      placeholder: |
+        1. Run `python ghidra_oracle.py decompile 0x1000`
+        2. Encounter exception...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Info
+      description: Relevant OS, Python, JVM, Ghidra, and GPU hardware info.
+      placeholder: |
+        - OS: Windows 11 / Ubuntu 24.04
+        - Python version: 3.12
+        - Java version: OpenJDK 21
+        - Ghidra version: 11.2 / 12.1-DEV
+        - GPU: NVIDIA RTX / AMD / Vulkan backend
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Traceback or Error Logs
+      description: Paste relevant stack traces or terminal outputs here.
+      render: shell

@@ -9,6 +9,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "GhidraOracleSession": ("superghidra.core.ghidra_oracle", "GhidraOracleSession"),
     "GhidraDaemonServer": ("superghidra.core.ghidra_oracle", "GhidraDaemonServer"),
     "L2SQLiteCache": ("superghidra.core.ghidra_oracle", "L2SQLiteCache"),
+    "CompilableDecompilerFilter": ("superghidra.core.compilable_filter", "CompilableDecompilerFilter"),
     "WriteOverlay": ("superghidra.core.ghidra_oracle", "WriteOverlay"),
     "client_send_request": ("superghidra.core.ghidra_oracle", "client_send_request"),
     "ResourceMode": ("superghidra.core.resource_governor", "ResourceMode"),

@@ -1,0 +1,80 @@
+{
+  "dataset": "LLM4Binary/decompile-eval",
+  "split": "HumanEval-Decompile",
+  "pinned_revision": "c07e883dfa3bf604b3da59f33857cb484c6e1aa2",
+  "benchmark_date": "2026-10-20",
+  "sample_counts": {
+    "problems": 164,
+    "languages": ["C", "C++"],
+    "optimizations": ["O0", "O1", "O2", "O3"],
+    "total_samples": 1312,
+    "evaluable_denominator": 1296,
+    "excluded_samples": 16
+  },
+  "head_to_head_strict": {
+    "both_pass": 61,
+    "ida_only": 158,
+    "superghidra_only": 35,
+    "neither": 1042
+  },
+  "results": {
+    "official_strict": {
+      "ida_pro": {
+        "O0": 16.05,
+        "O1": 18.83,
+        "O2": 16.67,
+        "O3": 16.05,
+        "avg": 16.90,
+        "C": 23.31,
+        "Cpp": 10.40
+      },
+      "ghidra": {
+        "O0": 7.41,
+        "O1": 10.80,
+        "O2": 7.41,
+        "O3": 6.79,
+        "avg": 8.10,
+        "C": 10.43,
+        "Cpp": 5.75
+      },
+      "superghidra": {
+        "O0": 7.10,
+        "O1": 10.19,
+        "O2": 6.17,
+        "O3": 6.17,
+        "avg": 7.41,
+        "C": 9.05,
+        "Cpp": 5.75
+      }
+    },
+    "lenient": {
+      "ida_pro": {
+        "O0": 23.46,
+        "O1": 29.01,
+        "O2": 25.31,
+        "O3": 22.84,
+        "avg": 25.15,
+        "C": 38.50,
+        "Cpp": 11.65
+      },
+      "ghidra": {
+        "O0": 23.77,
+        "O1": 27.47,
+        "O2": 24.07,
+        "O3": 22.84,
+        "avg": 24.54,
+        "C": 37.42,
+        "Cpp": 11.49
+      },
+      "superghidra": {
+        "O0": 22.84,
+        "O1": 29.94,
+        "O2": 29.32,
+        "O3": 29.01,
+        "avg": 27.78,
+        "C": 42.48,
+        "Cpp": 12.89
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+name: "🚀 Feature Request"
+description: "Suggest an idea, architectural optimization, or new instruction lifter"
+title: "[FEATURE]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a feature for SuperGhidra!
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Is your feature request related to a specific bottleneck, missing ISA instruction, or Ghidra limitation?
+      placeholder: Describe the performance bottleneck or reverse engineering friction point.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution
+      description: Detailed description of what you want to happen or how the engine should be expanded.
+      placeholder: Outline the architecture, algorithm, or lifter rules.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative solutions or workarounds you've evaluated.

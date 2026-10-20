@@ -76,8 +76,18 @@ EXPECTED_38_TOOLS = [
 ]
 
 # Tools added after the original 38 (multi-architecture binary loader / MSVC class recovery /
-# Serialize() layout tracing and CArchive decoding).
-EXPECTED_EXTRA_TOOLS = ["inspect_binary", "recover_cpp_classes", "trace_serialize", "decode_carchive"]
+# Serialize() layout tracing, CArchive decoding, storage compression, __usercall, CFF, dataflow, type lattice).
+EXPECTED_EXTRA_TOOLS = [
+    "inspect_binary",
+    "recover_cpp_classes",
+    "trace_serialize",
+    "decode_carchive",
+    "benchmark_storage_compression",
+    "compile_usercall_prototype",
+    "deflatten_control_flow",
+    "query_binary_dataflow",
+    "solve_global_type_lattice",
+]
 
 SUPERGHIDRA_MCP_SCHEMA_DIR = r"C:\Users\X\.gemini\antigravity-cli\mcp\SuperghidraMCP"
 PYGHIDRA_MCP_SCHEMA_DIR = r"C:\Users\X\.gemini\antigravity-cli\mcp\pyghidra"

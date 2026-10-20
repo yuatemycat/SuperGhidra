@@ -542,6 +542,28 @@ class NeuralDecompilerPipeline:
             except Exception as e:
                 logger.warning(f"[NeuralDecompilerPipeline] SMT verification invocation failed: {e}")
 
+        # D-LiFT 3-Gate Neural Refinement Verification (U4)
+        if c_code_snippet is not None:
+            try:
+                from superghidra.integrations.d_lift_verifier import DLiFTPipeline
+                dlift_pipeline = DLiFTPipeline()
+                dlift_rep = dlift_pipeline.evaluate_candidate(
+                    candidate_name=prediction.predicted_function_name,
+                    candidate_c=c_code_snippet,
+                    original_c=skeleton.raw_source or c_code_snippet,
+                    func_name=prediction.predicted_function_name,
+                )
+                if dlift_rep.syntax and not dlift_rep.syntax.passed:
+                    logger.warning(f"[NeuralDecompilerPipeline] D-LiFT Gate 1 syntax check failed: {dlift_rep.d_score}")
+                    is_safe = False
+                elif dlift_rep.semantics and not dlift_rep.semantics.passed:
+                    logger.warning(f"[NeuralDecompilerPipeline] D-LiFT Gate 2 semantic check failed: {dlift_rep.semantics.counterexample}")
+                    is_safe = False
+                else:
+                    proof_hashes.append(f"DLIFT_PROOF_{prediction.predicted_function_name[:12]}_{round(dlift_rep.d_score, 2)}")
+            except Exception as e:
+                logger.debug(f"[NeuralDecompilerPipeline] D-LiFT gate evaluation skipped: {e}")
+
         # If a ReconstructionObligationLedger is wired, register formal obligations
         if self.ledger is not None:
             try:

@@ -222,43 +222,43 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
 
 ### Frontier 5: Live Android Emulator Memory Introspection Sidecar
 - [x] ~~**Goal:** Connect `shm_decompiler_bridge.py` to an active emulator runtime (MuMu / MEmu / QEMU via Frida or memory mapping) to cross-reference static Ghidra RVAs with live dynamic game memory pointers.~~
-- [x] **Impact:** Auto-verifies VTable pointers, dynamic encryption keys, and heap struct instances in real-time.
-- [x] **Target Modules:** [`emulator_memory_sidecar.py`](file:///E:/02_Projects/SuperGhidra/emulator_memory_sidecar.py)
-- [x] **Accomplished:**
-  - Strict adherence to `android-emulator-fleet-safety`: protects live game instance (`emulator-5564`) from mutations, safeguards system default (`127.0.0.1:21503`), targets authorized sandbox (`emulator-5580`) and MEmu_1 (`127.0.0.1:21513`).
-  - Dynamic memory reader abstractions: `Win32ProcessMemoryReader`, `FridaMemoryReader`, and `MockMemoryReader`.
-  - Module base resolver (static Ghidra RVA <-> live dynamic pointer translation: `dynamic_addr = module_base + rva`).
-  - Live verifiers: `verify_vtable_pointer` (confidence-scored pointer verification), `verify_struct_field` (typed field validation & range checks), `extract_dynamic_encryption_keys` (Shannon entropy estimation).
-  - Microsecond IPC streaming via `ShmChannel` (`EmulatorSidecarShmServer` & `EmulatorSidecarShmClient`).
+- [x] ~~**Impact:** Auto-verifies VTable pointers, dynamic encryption keys, and heap struct instances in real-time.~~
+- [x] ~~**Target Modules:** [`emulator_memory_sidecar.py`](file:///E:/02_Projects/SuperGhidra/emulator_memory_sidecar.py)~~
+- [x] ~~**Accomplished:**~~
+  - ~~Strict adherence to `android-emulator-fleet-safety`: protects live game instance (`emulator-5564`) from mutations, safeguards system default (`127.0.0.1:21503`), targets authorized sandbox (`emulator-5580`) and MEmu_1 (`127.0.0.1:21513`).~~
+  - ~~Dynamic memory reader abstractions: `Win32ProcessMemoryReader`, `FridaMemoryReader`, and `MockMemoryReader`.~~
+  - ~~Module base resolver (static Ghidra RVA <-> live dynamic pointer translation: `dynamic_addr = module_base + rva`).~~
+  - ~~Live verifiers: `verify_vtable_pointer` (confidence-scored pointer verification), `verify_struct_field` (typed field validation & range checks), `extract_dynamic_encryption_keys` (Shannon entropy estimation).~~
+  - ~~Microsecond IPC streaming via `ShmChannel` (`EmulatorSidecarShmServer` & `EmulatorSidecarShmClient`).~~
 
 ### Frontier 6: Cross-Version Automated Struct Shift Migrator Tool & MCP Integration
 - [x] ~~**Goal:** Expose an automated MCP tool in SuperghidraMCP that takes two binary versions (e.g., `libg v1` and `libg v2`), detects all shifted struct offsets (e.g. `m_turnTick` shifting from `+0x20` to `+0x24`), and outputs a ready-to-compile header diff.~~
-- [x] **Impact:** Reduces client update hook migration time from days to seconds.
-- [x] **Target Modules:**
-  - SuperGhidra: [`struct_shift_migrator.py`](file:///E:/02_Projects/SuperGhidra/struct_shift_migrator.py)
-  - pyghidra-mcp: [`tools.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/tools.py), [`mcp_tools.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/mcp_tools.py), [`server.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/server.py), [`models.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/models.py)
-  - MCP Schema: [`migrate_struct_shifts.json`](file:///C:/Users/X/.gemini/antigravity-cli/mcp/SuperghidraMCP/migrate_struct_shifts.json)
-- [x] **Accomplished:**
-  - ARM64 bitwise decoder (`LDR`, `STR`, `LDP`, `STP`, unsigned/unscaled immediate) and x86-64 disassembly parser.
-  - Cross-version displacement matching, insertion point detection, and shift classification (`identical`, `insertion_shift`, `expansion_shift`, `alignment_adjustment`).
-  - Automatic C++ header patch generator (unified diff and annotated C++ struct definitions).
-  - Full MCP tool exposure with `migrate_struct_shifts` registered and schema distributed.
+- [x] ~~**Impact:** Reduces client update hook migration time from days to seconds.~~
+- [x] ~~**Target Modules:**~~
+  - ~~SuperGhidra: [`struct_shift_migrator.py`](file:///E:/02_Projects/SuperGhidra/struct_shift_migrator.py)~~
+  - ~~pyghidra-mcp: [`tools.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/tools.py), [`mcp_tools.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/mcp_tools.py), [`server.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/server.py), [`models.py`](file:///E:/02_Projects/pyghidra-mcp/src/pyghidra_mcp/models.py)~~
+  - ~~MCP Schema: [`migrate_struct_shifts.json`](file:///C:/Users/X/.gemini/antigravity-cli/mcp/SuperghidraMCP/migrate_struct_shifts.json)~~
+- [x] ~~**Accomplished:**~~
+  - ~~ARM64 bitwise decoder (`LDR`, `STR`, `LDP`, `STP`, unsigned/unscaled immediate) and x86-64 disassembly parser.~~
+  - ~~Cross-version displacement matching, insertion point detection, and shift classification (`identical`, `insertion_shift`, `expansion_shift`, `alignment_adjustment`).~~
+  - ~~Automatic C++ header patch generator (unified diff and annotated C++ struct definitions).~~
+  - ~~Full MCP tool exposure with `migrate_struct_shifts` registered and schema distributed.~~
 
 ### Frontier 7: Multi-Architecture Binaries & Windows Class Recovery
-- [x] **Unified loader** ([`binary_loader.py`](file:///E:/02_Projects/SuperGhidra/binary_loader.py)): ELF 32/64 LE/BE, PE32/PE32+ EXE/DLL, Mach-O thin/universal; exports, imports, function starts, PDB path; stripped-section-table fallback.
-- [x] **x86 decoder** ([`x86_decode.py`](file:///E:/02_Projects/SuperGhidra/x86_decode.py)): 16/32/64-bit, VEX/EVEX; Capstone-verified lengths. Diff engine and struct migrator routed through loader + decoder (32-bit x86, SSE/AVX accesses, DLL export-name matching).
-- [x] **MSVC RTTI + MFC CRuntimeClass recovery** ([`msvc_class_recovery.py`](file:///E:/02_Projects/SuperGhidra/msvc_class_recovery.py)) with `Serialize()` resolution; MCP tools `inspect_binary`, `recover_cpp_classes`.
-- [x] **ARM32/Thumb-2 decoder** ([`arm_thumb_decode.py`](file:///E:/02_Projects/SuperGhidra/arm_thumb_decode.py)): 16-bit Thumb, 32-bit Thumb-2, 32-bit ARM state; memory displacement extraction (`LDR`/`STR`/`LDRB`/`STRB`/`LDRH`/`STRH`/`LDRD`/`STRD`), branch and call target resolution, prologue/epilogue detection. Integrated into [`struct_shift_migrator.py`](file:///E:/02_Projects/SuperGhidra/struct_shift_migrator.py) and [`binary_diff_engine.py`](file:///E:/02_Projects/SuperGhidra/binary_diff_engine.py) (`extract_cfgs_from_arm32_bytes`).
-- [x] **CArchive stream decoder driven by recovered `Serialize()` layouts (LiquidWork integration)** ([`src/mfc_decoder.rs`](file:///E:/02_Projects/LiquidWork/src/mfc_decoder.rs)): pure Rust deserializer, schema-driven layout engine, SolidWorks `Contents/Config-0-ResolvedFeatures` bidirectional extractor and in-place dimension mutator.
+- [x] ~~**Unified loader** ([`binary_loader.py`](file:///E:/02_Projects/SuperGhidra/binary_loader.py)): ELF 32/64 LE/BE, PE32/PE32+ EXE/DLL, Mach-O thin/universal; exports, imports, function starts, PDB path; stripped-section-table fallback.~~
+- [x] ~~**x86 decoder** ([`x86_decode.py`](file:///E:/02_Projects/SuperGhidra/x86_decode.py)): 16/32/64-bit, VEX/EVEX; Capstone-verified lengths. Diff engine and struct migrator routed through loader + decoder (32-bit x86, SSE/AVX accesses, DLL export-name matching).~~
+- [x] ~~**MSVC RTTI + MFC CRuntimeClass recovery** ([`msvc_class_recovery.py`](file:///E:/02_Projects/SuperGhidra/msvc_class_recovery.py)) with `Serialize()` resolution; MCP tools `inspect_binary`, `recover_cpp_classes`.~~
+- [x] ~~**ARM32/Thumb-2 decoder** ([`arm_thumb_decode.py`](file:///E:/02_Projects/SuperGhidra/arm_thumb_decode.py)): 16-bit Thumb, 32-bit Thumb-2, 32-bit ARM state; memory displacement extraction (`LDR`/`STR`/`LDRB`/`STRB`/`LDRH`/`STRH`/`LDRD`/`STRD`), branch and call target resolution, prologue/epilogue detection. Integrated into [`struct_shift_migrator.py`](file:///E:/02_Projects/SuperGhidra/struct_shift_migrator.py) and [`binary_diff_engine.py`](file:///E:/02_Projects/SuperGhidra/binary_diff_engine.py) (`extract_cfgs_from_arm32_bytes`).~~
+- [x] ~~**CArchive stream decoder driven by recovered `Serialize()` layouts (LiquidWork integration)** ([`src/mfc_decoder.rs`](file:///E:/02_Projects/LiquidWork/src/mfc_decoder.rs)): pure Rust deserializer, schema-driven layout engine, SolidWorks `Contents/Config-0-ResolvedFeatures` bidirectional extractor and in-place dimension mutator.~~
 
 ---
 
-## 📊 Verification (2026-10-17)
+## 📊 Verification (2026-10-20)
 
 | Suite | Command | Result |
 | :--- | :--- | :--- |
-| SuperGhidra | `python -m pytest` (repo root) | **356 passed** (machine-specific tests skip when files/tools are absent) |
-| pyghidra-mcp | `.venv\Scripts\python -m pytest tests\unit` | **239 passed** |
+| SuperGhidra | `python -m pytest` (repo root) | **535 passed**, 3 integration tests passed |
+| pyghidra-mcp | `.venv\Scripts\python -m pytest tests\unit` | **246 passed** |
 
 Regression tests for the 2026-10-17 audit live in `test_g1_regressions.py`, `test_g2_regressions.py`, `test_g2b_regressions.py`, `test_g3a_regressions.py`, `test_g3b_regressions.py` and `pyghidra-mcp/tests/unit/test_g4a_regressions.py`. Test runs no longer write into the repository (ledger → `SUPERGHIDRA_DATA_DIR` or `~/.superghidra`; benchmark report → temp dir).
 

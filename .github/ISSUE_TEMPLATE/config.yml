@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Architectural Documentation & Specifications
+    url: https://github.com/yuatemycat/SuperGhidra/tree/master/docs
+    about: Read our comprehensive specifications, IDA Pro gap analyses, and benchmark reports.
+  - name: 💬 GitHub Discussions
+    url: https://github.com/yuatemycat/SuperGhidra/discussions
+    about: Ask questions and collaborate on reverse engineering workflows.
