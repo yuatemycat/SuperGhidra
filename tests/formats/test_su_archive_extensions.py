@@ -62,5 +62,23 @@ class TestDecoderExtensions(unittest.TestCase):
             self.assertEqual(obj["fields"][-1]["value"], 0x55)
 
 
+class TestOpaqueBranches(unittest.TestCase):
+    def test_if_else_on_call_result_takes_one_branch(self):
+        # `if (f() == 0 && g() != 0) write count A; else write count B;` - the else side is
+        # recorded as an `or` of the negations. Only one of the two counts is in the stream.
+        then_c = [("ret@0x10", "==", 0), ("ret@0x20", "!=", 0)]
+        else_c = [("or", ((("ret@0x10", "!=", 0),), (("ret@0x20", "==", 0),)))]
+        layouts = {"Branchy_c": [
+            LayoutOp("count", None, False, "this+0x18", None, then_c),
+            LayoutOp("count", None, False, "this+0x18", None, else_c),
+            LayoutOp("u16", 2, False, "this+0x20", None, []),
+        ]}
+        data = _new_class("Branchy_c") + struct.pack("<HH", 0, 0x77)
+        obj = decode_stream(data, layouts)["objects"][0]
+        self.assertEqual(obj["status"], "decoded")
+        self.assertEqual([f["kind"] for f in obj["fields"]], ["count", "u16"])
+        self.assertEqual(obj["fields"][-1]["value"], 0x77)
+
+
 if __name__ == "__main__":
     unittest.main()

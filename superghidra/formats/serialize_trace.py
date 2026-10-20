@@ -38,6 +38,7 @@ self-check of the recovered layout.
 from __future__ import annotations
 
 import bisect
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -596,8 +597,10 @@ class SerializeTracer:
                 ret = self._handle_call(insn, st, summ, depth)
                 for r in volatile:
                     st.regs.pop(r, None)
-                if ret is not None:
-                    st.regs[0] = ret
+                # An unknown result still names its call site, so `if (f()) A else B`
+                # gates A and B on one opaque condition (`ret@site`) and its negation,
+                # which lets a decoder take exactly one of the two branches.
+                st.regs[0] = ret if ret is not None else ("ret", insn.address)
                 st.pushes = ()
                 st.cmp = None
                 continue
@@ -901,6 +904,8 @@ class SerializeTracer:
                 return _render(v)
             if v[0] == "arword":
                 return f"archive+{v[1]:#x}"
+            if v[0] == "ret":
+                return f"ret@{v[1]:#x}"
         return (x86_decode.REG64 if self.mode == 64 else x86_decode.REG32)[r]
 
     def _flag_test(self, disp: int, mask: int):
@@ -1298,15 +1303,24 @@ class SerializeTracer:
         if func in self._ptr_types:
             return self._ptr_types[func]
         found: Dict[int, set] = {}
+        used_as: Dict[int, List[str]] = {}  # offset -> classes whose methods are called on it
         holds: Dict[int, str] = {}  # register -> class of the object it may point to
+        loaded: Dict[int, int] = {}  # register -> member offset it was loaded from
         # Instructions are scanned in address order, so the `p = NULL` side of
         # `p = new X ? : NULL` sits between the constructor and the store. A register
         # therefore keeps its class until the next call instead of being cleared on
         # reassignment; the result only types members that are serialized via pointer.
         for insn in self._instructions(func)[0]:
-            if insn.flow in ("call", "call_ind"):
+            if insn.flow in ("call", "call_ind", "jmp"):
+                if self.ptr == 8 and 1 in loaded:  # x64: `this` of a member call is rcx
+                    owner = self._method_class(insn)
+                    if owner:
+                        used_as.setdefault(loaded[1], []).append(owner)
+                if insn.flow == "jmp":
+                    continue
                 cls = self._ctor_class(insn)
                 holds = {0: cls} if cls else {}  # a constructor returns `this` in rax/eax
+                loaded = {}
                 continue
             if insn.map != 0:
                 continue
@@ -1314,11 +1328,39 @@ class SerializeTracer:
             if insn.opcode == 0x8B and mem is None and insn.rm in holds:  # mov reg, reg
                 holds[insn.reg] = holds[insn.rm]
                 continue
+            if insn.opcode == 0x8B and mem is not None:  # mov reg, [base+d]
+                if mem.index is None and not mem.rip_relative and mem.base not in ("rsp", "rbp", "esp", "ebp"):
+                    loaded[insn.reg] = mem.disp
+                else:
+                    loaded.pop(insn.reg, None)
+                continue
             if insn.opcode == 0x89 and mem is not None and insn.reg in holds:  # mov [base+d], reg
                 if mem.index is None and not mem.rip_relative and mem.base not in ("rsp", "rbp", "esp", "ebp"):
                     found.setdefault(mem.disp, set()).add(holds[insn.reg])
-        self._ptr_types[func] = {off: next(iter(c)) for off, c in found.items() if len(c) == 1}
-        return self._ptr_types[func]
+                continue
+            if insn.modrm is not None and mem is None:
+                loaded.pop(insn.reg, None)
+        # Method calls: majority class (offsets of unrelated objects can collide); ties dropped.
+        types: Dict[int, str] = {}
+        for off, owners in used_as.items():
+            ranked = Counter(owners).most_common(2)
+            if len(ranked) == 1 or ranked[0][1] > ranked[1][1]:
+                types[off] = ranked[0][0]
+        # A constructor stored into the member is stronger evidence than a method call.
+        types.update({off: next(iter(c)) for off, c in found.items() if len(c) == 1})
+        self._ptr_types[func] = types
+        return types
+
+    def _method_class(self, insn) -> Optional[str]:
+        """Class X when `insn` calls a non-static member function `?m@X@@Q.../U...` (not ctor/dtor)."""
+        va, imported = self._call_target(insn)
+        name = imported or self._export_name(va)
+        if not name or not name.startswith("?") or name.startswith("??"):
+            return None
+        parts = name[1:].split("@")
+        if len(parts) < 4 or not parts[1] or parts[2] != "" or parts[3][:1] not in ("Q", "U", "A", "E", "I", "M"):
+            return None
+        return parts[1]
 
     def _typed_members(self, func: int, path: str) -> Dict[Tuple[str, ...], List[str]]:
         """Static types the *other* path gives to member Serialize calls, keyed by gates.

@@ -439,10 +439,37 @@ class _Decoder:
         obj.end = r.pos
         return obj
 
+    @staticmethod
+    def _assumed(c, decided) -> Optional[bool]:
+        """Value of condition `c` from earlier assumptions (directly or by negation)."""
+        if isinstance(c, (list, tuple)) and c and c[0] == "or":
+            results = []
+            for conj in c[1]:
+                vals = [_Decoder._assumed(x, decided) for x in conj]
+                if all(v is True for v in vals):
+                    return True
+                results.append(False if any(v is False for v in vals) else None)
+            return False if all(r is False for r in results) else None
+        key, neg = _cond_key(c), _cond_key(_negate_cond(c))
+        if key in decided:
+            return decided[key]
+        if neg is not None and neg in decided:
+            return not decided[neg]
+        return None
+
     def _gate_ok(self, op: LayoutOp, obj: ArchiveObject, values: Dict[str, object]) -> bool:
         decided = values.setdefault("__assumed__", {})  # per object: condition -> assumed value
         for c in op.conditions:
             v = evaluate_condition(c, self.env, values)
+            if v is None and c and c[0] == "or":
+                # Mix known values and earlier assumptions inside the disjunction.
+                known = {}
+                for conj in c[1]:
+                    for x in conj:
+                        kv = evaluate_condition(x, self.env, values)
+                        if kv is not None:
+                            known[_cond_key(x)] = kv
+                v = self._assumed(c, {**decided, **known})
             if v is None and _is_pointer_null_test(c) and values.get("__last_flag__") is not None:
                 # `ar << (long)(m_p != NULL); if (m_p) m_p->Serialize(ar);` - the presence
                 # flag written just before stands in for the pointer.
