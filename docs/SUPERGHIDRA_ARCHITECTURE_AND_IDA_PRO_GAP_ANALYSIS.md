@@ -480,6 +480,17 @@ This block is a separate measurement from the MinGW SuperGhidra table above. The
 | `refined_regressions` | **0** | Evaluable rows that passed strict and failed after the filter |
 | `evaluable_denominator` | **1000** | 1,312 logged rows. 312 original `func` + `test` programs failed under `cl.exe` and are excluded |
 
+Both runs printed:
+
+```
+strict_avg: 8.4
+lenient_avg: 18.8
+compilable_avg: 22.2
+refined_pass_count: 222
+refined_regressions: 0
+evaluable_denominator: 1000
+```
+
 Method for this rescore:
 
 - **Dataset:** [`LLM4Binary/decompile-eval`](https://huggingface.co/datasets/LLM4Binary/decompile-eval) commit `b9271fae3c556e46948559f4176ffa6f8b4f9491`. The historical pin `c07e883dfa3bf604b3da59f33857cb484c6e1aa2` is not a commit of that dataset. The Hub serves one `train` split (75,610 rows). The harness keeps the first 164 unique C++ function bodies that have a test and the next 164 unique C function bodies (328 bodies × O0–O3 = 1,312). The score log contains 656 C rows, 656 C++ rows, and 328 rows at each of O0, O1, O2, and O3.
