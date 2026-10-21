@@ -52,4 +52,6 @@ Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) or [feature request]
 
 ## License
 
-SuperGhidra is released under the Apache License 2.0. By contributing, you agree that your work is licensed under the same terms.
+SuperGhidra is released under the GNU AGPL-3.0-or-later and is also offered under a separate commercial license (see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)). By opening a pull request you agree that your contribution may be distributed under both. You keep the copyright on your work. If you can't agree to the second part, say so in the PR before it is merged.
+
+Code from before the license change was released under Apache-2.0, and that version of the text is in `LICENSES/Apache-2.0.txt`.

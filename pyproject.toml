@@ -7,7 +7,7 @@ name = "superghidra"
 version = "0.2.0"
 description = "SuperGhidra: High-Performance Ghidra Architecture & GPU Acceleration Suite"
 readme = "README.md"
-license = "Apache-2.0"
+license = "AGPL-3.0-or-later"
 authors = [
     { name = "yuatemycat" },
 ]
