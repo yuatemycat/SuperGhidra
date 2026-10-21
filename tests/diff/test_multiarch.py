@@ -6,7 +6,7 @@ import unittest
 
 import binary_diff_engine as D
 import struct_shift_migrator as M
-from test_binary_loader import build_elf, build_macho64, build_pe
+from tests.formats.test_binary_loader import build_elf, build_macho64, build_pe
 
 
 def pe_with_functions(func_a: bytes, func_b: bytes, bits=64, machine=0x8664) -> bytes:

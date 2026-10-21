@@ -42,7 +42,6 @@ from superghidra.core.mitigation_roadmap_engine import (
 )
 import superghidra.core as core_pkg
 import mitigation_roadmap_engine as root_shim
-import superghidra_section5_mitigation_roadmap_engine as section5_shim
 
 
 # =============================================================================
@@ -500,9 +499,7 @@ class TestSection5DemonstrationAndShims:
 
     def test_root_shims_integrity(self) -> None:
         assert root_shim.GNNPCodeTensorEncoder is GNNPCodeTensorEncoder
-        assert section5_shim.GNNPCodeTensorEncoder is GNNPCodeTensorEncoder
         assert root_shim.LeafXRefInversionEngine is LeafXRefInversionEngine
-        assert section5_shim.MSVCAndMFCRecoveryEngine is MSVCAndMFCRecoveryEngine
         assert core_pkg.GNNPCodeTensorEncoder is GNNPCodeTensorEncoder
         assert core_pkg.LeafXRefInversionEngine is LeafXRefInversionEngine
         assert core_pkg.NeuralDecompilerSkinningPipeline is NeuralDecompilerSkinningPipeline

@@ -266,6 +266,7 @@ def run_gcc_compare(output_dir: Path, workers: int = 6) -> Dict[str, Any]:
             for part in pool.map(score_gcc_batch, batches):
                 _take(part)
     records.sort(key=lambda rec: (rec["language"], rec["opt"], rec["task_id"]))
+    output_dir.mkdir(parents=True, exist_ok=True)
     log_path = output_dir / "gcc_score_log.jsonl"
     with log_path.open("w", encoding="utf-8") as handle:
         for rec in records:

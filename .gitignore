@@ -29,3 +29,4 @@ benchmarks/humaneval_decompile/DOWNLOAD_FAILURE.txt
 ghidra_oracle_daemon.log
 ghidra_oracle_cache.db
 ghidra_overlay.json
+benchmarks/humaneval_decompile/gcc_compare_out/

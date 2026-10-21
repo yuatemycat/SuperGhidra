@@ -56,10 +56,8 @@ class TestShimsAndExports(unittest.TestCase):
 
     def test_root_shims_import(self) -> None:
         import phase1_phase2_roadmap_engine as root_shim1
-        import superghidra_section6_7_phase1_phase2_roadmap_engine as root_shim2
 
         self.assertIs(root_shim1.RellicGotoFreeRestructurer, RellicGotoFreeRestructurer)
-        self.assertIs(root_shim2.RellicGotoFreeRestructurer, RellicGotoFreeRestructurer)
         self.assertIs(root_shim1.CSRSparseMatrixVSAEngine, CSRSparseMatrixVSAEngine)
 
 

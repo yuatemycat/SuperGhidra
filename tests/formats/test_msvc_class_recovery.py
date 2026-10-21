@@ -175,7 +175,7 @@ class TestSyntheticDll(unittest.TestCase):
         self.assertEqual(d["mfc_classes"][0]["serialize"], hex(BASE + 0x1020))
 
     def test_rejects_non_pe(self):
-        from test_binary_loader import build_elf
+        from tests.formats.test_binary_loader import build_elf
         with self.assertRaises(ValueError):
             R.recover_classes(build_elf(64, "little", 0x3E)[0])
 

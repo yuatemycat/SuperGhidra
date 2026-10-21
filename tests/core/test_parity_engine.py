@@ -20,7 +20,6 @@ import unittest
 import numpy as np
 
 import parity_engine as shim_parity_engine
-import superghidra_section3_parity_engine as shim_s3
 from superghidra.core import (
     ARM64ADRPScanner,
     AppcallExecutionFrame,
@@ -61,11 +60,8 @@ class TestBackwardCompatibilityShims(unittest.TestCase):
 
     def test_shim_exports_match_canonical(self):
         self.assertIs(shim_parity_engine.StagedPCodePassManager, canonical_parity_engine.StagedPCodePassManager)
-        self.assertIs(shim_s3.StagedPCodePassManager, canonical_parity_engine.StagedPCodePassManager)
         self.assertIs(shim_parity_engine.SymbolicCFGDeflattener, canonical_parity_engine.SymbolicCFGDeflattener)
-        self.assertIs(shim_s3.SymbolicCFGDeflattener, canonical_parity_engine.SymbolicCFGDeflattener)
         self.assertIs(shim_parity_engine.ARM64ADRPScanner, canonical_parity_engine.ARM64ADRPScanner)
-        self.assertIs(shim_s3.ARM64ADRPScanner, canonical_parity_engine.ARM64ADRPScanner)
 
 
 class TestSelfVerificationSuite(unittest.TestCase):
