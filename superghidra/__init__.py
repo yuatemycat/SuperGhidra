@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
+__version__ = "0.2.0"
+
 _EXPORTS: dict[str, tuple[str, str]] = {
     # Core Domain
     "GhidraOracleSession": ("superghidra.core.ghidra_oracle", "GhidraOracleSession"),
