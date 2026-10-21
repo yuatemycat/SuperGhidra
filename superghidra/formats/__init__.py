@@ -49,6 +49,14 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "decode_stream": ("superghidra.formats.mfc_archive", "decode_stream"),
     "calibrate": ("superghidra.formats.mfc_archive", "calibrate"),
     "evaluate_condition": ("superghidra.formats.mfc_archive", "evaluate_condition"),
+    "find_ida_install": ("superghidra.formats.ida_til_importer", "find_ida_install"),
+    "find_tilib": ("superghidra.formats.ida_til_importer", "find_tilib"),
+    "list_available_tils": ("superghidra.formats.ida_til_importer", "list_available_tils"),
+    "import_til": ("superghidra.formats.ida_til_importer", "import_til"),
+    "export_clean_header": ("superghidra.formats.ida_til_importer", "export_clean_header"),
+    "find_dumpsig": ("superghidra.formats.ida_flirt_bridge", "find_dumpsig"),
+    "list_available_sigs": ("superghidra.formats.ida_flirt_bridge", "list_available_sigs"),
+    "FlirtSignatureIndex": ("superghidra.formats.ida_flirt_bridge", "FlirtSignatureIndex"),
 }
 
 __all__ = list(_EXPORTS.keys())

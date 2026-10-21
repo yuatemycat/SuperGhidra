@@ -93,6 +93,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ResourceGovernorAndCacheDAG": ("superghidra.core.mitigation_roadmap_engine", "ResourceGovernorAndCacheDAG"),
     "run_section5_verification": ("superghidra.core.mitigation_roadmap_engine", "run_section5_verification"),
     "run_section5_mitigation_demonstration": ("superghidra.core.mitigation_roadmap_engine", "run_section5_mitigation_demonstration"),
+    "match_flirt_signatures": ("superghidra.core.live_binary_tools", "match_flirt_signatures"),
+    "import_type_library": ("superghidra.core.live_binary_tools", "import_type_library"),
+    "get_struct_catalog": ("superghidra.core.live_binary_tools", "get_struct_catalog"),
+    "STRUCT_CATALOG": ("superghidra.core.live_binary_tools", "STRUCT_CATALOG"),
 }
 
 __all__ = list(_EXPORTS.keys())

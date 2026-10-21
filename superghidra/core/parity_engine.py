@@ -423,8 +423,13 @@ class BasicBlock:
     predecessors: List[int] = field(default_factory=list)
     state_assignment: Optional[int] = None
     state_guard: Optional[int] = None
-    conditional_states: Optional[Tuple[str, int, int]] = None  # (cond_expr, true_state, false_state)
+    conditional_states: Optional[Any] = None  # (cond_expr, true_state, false_state) or list of (cond, state)
     opaque_predicate_expr: Optional[str] = None
+    state_transform: Optional[Tuple[int, int, int]] = None  # (C1, C2, mask) for state = (state * C1 + C2) & mask
+    state_xor_chain: Optional[Sequence[int]] = None         # [k1, k2, ...] for state = state ^ k1 ^ k2...
+    state_formula: Optional[str] = None                     # Formula string, e.g. "(state * C1 + C2) & mask"
+    multi_conditional_states: Optional[List[Tuple[str, Any]]] = None # Multi-condition dispatch list
+    is_trampoline: bool = False                             # Marks intermediate switch / return trampoline block
 
 
 @dataclass
@@ -440,6 +445,19 @@ class PCodeCFG:
             for succ in blk.successors:
                 if succ in self.blocks and blk.block_id not in self.blocks[succ].predecessors:
                     self.blocks[succ].predecessors.append(blk.block_id)
+
+    def reachable_blocks(self, start_id: Optional[int] = None) -> Set[int]:
+        """Returns the set of block IDs reachable from start_id (or entry_block)."""
+        start = self.entry_block if start_id is None else start_id
+        reachable: Set[int] = set()
+        queue = [start]
+        while queue:
+            curr = queue.pop(0)
+            if curr in reachable or curr not in self.blocks:
+                continue
+            reachable.add(curr)
+            queue.extend(self.blocks[curr].successors)
+        return reachable
 
     def compute_dominators(self) -> Dict[int, Set[int]]:
         """Standard iterative dataflow algorithm for dominance sets."""
@@ -522,12 +540,101 @@ class SymbolicCFGDeflattener:
         cfg.recompute_predecessors()
         return removed_edges
 
-    def deflatten_state_machine(self, cfg: PCodeCFG, explicit_dispatcher_id: Optional[int] = None) -> Dict[str, Any]:
+    @classmethod
+    def evaluate_state_transformation(
+        cls,
+        base_state: Optional[int],
+        state_assignment: Optional[int] = None,
+        state_transform: Optional[Tuple[int, int, int]] = None,
+        state_xor_chain: Optional[Sequence[int]] = None,
+        state_formula: Optional[str] = None,
+        ops: Optional[List[PCodeOp]] = None,
+        bit_width: int = 32,
+    ) -> Optional[int]:
+        """
+        Symbolically evaluates auxiliary state transformations used by OLLVM, Hikari,
+        and Promon SHIELD (e.g. state = (state * C1 + C2) & MASK, XOR chains, or arithmetic P-Code sequences).
+        """
+        mask = (1 << bit_width) - 1
+        curr: Optional[int] = state_assignment if state_assignment is not None else base_state
+
+        if ops:
+            env: Dict[Tuple[str, int], int] = {}
+            if curr is not None:
+                env[("register", 0)] = curr & mask
+                env[("state", 0)] = curr & mask
+
+            computed_state: Optional[int] = None
+            for op in ops:
+                if op.opcode == PCodeOpcode.COPY:
+                    inp = op.inputs[0]
+                    val = inp.offset if inp.is_constant() else env.get((inp.space, inp.offset))
+                    if val is not None and op.output:
+                        env[(op.output.space, op.output.offset)] = val & mask
+                        computed_state = val & mask
+                elif op.opcode in (
+                    PCodeOpcode.INT_ADD, PCodeOpcode.INT_SUB, PCodeOpcode.INT_MULT,
+                    PCodeOpcode.INT_AND, PCodeOpcode.INT_OR, PCodeOpcode.INT_XOR
+                ) and len(op.inputs) == 2:
+                    inp1, inp2 = op.inputs[0], op.inputs[1]
+                    v1 = inp1.offset if inp1.is_constant() else env.get((inp1.space, inp1.offset), curr)
+                    v2 = inp2.offset if inp2.is_constant() else env.get((inp2.space, inp2.offset), curr)
+                    if v1 is not None and v2 is not None:
+                        res = 0
+                        if op.opcode == PCodeOpcode.INT_ADD:
+                            res = (v1 + v2) & mask
+                        elif op.opcode == PCodeOpcode.INT_SUB:
+                            res = (v1 - v2) & mask
+                        elif op.opcode == PCodeOpcode.INT_MULT:
+                            res = (v1 * v2) & mask
+                        elif op.opcode == PCodeOpcode.INT_AND:
+                            res = (v1 & v2) & mask
+                        elif op.opcode == PCodeOpcode.INT_OR:
+                            res = (v1 | v2) & mask
+                        elif op.opcode == PCodeOpcode.INT_XOR:
+                            res = (v1 ^ v2) & mask
+                        if op.output:
+                            env[(op.output.space, op.output.offset)] = res
+                        computed_state = res
+            if computed_state is not None:
+                curr = computed_state
+
+        if curr is None:
+            return None
+
+        # 1. Linear Congruential / Affine Transformation (C1 * state + C2) & MASK
+        if state_transform is not None:
+            c1, c2, tmask = state_transform
+            curr = ((curr * c1) + c2) & tmask & mask
+
+        # 2. XOR Chain Transformation (state ^ k1 ^ k2 ...)
+        if state_xor_chain is not None:
+            for k in state_xor_chain:
+                curr = (curr ^ k) & mask
+
+        # 3. Arbitrary Symbolic Formula Evaluation
+        if state_formula is not None:
+            safe_globals = {"__builtins__": {}}
+            local_env = {"state": curr & mask, "x": curr & mask, "mask": mask}
+            try:
+                curr = int(eval(state_formula, safe_globals, local_env)) & mask
+            except Exception:
+                pass
+
+        return curr & mask
+
+    def deflatten_state_machine(
+        self,
+        cfg: PCodeCFG,
+        explicit_dispatcher_id: Optional[int] = None,
+        bit_width: int = 32,
+    ) -> Dict[str, Any]:
         """
         Identifies the dispatcher header block (dominating a multi-way switch back-edge loop),
-        maps state constants (`state_guard`) to worker basic blocks, resolves constant and
-        conditional state updates (`state_assignment` / `conditional_states`), rewires worker
-        blocks directly to their semantic successors, and detaches the switch dispatcher.
+        maps state constants (`state_guard`) to worker basic blocks, resolves constant,
+        multi-condition, and transformed state updates (`state_assignment` / `conditional_states` /
+        `state_transform` / `state_xor_chain`), rewires worker blocks directly to their semantic
+        successors, and eliminates dead switch and trampoline basic blocks.
         """
         cfg.recompute_predecessors()
         opaque_report = self.eliminate_opaque_predicates(cfg)
@@ -558,16 +665,76 @@ class SymbolicCFGDeflattener:
             if blk.state_guard is not None:
                 state_to_block[blk.state_guard] = bid
 
+        # Identify intermediate switch and return trampoline blocks
+        trampoline_ids: Set[int] = set()
+        for bid, blk in cfg.blocks.items():
+            if bid == dispatcher_id or bid == cfg.entry_block:
+                continue
+            if blk.is_trampoline:
+                trampoline_ids.add(bid)
+            elif blk.state_guard is None and len(blk.successors) == 1 and (
+                blk.successors[0] == dispatcher_id or blk.successors[0] in trampoline_ids
+            ):
+                trampoline_ids.add(bid)
+
         rewired_edges: List[Tuple[int, int, str]] = []
         for bid, blk in list(cfg.blocks.items()):
-            if bid == dispatcher_id:
+            if bid == dispatcher_id or bid in trampoline_ids:
                 continue
-            if blk.state_assignment is not None and blk.state_assignment in state_to_block:
-                target_bid = state_to_block[blk.state_assignment]
-                blk.successors = [target_bid]
-                rewired_edges.append((bid, target_bid, f"state=0x{blk.state_assignment:x}"))
-            elif blk.conditional_states is not None:
-                cond_expr, true_state, false_state = blk.conditional_states
+
+            # 1. Multi-conditional state dispatching
+            multi_cases = (
+                blk.multi_conditional_states
+                if blk.multi_conditional_states is not None
+                else (blk.conditional_states if isinstance(blk.conditional_states, list) else None)
+            )
+            if multi_cases is not None:
+                new_succs: List[int] = []
+                for cond_expr, target_spec in multi_cases:
+                    if isinstance(target_spec, int):
+                        target_state = self.evaluate_state_transformation(
+                            base_state=blk.state_guard,
+                            state_assignment=target_spec,
+                            state_transform=blk.state_transform,
+                            state_xor_chain=blk.state_xor_chain,
+                            state_formula=blk.state_formula,
+                            bit_width=bit_width,
+                        )
+                    elif isinstance(target_spec, str):
+                        target_state = self.evaluate_state_transformation(
+                            base_state=blk.state_guard,
+                            state_formula=target_spec,
+                            bit_width=bit_width,
+                        )
+                    else:
+                        target_state = None
+                    if target_state is not None and target_state in state_to_block:
+                        target_bid = state_to_block[target_state]
+                        new_succs.append(target_bid)
+                        rewired_edges.append((bid, target_bid, f"case ({cond_expr}) -> 0x{target_state:x}"))
+                if new_succs:
+                    blk.successors = new_succs
+                continue
+
+            # 2. Binary conditional states (if-then-else)
+            if isinstance(blk.conditional_states, tuple) and len(blk.conditional_states) == 3:
+                cond_expr, true_state_raw, false_state_raw = blk.conditional_states
+                true_state = self.evaluate_state_transformation(
+                    base_state=blk.state_guard,
+                    state_assignment=true_state_raw,
+                    state_transform=blk.state_transform,
+                    state_xor_chain=blk.state_xor_chain,
+                    state_formula=blk.state_formula,
+                    bit_width=bit_width,
+                )
+                false_state = self.evaluate_state_transformation(
+                    base_state=blk.state_guard,
+                    state_assignment=false_state_raw,
+                    state_transform=blk.state_transform,
+                    state_xor_chain=blk.state_xor_chain,
+                    state_formula=blk.state_formula,
+                    bit_width=bit_width,
+                )
                 if true_state in state_to_block and false_state in state_to_block:
                     t_bid = state_to_block[true_state]
                     f_bid = state_to_block[false_state]
@@ -575,10 +742,61 @@ class SymbolicCFGDeflattener:
                     rewired_edges.append(
                         (bid, t_bid, f"if ({cond_expr}) -> 0x{true_state:x} else 0x{false_state:x}")
                     )
+                continue
+
+            # 3. Direct or symbolically transformed state assignment
+            if (
+                blk.state_assignment is not None
+                or blk.state_transform is not None
+                or blk.state_xor_chain is not None
+                or blk.state_formula is not None
+                or blk.ops
+            ):
+                target_state = self.evaluate_state_transformation(
+                    base_state=blk.state_guard,
+                    state_assignment=blk.state_assignment,
+                    state_transform=blk.state_transform,
+                    state_xor_chain=blk.state_xor_chain,
+                    state_formula=blk.state_formula,
+                    ops=blk.ops,
+                    bit_width=bit_width,
+                )
+                if target_state is not None and target_state in state_to_block:
+                    target_bid = state_to_block[target_state]
+                    blk.successors = [target_bid]
+                    rewired_edges.append((bid, target_bid, f"state=0x{target_state:x}"))
 
         cfg.recompute_predecessors()
+
+        # 4. Eliminate dispatcher and dead trampoline basic blocks
+        dead_blocks_removed: List[int] = []
+
         if dispatcher_id in cfg.blocks and not cfg.blocks[dispatcher_id].predecessors and dispatcher_id != cfg.entry_block:
             del cfg.blocks[dispatcher_id]
+            dead_blocks_removed.append(dispatcher_id)
+
+        for t_id in list(trampoline_ids):
+            if t_id in cfg.blocks and t_id != cfg.entry_block:
+                valid_preds = [
+                    p for p in cfg.blocks[t_id].predecessors
+                    if p in cfg.blocks and p != dispatcher_id and p not in trampoline_ids
+                ]
+                if not valid_preds:
+                    del cfg.blocks[t_id]
+                    dead_blocks_removed.append(t_id)
+
+        cfg.recompute_predecessors()
+
+        if cfg.entry_block != dispatcher_id and cfg.entry_block in cfg.blocks:
+            reachable = cfg.reachable_blocks()
+            for dead_id in sorted(set(cfg.blocks.keys()) - reachable):
+                dead_blk = cfg.blocks[dead_id]
+                if dead_blk.is_trampoline or dead_id in trampoline_ids or dead_id == dispatcher_id or not dead_blk.predecessors:
+                    if dead_id in cfg.blocks:
+                        del cfg.blocks[dead_id]
+                        if dead_id not in dead_blocks_removed:
+                            dead_blocks_removed.append(dead_id)
+
         cfg.recompute_predecessors()
 
         return {
@@ -587,6 +805,7 @@ class SymbolicCFGDeflattener:
             "state_table_size": len(state_to_block),
             "opaque_predicates_removed": opaque_report,
             "rewired_edges": rewired_edges,
+            "dead_trampolines_removed": dead_blocks_removed,
             "remaining_blocks": sorted(cfg.blocks.keys()),
         }
 
@@ -1092,6 +1311,29 @@ class CFGSignatureIndex:
     def __init__(self) -> None:
         self._records: List[FunctionSignatureRecord] = []
         self._hash_lookup: Dict[str, List[FunctionSignatureRecord]] = {}
+        self._flirt_index: Optional[Any] = None
+
+    def load_flirt_signatures(self, sig_path: Union[str, Path]) -> int:
+        """Load IDA FLIRT signatures (.sig) into the index via FlirtSignatureIndex.
+
+        Returns the number of pattern signatures loaded.
+        """
+        from superghidra.formats.ida_flirt_bridge import FlirtSignatureIndex
+
+        if self._flirt_index is None:
+            self._flirt_index = FlirtSignatureIndex()
+        return self._flirt_index.load_sig_file(sig_path)
+
+    @property
+    def flirt_index(self) -> Optional[Any]:
+        """Access the underlying FlirtSignatureIndex if loaded."""
+        return self._flirt_index
+
+    def match_flirt(self, prologue_bytes: bytes) -> Optional[str]:
+        """Match function prologue bytes directly against loaded FLIRT signatures."""
+        if self._flirt_index is None:
+            return None
+        return self._flirt_index.match_function_prologue(prologue_bytes)
 
     @staticmethod
     def compute_arm64_pic_masked_hash(prologue_bytes: bytes, max_insns: int = 8) -> str:
@@ -1195,6 +1437,19 @@ class CFGSignatureIndex:
         exact_hash = self.compute_arm64_pic_masked_hash(prologue_bytes) if prologue_bytes else None
 
         scored: List[Dict[str, Any]] = []
+        if self._flirt_index is not None and prologue_bytes:
+            flirt_matches = self._flirt_index.match_bytes(prologue_bytes, offset=0)
+            for fm in flirt_matches:
+                scored.append({
+                    "symbol_name": fm.symbol_name,
+                    "library_name": fm.pattern.sig_source or "flirt",
+                    "compiler_opt": "flirt",
+                    "cosine_similarity": 1.0,
+                    "exact_pic_hash_match": True,
+                    "flirt_match": True,
+                    "combined_confidence": fm.confidence,
+                })
+
         for rec in self._records:
             cosine = float(np.dot(q_vec, rec.cfg_vector_32d))
             hash_hit = exact_hash is not None and rec.masked_prologue_hash == exact_hash

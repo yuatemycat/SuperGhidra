@@ -70,6 +70,7 @@ class RttiClass:
     bases: List[str] = field(default_factory=list)  # direct and indirect, nearest first
     multiple_inheritance: bool = False
     virtual_inheritance: bool = False
+    object_size: Optional[int] = None
 
 
 @dataclass
@@ -122,7 +123,7 @@ class ClassRecoveryReport:
             rtti.append({
                 "name": c.name, "mangled": c.mangled, "type_descriptor": hx(c.type_descriptor),
                 "bases": c.bases, "multiple_inheritance": c.multiple_inheritance,
-                "virtual_inheritance": c.virtual_inheritance,
+                "virtual_inheritance": c.virtual_inheritance, "object_size": c.object_size,
                 "vtables": [{"address": hx(v.address), "offset_in_class": v.offset_in_class,
                              "functions": [hx(f) for f in v.functions]} for v in c.vtables],
             })
@@ -387,6 +388,38 @@ def _scan_rtti(view: _View) -> List[RttiClass]:
             base_td = view.ref(bcd) if bcd else None
             if base_td in type_descs:
                 cls.bases.append(demangle_rtti_name(type_descs[base_td]))
+
+    # MSVC Exception Handling (CatchableType / CatchableTypeArray):
+    # Recovers non-polymorphic / thrown exception classes, base hierarchies, and object sizes
+    # even when RTTI is disabled (/GR-) or classes lack vtables.
+    td_lookup = {(va - img.image_base if ptr == 8 else va): va for va in type_descs}
+    catchable_types: Dict[int, Tuple[int, int]] = {}
+    ct_rec_size = 28
+    for sec in view.data_secs:
+        blob = img.section_bytes(sec)
+        for off in range(0, len(blob) - ct_rec_size + 1, 4):
+            props, pType, mdisp, pdisp, vdisp, size, copy_fn = struct.unpack_from("<Iiiiiii", blob, off)
+            if pType in td_lookup and 0 <= size <= 0x100000 and props < 0x20:
+                ct_key = (sec.vaddr + off - img.image_base) if ptr == 8 else (sec.vaddr + off)
+                catchable_types[ct_key] = (td_lookup[pType], size)
+
+    for sec in view.data_secs:
+        blob = img.section_bytes(sec)
+        for off in range(0, len(blob) - 8, 4):
+            count = struct.unpack_from("<i", blob, off)[0]
+            if 1 <= count <= 32:
+                rvas = struct.unpack_from(f"<{count}i", blob, off + 4)
+                if all(r in catchable_types for r in rvas):
+                    chain = [catchable_types[r] for r in rvas]
+                    primary_td_va, obj_size = chain[0]
+                    cls = get_class(primary_td_va)
+                    if cls.object_size is None and obj_size > 0:
+                        cls.object_size = obj_size
+                    if not cls.bases and len(chain) > 1:
+                        for base_td_va, _ in chain[1:]:
+                            base_name = demangle_rtti_name(type_descs[base_td_va])
+                            if base_name not in cls.bases and base_name != cls.name:
+                                cls.bases.append(base_name)
 
     for cls in classes.values():
         cls.vtables.sort(key=lambda v: v.offset_in_class)

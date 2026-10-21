@@ -24,6 +24,7 @@ from superghidra.lifters.egraph_mlir_pipeline import (
     HAS_Z3,
     IfElseRegion,
     MLIRGotoFreeRestructurer,
+    RellicGotoFreeRestructurer,
     PCodeBasicBlock,
     PCodeFunction,
     PCodeMaturityStage,
@@ -397,6 +398,82 @@ class TestMLIRGotoFreeRestructurer(unittest.TestCase):
         self.assertIn("return 0x2a;", clean_c)
         self.assertIn("return 0x63;", clean_c)
         self.assertNotIn("goto", clean_c)
+
+    def test_multiway_switch_trampoline_restructures_to_if_then_else(self):
+        cmd = Varnode(AddressSpace.REGISTER, 0x00, 8, symbol="cmd")
+        b1_ops = [
+            PCodeOp(1, PCodeOpCode.INT_EQUAL, Varnode(AddressSpace.UNIQUE, 0x10, 1), [cmd, Varnode(AddressSpace.CONST, 1, 8)], 0x1000),
+            PCodeOp(2, PCodeOpCode.INT_EQUAL, Varnode(AddressSpace.UNIQUE, 0x11, 1), [cmd, Varnode(AddressSpace.CONST, 2, 8)], 0x1004),
+        ]
+        func = PCodeFunction(
+            name="dispatch_switch",
+            entry_rva=0x1000,
+            params=[cmd],
+            blocks={
+                1: PCodeBasicBlock(1, 0x1000, b1_ops, succs=[2, 3, 4], preds=[]),
+                2: PCodeBasicBlock(2, 0x1010, [PCodeOp(10, PCodeOpCode.RETURN, None, [Varnode(AddressSpace.CONST, 10, 8)], 0x1010)], succs=[], preds=[1]),
+                3: PCodeBasicBlock(3, 0x1020, [PCodeOp(20, PCodeOpCode.RETURN, None, [Varnode(AddressSpace.CONST, 20, 8)], 0x1020)], succs=[], preds=[1]),
+                4: PCodeBasicBlock(4, 0x1030, [PCodeOp(30, PCodeOpCode.RETURN, None, [Varnode(AddressSpace.CONST, 99, 8)], 0x1030)], succs=[], preds=[1]),
+            },
+        )
+        restructurer = RellicGotoFreeRestructurer()
+        mlir_ir, clean_c = restructurer.restructure_function(func)
+        self.assertIn("if (cmd == 1)", clean_c)
+        self.assertIn("if (cmd == 2)", clean_c)
+        self.assertIn("return 0xa;", clean_c)
+        self.assertIn("return 0x14;", clean_c)
+        self.assertIn("return 0x63;", clean_c)
+        self.assertNotIn("goto", clean_c)
+
+    def test_unnatural_switch_trampoline_collapses_without_gotos(self):
+        mode = Varnode(AddressSpace.REGISTER, 0x00, 8, symbol="mode")
+        c_vn = Varnode(AddressSpace.UNIQUE, 0x50, 1)
+        # Block 1 branches to trampoline Block 10 (true) or Block 20 (false)
+        b1_ops = [
+            PCodeOp(1, PCodeOpCode.INT_EQUAL, c_vn, [mode, Varnode(AddressSpace.CONST, 0, 8)], 0x1000),
+            PCodeOp(2, PCodeOpCode.CBRANCH, None, [Varnode(AddressSpace.CONST, 10, 8), c_vn], 0x1004),
+        ]
+        # Trampoline Block 10 jumps to Worker Block 2
+        t10_ops = [PCodeOp(3, PCodeOpCode.BRANCH, None, [Varnode(AddressSpace.CONST, 2, 8)], 0x1010)]
+        # Trampoline Block 20 jumps to Worker Block 3
+        t20_ops = [PCodeOp(4, PCodeOpCode.BRANCH, None, [Varnode(AddressSpace.CONST, 3, 8)], 0x1020)]
+        b2_ops = [PCodeOp(5, PCodeOpCode.RETURN, None, [Varnode(AddressSpace.CONST, 100, 8)], 0x1030)]
+        b3_ops = [PCodeOp(6, PCodeOpCode.RETURN, None, [Varnode(AddressSpace.CONST, 200, 8)], 0x1040)]
+
+        func = PCodeFunction(
+            name="trampoline_switch",
+            entry_rva=0x1000,
+            params=[mode],
+            blocks={
+                1: PCodeBasicBlock(1, 0x1000, b1_ops, succs=[20, 10], preds=[]),
+                10: PCodeBasicBlock(10, 0x1010, t10_ops, succs=[2], preds=[1]),
+                20: PCodeBasicBlock(20, 0x1020, t20_ops, succs=[3], preds=[1]),
+                2: PCodeBasicBlock(2, 0x1030, b2_ops, succs=[], preds=[10]),
+                3: PCodeBasicBlock(3, 0x1040, b3_ops, succs=[], preds=[20]),
+            },
+        )
+        restructurer = RellicGotoFreeRestructurer()
+        mlir_ir, clean_c = restructurer.restructure_function(func)
+        self.assertIn("if (mode == 0)", clean_c)
+        self.assertIn("return 0x64;", clean_c)
+        self.assertIn("return 0xc8;", clean_c)
+        self.assertNotIn("goto", clean_c)
+
+    def test_pass_manager_restructure_goto_free(self):
+        x = Varnode(AddressSpace.REGISTER, 0x00, 8, symbol="x")
+        func = PCodeFunction(
+            name="pass_mgr_test",
+            entry_rva=0x1000,
+            params=[x],
+            blocks={
+                1: PCodeBasicBlock(1, 0x1000, [PCodeOp(1, PCodeOpCode.RETURN, None, [x], 0x1000)], succs=[], preds=[])
+            },
+        )
+        pm = StagedPCodePassManager()
+        mlir, c_code = pm.restructure_goto_free(func)
+        self.assertIn("uint64_t pass_mgr_test(uint64_t x) {", c_code)
+        self.assertIn("return x;", c_code)
+        self.assertNotIn("goto", c_code)
 
 
 class TestFullIntegratedPipeline(unittest.TestCase):

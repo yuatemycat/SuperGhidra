@@ -14,6 +14,7 @@ Tests the 7 Critical Gaps Against IDA Pro & the Parity Engine:
 """
 from __future__ import annotations
 
+import os
 import struct
 import unittest
 import numpy as np
@@ -241,6 +242,124 @@ class TestGap2SymbolicCFGDeflattener(unittest.TestCase):
         report = self.deflattener.deflatten_state_machine(simple_cfg)
         self.assertFalse(report["deflattened"])
 
+    def test_deflatten_affine_state_transformation(self):
+        # OLLVM/Promon dispatcher: state = (state * C1 + C2) & MASK
+        cfg = PCodeCFG(
+            entry_block=0,
+            blocks={
+                0: BasicBlock(0, 0x1000, successors=[1], state_assignment=0x100),
+                1: BasicBlock(1, 0x1010, successors=[2, 3]),
+                2: BasicBlock(
+                    2, 0x1020,
+                    successors=[1],
+                    state_guard=0x100,
+                    state_transform=(3, 0x54, 0xFFFFFFFF),  # 0x100 * 3 + 0x54 = 0x354
+                ),
+                3: BasicBlock(3, 0x1040, successors=[], state_guard=0x354),
+            },
+        )
+        report = self.deflattener.deflatten_state_machine(cfg)
+        self.assertTrue(report["deflattened"])
+        self.assertEqual(cfg.blocks[0].successors, [2])
+        self.assertEqual(cfg.blocks[2].successors, [3])
+
+    def test_deflatten_xor_chain_state_transformation(self):
+        # XOR chain dispatcher: state = state ^ K1 ^ K2
+        cfg = PCodeCFG(
+            entry_block=0,
+            blocks={
+                0: BasicBlock(0, 0x1000, successors=[1], state_assignment=0x200),
+                1: BasicBlock(1, 0x1010, successors=[2, 3]),
+                2: BasicBlock(
+                    2, 0x1020,
+                    successors=[1],
+                    state_guard=0x200,
+                    state_xor_chain=[0x1337, 0xCAFE],  # 0x200 ^ 0x1337 ^ 0xcafe = 0xdbc9
+                ),
+                3: BasicBlock(3, 0x1040, successors=[], state_guard=0xDBC9),
+            },
+        )
+        report = self.deflattener.deflatten_state_machine(cfg)
+        self.assertTrue(report["deflattened"])
+        self.assertEqual(cfg.blocks[0].successors, [2])
+        self.assertEqual(cfg.blocks[2].successors, [3])
+
+    def test_deflatten_symbolic_formula_state_transformation(self):
+        cfg = PCodeCFG(
+            entry_block=0,
+            blocks={
+                0: BasicBlock(0, 0x1000, successors=[1], state_assignment=10),
+                1: BasicBlock(1, 0x1010, successors=[2, 3]),
+                2: BasicBlock(
+                    2, 0x1020,
+                    successors=[1],
+                    state_guard=10,
+                    state_formula="(state * 7 + 13) & mask",  # 10 * 7 + 13 = 83
+                ),
+                3: BasicBlock(3, 0x1040, successors=[], state_guard=83),
+            },
+        )
+        report = self.deflattener.deflatten_state_machine(cfg)
+        self.assertTrue(report["deflattened"])
+        self.assertEqual(cfg.blocks[0].successors, [2])
+        self.assertEqual(cfg.blocks[2].successors, [3])
+
+    def test_deflatten_multi_condition_dispatcher(self):
+        cfg = PCodeCFG(
+            entry_block=0,
+            blocks={
+                0: BasicBlock(0, 0x1000, successors=[1], state_assignment=0x1000),
+                1: BasicBlock(1, 0x1010, successors=[2, 3, 4, 5, 6]),
+                2: BasicBlock(
+                    2, 0x1020,
+                    successors=[1],
+                    state_guard=0x1000,
+                    multi_conditional_states=[
+                        ("tag == 1", 0x1001),
+                        ("tag == 2", 0x1002),
+                        ("tag == 3", 0x1003),
+                        ("default", 0x1004),
+                    ],
+                ),
+                3: BasicBlock(3, 0x1030, successors=[], state_guard=0x1001),
+                4: BasicBlock(4, 0x1040, successors=[], state_guard=0x1002),
+                5: BasicBlock(5, 0x1050, successors=[], state_guard=0x1003),
+                6: BasicBlock(6, 0x1060, successors=[], state_guard=0x1004),
+            },
+        )
+        report = self.deflattener.deflatten_state_machine(cfg)
+        self.assertTrue(report["deflattened"])
+        self.assertEqual(cfg.blocks[0].successors, [2])
+        self.assertEqual(cfg.blocks[2].successors, [3, 4, 5, 6])
+
+    def test_deflatten_eliminates_dead_trampoline_basic_blocks(self):
+        cfg = PCodeCFG(
+            entry_block=0,
+            blocks={
+                0: BasicBlock(0, 0x1000, successors=[10], state_assignment=0x100),
+                10: BasicBlock(10, 0x1008, successors=[1], is_trampoline=True),  # entry trampoline
+                1: BasicBlock(1, 0x1010, successors=[2, 3]),                      # switch dispatcher
+                2: BasicBlock(
+                    2, 0x1020,
+                    successors=[20],
+                    state_guard=0x100,
+                    state_assignment=0x200,
+                ),
+                20: BasicBlock(20, 0x1028, successors=[1], is_trampoline=True), # return trampoline
+                3: BasicBlock(3, 0x1040, successors=[], state_guard=0x200),
+            },
+        )
+        report = self.deflattener.deflatten_state_machine(cfg)
+        self.assertTrue(report["deflattened"])
+        self.assertEqual(cfg.blocks[0].successors, [2])
+        self.assertEqual(cfg.blocks[2].successors, [3])
+        # Dead trampolines and dispatcher eliminated
+        self.assertNotIn(1, cfg.blocks)
+        self.assertNotIn(10, cfg.blocks)
+        self.assertNotIn(20, cfg.blocks)
+        self.assertIn(10, report["dead_trampolines_removed"])
+        self.assertIn(20, report["dead_trampolines_removed"])
+
 
 class TestGap3UsercallPrototypeCompiler(unittest.TestCase):
     """Tests Gap 3: Declarative __usercall DSL with Vector Integer Spill & .cspec Compilation."""
@@ -414,6 +533,19 @@ class TestGap5CFGSignatureIndex(unittest.TestCase):
         self.assertEqual(matches[0]["symbol_name"], "test_func")
         self.assertAlmostEqual(matches[0]["cosine_similarity"], 1.0, places=5)
         self.assertTrue(matches[0]["exact_pic_hash_match"])
+
+    @unittest.skipUnless(os.path.isfile(r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig"), "bc31cls.sig required")
+    def test_load_flirt_signatures_integration(self):
+        sig_index = CFGSignatureIndex()
+        count = sig_index.load_flirt_signatures(r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig")
+        self.assertGreater(count, 50)
+        self.assertIsNotNone(sig_index.flirt_index)
+
+        # Match known prologue
+        code = bytes.fromhex("558BEC56578B46060B46087514B8080050AABBCCDDEE598956088946060BC274")
+        sym = sig_index.match_flirt(code)
+        self.assertIsNotNone(sym)
+        self.assertIn("VectorImp", sym)
 
 
 class TestGap6ClangHeaderImporter(unittest.TestCase):

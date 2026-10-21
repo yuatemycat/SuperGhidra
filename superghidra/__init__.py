@@ -157,6 +157,13 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "decode_stream": ("superghidra.formats.mfc_archive", "decode_stream"),
     "calibrate": ("superghidra.formats.mfc_archive", "calibrate"),
     "evaluate_condition": ("superghidra.formats.mfc_archive", "evaluate_condition"),
+    "FlirtSignatureIndex": ("superghidra.formats.ida_flirt_bridge", "FlirtSignatureIndex"),
+    "import_til": ("superghidra.formats.ida_til_importer", "import_til"),
+    "export_clean_header": ("superghidra.formats.ida_til_importer", "export_clean_header"),
+    "match_flirt_signatures": ("superghidra.core.live_binary_tools", "match_flirt_signatures"),
+    "import_type_library": ("superghidra.core.live_binary_tools", "import_type_library"),
+    "query_binary_dataflow": ("superghidra.core.live_binary_tools", "query_binary_dataflow"),
+    "solve_global_type_lattice": ("superghidra.core.live_binary_tools", "solve_global_type_lattice"),
     # Integrations Domain
     "APKJNICrossReferencer": ("superghidra.integrations.apk_jni_cross_referencer", "APKJNICrossReferencer"),
     "JavaNativeMethod": ("superghidra.integrations.apk_jni_cross_referencer", "JavaNativeMethod"),

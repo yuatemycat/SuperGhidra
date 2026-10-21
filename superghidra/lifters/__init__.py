@@ -38,6 +38,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "EGraphMBADeobfuscatorPass": ("superghidra.lifters.egraph_mlir_pipeline", "EGraphMBADeobfuscatorPass"),
     "SymbolicCFFDeflattenerPass": ("superghidra.lifters.egraph_mlir_pipeline", "SymbolicCFFDeflattenerPass"),
     "MLIRGotoFreeRestructurer": ("superghidra.lifters.egraph_mlir_pipeline", "MLIRGotoFreeRestructurer"),
+    "RellicGotoFreeRestructurer": ("superghidra.lifters.egraph_mlir_pipeline", "RellicGotoFreeRestructurer"),
     "EGraph": ("superghidra.lifters.egraph_mlir_pipeline", "EGraph"),
     "EquivalenceProver": ("superghidra.lifters.egraph_mlir_pipeline", "EquivalenceProver"),
     "PCodeMaturityStage": ("superghidra.lifters.egraph_mlir_pipeline", "PCodeMaturityStage"),

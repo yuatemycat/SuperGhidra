@@ -257,12 +257,120 @@ class CompilableDecompilerFilter:
         return shim + code
 
     @classmethod
+    def collapse_pointer_strides(cls, code: str) -> str:
+        """
+        Roadmap U20: Collapses raw pointer-stride arithmetic into high-level array accesses.
+        Transforms:
+          - *(type *)(base + index * stride) -> ((type *)(base))[index] (or base[index])
+          - *(type *)(base + (index << shift)) -> ((type *)(base))[index]
+          - *(_QWORD *)(*(_QWORD *)(base + 0x18) + (longlong)i * 8) -> base->field_18[i]
+        """
+        # 1. Nested double dereference:
+        # *(_QWORD *)(*(_QWORD *)(base + 0xOffset) + (cast)index * 8)
+        # -> base->field_Offset[index]
+        def _repl_nested_struct_array(m: re.Match) -> str:
+            cast1 = m.group(1)
+            cast2 = m.group(2)
+            base = m.group(3).strip()
+            offset = m.group(4).strip()
+            idx = m.group(5).strip()
+            stride = m.group(6).strip()
+            clean_off = offset.replace("0x", "")
+            return f"{base}->field_{clean_off}[{idx}]"
+
+        code = re.sub(
+            r"\*\s*\(\s*([a-zA-Z0-9_*]+)\s*\*\s*\)\s*\(\s*\*\s*\(\s*([a-zA-Z0-9_*]+)\s*\*\s*\)\s*\(\s*([a-zA-Z0-9_]+)\s*\+\s*(0x[0-9a-fA-F]+|[0-9]+)\s*\)\s*\+\s*(?:\([a-zA-Z0-9_*]+\)\s*)?([a-zA-Z0-9_]+)\s*\*\s*([0-9]+)\s*\)",
+            _repl_nested_struct_array,
+            code,
+        )
+
+        # 2. Shifted index pointer stride:
+        # *(type *)(base + (index << shift)) -> ((type *)(base))[index]
+        def _repl_shifted_stride(m: re.Match) -> str:
+            type_cast = m.group(1).strip()
+            base = m.group(2).strip()
+            idx = m.group(3).strip()
+            # If base is a clean identifier without casts
+            if re.fullmatch(r"[a-zA-Z0-9_]+", base):
+                return f"{base}[{idx}]"
+            return f"(({type_cast}){base})[{idx}]"
+
+        code = re.sub(
+            r"\*\s*\(\s*([a-zA-Z0-9_*]+)\s*\*\s*\)\s*\(\s*([a-zA-Z0-9_]+)\s*\+\s*\(\s*([a-zA-Z0-9_]+)\s*<<\s*[1-4]\s*\)\s*\)",
+            _repl_shifted_stride,
+            code,
+        )
+
+        # 3. Scaled multiplication pointer stride:
+        # *(type *)(base + index * stride) or *(type *)(base + (cast)index * stride)
+        def _repl_mult_stride(m: re.Match) -> str:
+            type_cast = m.group(1).strip()
+            base = m.group(2).strip()
+            idx = m.group(3).strip()
+            stride = int(m.group(4))
+            if re.fullmatch(r"[a-zA-Z0-9_]+", base):
+                return f"{base}[{idx}]"
+            return f"(({type_cast}){base})[{idx}]"
+
+        code = re.sub(
+            r"\*\s*\(\s*([a-zA-Z0-9_*]+)\s*\*\s*\)\s*\(\s*([a-zA-Z0-9_]+)\s*\+\s*(?:\([a-zA-Z0-9_*]+\)\s*)?([a-zA-Z0-9_]+)\s*\*\s*([0-9]+)\s*\)",
+            _repl_mult_stride,
+            code,
+        )
+
+        # 4. Simple pointer dereference: *(type *)(base + index) -> base[index]
+        code = re.sub(
+            r"\*\s*\(\s*([a-zA-Z0-9_*]+)\s*\*\s*\)\s*\(\s*([a-zA-Z0-9_]+)\s*\+\s*([a-zA-Z0-9_]+)\s*\)",
+            r"\2[\3]",
+            code,
+        )
+
+        return code
+
+    @classmethod
+    def resolve_callee_types(cls, code: str, struct_catalog: Optional[dict] = None) -> str:
+        """
+        Auto-resolves callee argument types using STRUCT_CATALOG and standard APIs.
+        Replaces generic undefined8/longlong arguments with typed pointers when callee is known.
+        """
+        # Standard Win32/POSIX Callee Signatures mapping:
+        KNOWN_CALLEES = {
+            "VirtualAlloc": "LPVOID VirtualAlloc(LPVOID lpAddress, size_t dwSize, uint32_t flAllocationType, uint32_t flProtect)",
+            "CreateFileW": "HANDLE CreateFileW(const wchar_t *lpFileName, uint32_t dwDesiredAccess, uint32_t dwShareMode, void *lpSecurityAttributes, uint32_t dwCreationDisposition, uint32_t dwFlagsAndAttributes, HANDLE hTemplateFile)",
+            "recv": "int recv(int sockfd, void *buf, size_t len, int flags)",
+            "ioctl": "int ioctl(int fd, unsigned long request, ...)",
+            "operator new": "void *operator new(size_t size)",
+        }
+
+        # Check for occurrences of known callees and inject prototypes if needed
+        needed_protos = []
+        for callee, proto in KNOWN_CALLEES.items():
+            if re.search(rf"\b{re.escape(callee)}\s*\(", code) and proto not in code:
+                needed_protos.append(f"{proto};")
+
+        # Check STRUCT_CATALOG if supplied
+        if struct_catalog:
+            for sname, spec in struct_catalog.items():
+                if re.search(rf"\b{re.escape(sname)}\b", code):
+                    # Inject forward declaration
+                    decl = f"typedef struct {sname} {sname};"
+                    if decl not in code and decl not in needed_protos:
+                        needed_protos.insert(0, decl)
+
+        if needed_protos:
+            protos_block = "\n".join(needed_protos) + "\n\n"
+            return protos_block + code
+        return code
+
+    @classmethod
     def filter(
         cls,
         code: str,
         emit_compilable: bool = True,
         strip_canary: bool = True,
         include_headers: bool = True,
+        collapse_strides: bool = True,
+        struct_catalog: Optional[dict] = None,
     ) -> str:
         """
         Applies full pipeline of compilable transformations.
@@ -276,9 +384,14 @@ class CompilableDecompilerFilter:
         if strip_canary:
             result = cls.cleanup_canaries_and_idioms(result)
 
+        if collapse_strides:
+            result = cls.collapse_pointer_strides(result)
+
+        result = cls.resolve_callee_types(result, struct_catalog=struct_catalog)
         result = cls.glibc_ctype_support(result)
 
         if include_headers and "#include <stdint.h>" not in result:
             result = f"{STANDARD_HEADERS}\n{result.lstrip()}"
 
         return result
+

@@ -265,6 +265,23 @@ class ZeroCopyShmBridge:
 PCodePassHook = Callable[[PCodeFunction, PCodeMaturityStage], None]
 
 
+@dataclass
+class StagedDecompileResult:
+    """Consolidated result of running the multi-stage P-Code decompiler pipeline."""
+    function_name: str
+    entry_rva: int
+    stages_executed: List[str]
+    stage_snapshots: Dict[str, str]
+    mlir_ir: str
+    c_code: str
+    is_goto_free: bool
+    mba_simplified: bool
+    mba_simplifications_count: int
+    dispatchers_removed: int
+    pruned_branches_count: int
+    telemetry: List[Dict[str, Union[str, int, float]]]
+
+
 class StagedPCodePassManager:
     """
     Orchestrates the 7-stage P-Code maturation pipeline, firing user/MCP hooks
@@ -296,6 +313,68 @@ class StagedPCodePassManager:
                 "elapsed_ms": round(elapsed_ms, 3),
             })
         return func
+
+    def run_all_passes(self, func: PCodeFunction) -> StagedDecompileResult:
+        """
+        Runs the full 5-stage decompiler pipeline:
+        1. STAGE_LIFTED / STAGE_SSA: SSA normalization
+        2. STAGE_EGRAPH_MBA: Equality Saturation (E-Graph) MBA simplification
+        3. STAGE_DEFLATTENED: Symbolic CFF dispatcher loop removal & opaque predicate pruning
+        4. STAGE_RESTRUCTURED: RellicGotoFreeRestructurer goto-free MLIR AST and C emission
+        """
+        mba_pass = EGraphMBADeobfuscatorPass()
+        cff_pass = SymbolicCFFDeflattenerPass()
+
+        # Register standard passes if not already registered (deduplicating previous default hooks)
+        self._hooks[PCodeMaturityStage.PCMAT_EGRAPH_MBA] = [
+            (name, cb) for name, cb in self._hooks[PCodeMaturityStage.PCMAT_EGRAPH_MBA]
+            if name != "egraph_mba_simplifier"
+        ]
+        self._hooks[PCodeMaturityStage.PCMAT_DEFLATTEN] = [
+            (name, cb) for name, cb in self._hooks[PCodeMaturityStage.PCMAT_DEFLATTEN]
+            if name != "symbolic_cff_pruner"
+        ]
+        self.register_hook(PCodeMaturityStage.PCMAT_EGRAPH_MBA, "egraph_mba_simplifier", mba_pass)
+        self.register_hook(PCodeMaturityStage.PCMAT_DEFLATTEN, "symbolic_cff_pruner", cff_pass)
+
+        snapshots = {}
+        for stage in PCodeMaturityStage:
+            t0 = time.perf_counter()
+            for _, callback in self._hooks[stage]:
+                callback(func, stage)
+            bytes_written = self.shm.write_snapshot(func, stage)
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            snapshots[stage.name] = f"Blocks={len(func.blocks)}, Ops={sum(len(b.ops) for b in func.blocks.values())}"
+            self.telemetry.append({
+                "stage": stage.name,
+                "hooks_run": len(self._hooks[stage]),
+                "shm_bytes": bytes_written,
+                "elapsed_ms": round(elapsed_ms, 3),
+            })
+
+        # Restructure to goto-free C
+        restructurer = MLIRGotoFreeRestructurer()
+        mlir_ir, clean_c = restructurer.restructure_function(func)
+        is_goto_free = "goto " not in clean_c
+
+        return StagedDecompileResult(
+            function_name=func.name,
+            entry_rva=func.entry_rva,
+            stages_executed=[s.name for s in PCodeMaturityStage],
+            stage_snapshots=snapshots,
+            mlir_ir=mlir_ir,
+            c_code=clean_c,
+            is_goto_free=is_goto_free,
+            mba_simplified=len(mba_pass.simplifications_log) > 0,
+            mba_simplifications_count=len(mba_pass.simplifications_log),
+            dispatchers_removed=len(cff_pass.pruned_opaque_branches),
+            pruned_branches_count=len(cff_pass.pruned_opaque_branches),
+            telemetry=list(self.telemetry),
+        )
+
+    def restructure_goto_free(self, func: PCodeFunction) -> Tuple[str, str]:
+        """Lowers and restructures the function into structured MLIR and goto-free C code."""
+        return MLIRGotoFreeRestructurer().restructure_function(func)
 
 
 # =============================================================================
@@ -1023,6 +1102,22 @@ class SymbolicCFFDeflattenerPass:
                         "pruned_succ": pruned_target,
                     })
 
+        # Collapse pure jump trampolines (e.g. blk -> trampoline -> real_target)
+        for blk in list(func.blocks.values()):
+            if len(blk.succs) == 1 and blk.succs[0] in func.blocks:
+                target_id = blk.succs[0]
+                target_blk = func.blocks[target_id]
+                if len(target_blk.succs) == 1 and (
+                    not target_blk.ops or (len(target_blk.ops) == 1 and target_blk.ops[0].opcode == PCodeOpCode.BRANCH)
+                ):
+                    real_target = target_blk.succs[0]
+                    if real_target != blk.block_id and real_target in func.blocks:
+                        blk.succs = [real_target]
+                        if blk.block_id in target_blk.preds:
+                            target_blk.preds.remove(blk.block_id)
+                        if blk.block_id not in func.blocks[real_target].preds:
+                            func.blocks[real_target].preds.append(blk.block_id)
+
         # Remove unreachable dead blocks after opaque predicate pruning
         reachable: Set[int] = set()
         queue = [func.entry_block().block_id]
@@ -1197,6 +1292,20 @@ class MLIRGotoFreeRestructurer:
         assert "goto " not in c_text, "Restructurer invariant violated: emitted a goto statement!"
         return mlir_text, c_text
 
+    @staticmethod
+    def _resolve_trampoline(func: PCodeFunction, blk_id: int, depth: int = 0) -> int:
+        """Follows unconditional switch/jump trampolines to their destination block."""
+        if depth > 10 or blk_id not in func.blocks:
+            return blk_id
+        blk = func.blocks[blk_id]
+        if len(blk.succs) == 1 and (
+            not blk.ops or (len(blk.ops) == 1 and blk.ops[0].opcode == PCodeOpCode.BRANCH)
+        ):
+            target = blk.succs[0]
+            if target != blk_id and target in func.blocks:
+                return MLIRGotoFreeRestructurer._resolve_trampoline(func, target, depth + 1)
+        return blk_id
+
     def _build_region(
         self,
         func: PCodeFunction,
@@ -1215,11 +1324,46 @@ class MLIRGotoFreeRestructurer:
             return head_region
 
         if len(blk.succs) == 1:
-            nxt = blk.succs[0]
+            nxt = self._resolve_trampoline(func, blk.succs[0])
             tail = self._build_region(func, nxt, stop_at, visited)
             return SeqRegion([head_region, tail])
 
-        false_id, true_id = blk.succs[0], blk.succs[1]
+        # Multi-way / unnatural switch trampoline dispatch: convert into nested if-then-else
+        if len(blk.succs) > 2:
+            resolved_succs = [self._resolve_trampoline(func, s) for s in blk.succs]
+            merge_id = self._find_multi_merge_node(func, resolved_succs)
+
+            default_id = resolved_succs[-1]
+            default_region = (
+                self._build_region(func, default_id, stop_at=merge_id, visited=visited)
+                if default_id != merge_id
+                else None
+            )
+
+            current_region: Optional[RegionNode] = default_region
+            for idx in range(len(resolved_succs) - 2, -1, -1):
+                case_id = resolved_succs[idx]
+                cond_str = self._format_switch_case_condition(blk, idx, case_id)
+                case_node = (
+                    self._build_region(func, case_id, stop_at=merge_id, visited=visited)
+                    if case_id != merge_id
+                    else SeqRegion([])
+                )
+                current_region = IfElseRegion(
+                    condition_c=cond_str,
+                    then_region=case_node,
+                    else_region=current_region,
+                )
+
+            seq = [head_region]
+            if current_region is not None:
+                seq.append(current_region)
+            if merge_id is not None:
+                seq.append(self._build_region(func, merge_id, stop_at=stop_at, visited=visited))
+            return SeqRegion(seq)
+
+        false_id = self._resolve_trampoline(func, blk.succs[0])
+        true_id = self._resolve_trampoline(func, blk.succs[1])
         cond_str = self._format_branch_condition(blk)
         merge_id = self._find_merge_node(func, true_id, false_id)
         then_node = self._build_region(func, true_id, stop_at=merge_id, visited=visited)
@@ -1233,6 +1377,34 @@ class MLIRGotoFreeRestructurer:
         if merge_id is not None:
             seq.append(self._build_region(func, merge_id, stop_at=stop_at, visited=visited))
         return SeqRegion(seq)
+
+    @staticmethod
+    def _format_switch_case_condition(blk: PCodeBasicBlock, idx: int, target_id: int) -> str:
+        cmp_ops = [
+            op for op in blk.ops
+            if op.opcode in {PCodeOpCode.INT_EQUAL, PCodeOpCode.INT_NOTEQUAL, PCodeOpCode.INT_LESS, PCodeOpCode.INT_SLESS}
+        ]
+        if idx < len(cmp_ops):
+            op = cmp_ops[idx]
+            if op.opcode == PCodeOpCode.INT_EQUAL:
+                return f"{op.inputs[0].format_c()} == {op.inputs[1].format_c()}"
+            if op.opcode == PCodeOpCode.INT_NOTEQUAL:
+                return f"{op.inputs[0].format_c()} != {op.inputs[1].format_c()}"
+            if op.opcode in {PCodeOpCode.INT_LESS, PCodeOpCode.INT_SLESS}:
+                return f"{op.inputs[0].format_c()} < {op.inputs[1].format_c()}"
+
+        case_var = None
+        for op in blk.ops:
+            if op.opcode == PCodeOpCode.CBRANCH and len(op.inputs) > 1:
+                case_var = op.inputs[1].format_c()
+                break
+            if op.opcode in {PCodeOpCode.INT_EQUAL, PCodeOpCode.INT_NOTEQUAL}:
+                case_var = op.inputs[0].format_c()
+                break
+
+        if case_var:
+            return f"{case_var} == {idx}"
+        return f"switch_case == {idx}"
 
     @staticmethod
     def _format_branch_condition(blk: PCodeBasicBlock) -> str:
@@ -1251,6 +1423,13 @@ class MLIRGotoFreeRestructurer:
 
     @staticmethod
     def _find_merge_node(func: PCodeFunction, true_id: int, false_id: int) -> Optional[int]:
+        return MLIRGotoFreeRestructurer._find_multi_merge_node(func, [true_id, false_id])
+
+    @staticmethod
+    def _find_multi_merge_node(func: PCodeFunction, target_ids: Sequence[int]) -> Optional[int]:
+        if not target_ids:
+            return None
+
         def reachable_from(start: int) -> List[int]:
             order = []
             q = [start]
@@ -1264,12 +1443,24 @@ class MLIRGotoFreeRestructurer:
                 q.extend(func.blocks[curr].succs)
             return order
 
-        r_true = reachable_from(true_id)
-        r_false = set(reachable_from(false_id))
-        for candidate in r_true:
-            if candidate in r_false and candidate not in {true_id}:
+        target_set = set(target_ids)
+        reach_lists = [reachable_from(t) for t in target_ids]
+        if not reach_lists:
+            return None
+
+        common = set(reach_lists[0])
+        for r in reach_lists[1:]:
+            common &= set(r)
+
+        common -= target_set
+        for candidate in reach_lists[0]:
+            if candidate in common:
                 return candidate
         return None
+
+
+# Canonical alias exposing RellicGotoFreeRestructurer in egraph_mlir_pipeline
+RellicGotoFreeRestructurer = MLIRGotoFreeRestructurer
 
 
 # =============================================================================
