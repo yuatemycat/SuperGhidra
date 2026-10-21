@@ -178,6 +178,10 @@ class TestFrontier3ExtensionSkeleton(unittest.TestCase):
         self.assertGreater(meta["file_count"], 5)
         self.assertIn("SuperGhidraCodec/lib/SuperGhidraCodec.jar", meta["entries"])
 
+    @unittest.skipUnless(
+        os.environ.get("GHIDRA_INSTALL_DIR") and Path(os.environ.get("GHIDRA_INSTALL_DIR", "")).is_dir(),
+        "Requires local Ghidra install ($GHIDRA_INSTALL_DIR) to compile extension jar for packaging",
+    )
     def test_06_extension_install_lifecycle(self):
         """Tests install_extension() extracts distribution zip cleanly into target directory."""
         with tempfile.TemporaryDirectory() as tmp_ext:

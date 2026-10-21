@@ -499,6 +499,13 @@ class TestGPUFunctionSeeder(unittest.TestCase):
     def test_classify_instructions_wgpu(self):
         if not HAS_WGPU:
             self.skipTest("WGPU backend not available on this machine")
+        try:
+            import wgpu
+            adapter = wgpu.gpu.request_adapter_sync()
+            if adapter is None:
+                self.skipTest("No suitable graphics adapter found for WGPU")
+        except Exception as exc:
+            self.skipTest(f"WGPU adapter not available in headless environment: {exc}")
         insns = np.array([0xD503233F, 0xA9BF7BFD, 0xD10103FF, 0x94000010, 0xD503201F, 0xD65F03C0, 0xD503245F, 0x52800020], dtype=np.uint32)
         expected_indices = [0, 1, 2, 3, 5, 6]
         seeder_wgpu = GPUFunctionSeeder(backend="wgpu")
