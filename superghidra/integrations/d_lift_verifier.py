@@ -141,7 +141,7 @@ class ClangSyntaxGate:
                 [self.compiler, "-fsyntax-only", "-std=c11", "-Wall", "-Wno-unused-variable", tmp_path],
                 capture_output=True,
                 text=True,
-                timeout=5.0,
+                timeout=15.0,
             )
             stderr = proc.stderr.strip()
             diags = [line for line in stderr.splitlines() if "error:" in line or "warning:" in line]
