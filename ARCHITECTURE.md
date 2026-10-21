@@ -1,23 +1,23 @@
-# SuperGhidra System Architecture & Domain Map (`ARCHITECTURE.md`)
+# SuperGhidra Architecture
 
-> **Progressive Discovery Entry Point (< 1,500 Tokens):** For AI agent task routing and `code-review-graph` MCP instructions, see [`AGENTS.md`](AGENTS.md). For full empirical benchmarks and roadmap, see [`README.md`](README.md) and [`PLAN.md`](PLAN.md).
+SuperGhidra is one Python package, `superghidra`, split into seven domains. This page shows how they depend on each other and where to look for a given task. Benchmarks and results are in [`README.md`](README.md), the roadmap is in [`PLAN.md`](PLAN.md), and the rules for AI agents working in the repo are in [`AGENTS.md`](AGENTS.md).
 
-## 1. Layered Domain Architecture
+## How the domains connect
 
 ```mermaid
 flowchart TD
-    MCP["External Consumers & pyghidra-mcp (38+4 MCP Tools)"] --> Shims["Root Backward-Compat Shims (*.py)"]
-    MCP --> Canonical["Canonical Package (superghidra.*)"]
+    MCP["External consumers and pyghidra-mcp (38+4 MCP tools)"] --> Shims["Root compatibility shims (*.py)"]
+    MCP --> Canonical["Canonical package (superghidra.*)"]
     Shims --> Canonical
 
-    subgraph Canonical["superghidra/ (7 Bounded Domains)"]
-        Core["core: Oracle Daemon, Resource Governor, SHM IPC, Cache DAG, Headless"]
-        Storage["storage: LZ4/Zstd 16KB Codec, 64-bit Slot Dir, SuperGhidraCodec.jar"]
-        Accel["acceleration: WGPU/CUDA/SIMD ADRP Scanner, Function Seeder"]
-        Diff["diff: Cosine CFG Matcher, Struct Shift Migrator, EvidenceLedger, Delta Log"]
-        Lifters["lifters: Zero-JVM ARM64/x86_64 P-Code Lifter, Z3 SMT Verifier, ARM/x86 Decoders"]
-        Formats["formats: ELF/PE/Mach-O Loader, DWARF5/PDB Indexer & Exporter, MSVC/MFC Recovery"]
-        Integ["integrations: APK JNI XRef, Emulator Sidecar, Colab TPU/T4, Neural Pipeline"]
+    subgraph Canonical["superghidra/"]
+        Core["core: oracle daemon, resource governor, shared-memory IPC, cache DAG, headless runner"]
+        Storage["storage: LZ4/Zstd 16 KB codec, 64-bit slot directory, SuperGhidraCodec.jar"]
+        Accel["acceleration: WGPU/CUDA/SIMD ADRP scanner, function seeder"]
+        Diff["diff: CFG cosine matcher, struct shift migrator, evidence ledger, delta log"]
+        Lifters["lifters: ARM64/x86_64 P-code lifter, Z3 verifier, ARM/x86 decoders"]
+        Formats["formats: ELF/PE/Mach-O loader, DWARF 5/PDB indexer and exporter, MSVC/MFC recovery"]
+        Integ["integrations: APK JNI cross-referencer, emulator sidecar, Colab orchestrator, neural pipeline"]
     end
 
     Integ --> Diff
@@ -29,28 +29,30 @@ flowchart TD
     Core --> Diff
 ```
 
----
+The root-level `*.py` files exist so that `pyghidra-mcp` and other outside callers can keep writing `import binary_loader`. Each one is a thin alias for its module under `superghidra/<domain>/`. Keep the alias when you move or rename a module.
 
-## 2. Bounded Domains Summary
+## What each domain does
 
-| Domain | Canonical Path | Core Responsibilities | Subsystem Index |
+| Domain | Path | Responsibilities | Docs |
 | :--- | :--- | :--- | :--- |
-| **`core`** | `superghidra/core/` | Persistent TCP daemon (`127.0.0.1:5073`), L2 SQLite cache, `eco`/`balanced`/`turbo`/`auto` Resource Governor, zero-copy SHM IPC, 1-hop Cache DAG, headless tuner, C++ PGO builder, Evidence Ledger re-export. | [`superghidra/core/README.md`](superghidra/core/README.md) |
-| **`storage`** | `superghidra/storage/` | 16 KB block compression (LZ4 in-flight, Zstd L3 snapshot), 20-byte 64-bit slot directory, Python/Java `.sgdb` interop, `SuperGhidraCodec.jar` packager. | [`superghidra/storage/README.md`](superghidra/storage/README.md) |
-| **`acceleration`** | `superghidra/acceleration/` | WGPU / PyTorch CUDA / NumPy SIMD ARM64 `ADRP+ADD/LDR` reference scanner and parallel function prologue/BL target seeder. | [`superghidra/acceleration/README.md`](superghidra/acceleration/README.md) |
-| **`diff`** | `superghidra/diff/` | 32-dim CFG cosine-similarity binary matcher, cross-version struct field displacement shift migrator, `ReconstructionObligationLedger` formal proof gate, SHA-256 `.ghidra-delta.jsonl` log. | [`superghidra/diff/README.md`](superghidra/diff/README.md) |
-| **`lifters`** | `superghidra/lifters/` | Zero-JVM ARM64 & x86_64 P-Code IR lifter, GNN/TPU adjacency tensor builder, Z3 SMT bit-exact equivalence verifier, ARM32/Thumb-2 and table-driven x86/AVX-512 decoders. | [`superghidra/lifters/README.md`](superghidra/lifters/README.md) |
-| **`formats`** | `superghidra/formats/` | Unified ELF/PE/Mach-O loader, off-heap DWARF 5/PDB SQLite deduplicator, standalone DWARF 5/PDB/Breakpad/Map synthesis, MSVC RTTI + MFC `CRuntimeClass` recovery, `Serialize()` tracer, `CArchive` stream decoder. | [`superghidra/formats/README.md`](superghidra/formats/README.md) |
-| **`integrations`** | `superghidra/integrations/` | Android APK DEX + NDK `RegisterNatives` cross-referencer, live Android emulator memory sidecar with `EmulatorFleetGuard`, Colab TPU v5e/T4 orchestrator, 2-phase Skeleton-to-Skin neural decompiler pipeline. | [`superghidra/integrations/README.md`](superghidra/integrations/README.md) |
+| `core` | `superghidra/core/` | Background daemon on `127.0.0.1:5073` with an SQLite cache. The `eco`, `balanced`, `turbo` and `auto` resource governor. Shared-memory IPC. A cache invalidation DAG that drops only the entries a change affects. Headless tuning and a PGO build script for the native decompiler. | [`core/README.md`](superghidra/core/README.md) |
+| `storage` | `superghidra/storage/` | Compression of 16 KB buffer pages (LZ4 for working data, Zstd level 3 for snapshots), a 20-byte 64-bit slot directory, Python and Java `.sgdb` interop, and the `SuperGhidraCodec.jar` packager. | [`storage/README.md`](superghidra/storage/README.md) |
+| `acceleration` | `superghidra/acceleration/` | Scans ARM64 code for `ADRP+ADD/LDR` pairs and finds function prologues and `BL` targets, using WGPU, PyTorch CUDA or NumPy SIMD. | [`acceleration/README.md`](superghidra/acceleration/README.md) |
+| `diff` | `superghidra/diff/` | Matches functions across versions with 32-dimension CFG vectors and cosine similarity. Migrates struct fields whose offsets moved. Holds the `ReconstructionObligationLedger` and the SHA-256 `.ghidra-delta.jsonl` log. | [`diff/README.md`](superghidra/diff/README.md) |
+| `lifters` | `superghidra/lifters/` | Lifts ARM64 and x86_64 to P-code without a JVM, builds adjacency tensors for GNN/TPU use, checks equivalence with Z3, and decodes ARM32/Thumb-2 and x86 (including AVX-512). | [`lifters/README.md`](superghidra/lifters/README.md) |
+| `formats` | `superghidra/formats/` | Loads ELF, PE and Mach-O. Builds an off-heap SQLite index of DWARF 5 and PDB data and exports DWARF 5, PDB, Breakpad and map files. Recovers MSVC RTTI and MFC `CRuntimeClass` data, traces `Serialize()`, and decodes `CArchive` streams. | [`formats/README.md`](superghidra/formats/README.md) |
+| `integrations` | `superghidra/integrations/` | Links Android APK DEX code to NDK `RegisterNatives` calls. Reads live emulator memory behind `EmulatorFleetGuard`. Runs jobs on Colab TPU v5e and T4. Runs a two-phase skeleton-then-skin neural decompiler pipeline. | [`integrations/README.md`](superghidra/integrations/README.md) |
 
----
+## Where to start for a given change
 
-## 3. Decision Matrix for Targeted Inspection
+Read the domain README first, then run that domain's tests.
 
-- **If your task is modifying Daemon/Governor/IPC/Headless:** Read [`superghidra/core/README.md`](superghidra/core/README.md) -> Run `python -m pytest tests/core -q`.
-- **If your task is modifying Block Compression or Java Extension:** Read [`superghidra/storage/README.md`](superghidra/storage/README.md) -> Run `python -m pytest tests/storage -q`.
-- **If your task is modifying GPU Shaders or SIMD Scanners:** Read [`superghidra/acceleration/README.md`](superghidra/acceleration/README.md) -> Run `python -m pytest tests/acceleration -q`.
-- **If your task is modifying Binary Diffing, Struct Shifts, or Evidence Proofs:** Read [`superghidra/diff/README.md`](superghidra/diff/README.md) -> Run `python -m pytest tests/diff -q`.
-- **If your task is modifying P-Code Lifting, Z3 SMT Verification, or ISA Decoding:** Read [`superghidra/lifters/README.md`](superghidra/lifters/README.md) -> Run `python -m pytest tests/lifters -q`.
-- **If your task is modifying Binary Parsing, DWARF/PDB, or MSVC/MFC CArchive:** Read [`superghidra/formats/README.md`](superghidra/formats/README.md) -> Run `python -m pytest tests/formats -q`.
-- **If your task is modifying APK JNI, Emulator Sidecar, Colab, or Neural Skinning:** Read [`superghidra/integrations/README.md`](superghidra/integrations/README.md) -> Run `python -m pytest tests/integrations -q`.
+| If you are changing... | Read | Test |
+| :--- | :--- | :--- |
+| the daemon, governor, IPC or headless runner | [`core/README.md`](superghidra/core/README.md) | `python -m pytest tests/core -q` |
+| block compression or the Java extension | [`storage/README.md`](superghidra/storage/README.md) | `python -m pytest tests/storage -q` |
+| GPU shaders or SIMD scanners | [`acceleration/README.md`](superghidra/acceleration/README.md) | `python -m pytest tests/acceleration -q` |
+| binary diffing, struct shifts or the evidence ledger | [`diff/README.md`](superghidra/diff/README.md) | `python -m pytest tests/diff -q` |
+| P-code lifting, Z3 verification or instruction decoding | [`lifters/README.md`](superghidra/lifters/README.md) | `python -m pytest tests/lifters -q` |
+| binary parsing, DWARF/PDB or MSVC/MFC recovery | [`formats/README.md`](superghidra/formats/README.md) | `python -m pytest tests/formats -q` |
+| APK JNI, the emulator sidecar, Colab or the neural pipeline | [`integrations/README.md`](superghidra/integrations/README.md) | `python -m pytest tests/integrations -q` |

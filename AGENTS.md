@@ -58,3 +58,15 @@ SuperGhidra/
    - `private` is `https://github.com/52191314/SuperGhidra`. It stays **private**.
    - Never make `52191314/SuperGhidra` public. Never make `yuatemycat/SuperGhidra` private. Never drop either remote.
    - A push of the same commits may go to both remotes. Visibility stays as above. `gh auth switch --user yuatemycat` before pushing `origin`. `gh auth switch --user 52191314` before pushing `private`. Switch the active `gh` account back to `52191314` when the push is done.
+
+---
+
+## 5. Writing Style: Sound Like a Maintainer, Not a Brochure
+Applies to everything a person will read: `README.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md`, domain READMEs, `docs/`, docstrings, code comments, commit messages and PR text. The root `README.md` is the reference for tone. The routing tables in this file are lookup material and may stay terse.
+1. **Plain and specific.** Write the way a maintainer would explain the code to a colleague: short sentences, concrete nouns, say what the code does and what it does not do.
+2. **Numbers carry their context.** Give the figure, what it was measured on, and the caveat (`synthetic pages, not real projects`; `one Windows dev machine`). Never state a result that was not measured.
+3. **No hype or codenames in prose.** Avoid `seamless`, `robust`, `cutting-edge`, `state-of-the-art`, `blazing`, `game-changing`, `Next-Gen`, `Kill-Shot`, `zero-overhead`. Say what the thing does. Internal codenames may appear in identifiers, never as the way a feature is introduced.
+4. **No filler.** No emoji headings, no bold on every noun, no "Thank you for your interest", no closing paragraph that restates the section, no reflexive three-item lists or "not just X, but Y".
+5. **Commit messages:** conventional prefix (`feat(core):`), imperative mood, the *why* in the body when it is not obvious. Skip "This commit...".
+6. **Facts are untouchable.** Rewording must not change an identifier, number, path, link, invariant or command. If a claim cannot be verified from the code or a benchmark report, cut it or mark it as unverified.
+7. **Check before pushing prose:** `rg -i "seamless|robust|cutting-edge|state-of-the-art|blazing|game-chang|next-gen|kill-shot" README.md CONTRIBUTING.md ARCHITECTURE.md docs superghidra` should return nothing outside quoted identifiers.

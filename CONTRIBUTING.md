@@ -1,94 +1,55 @@
 # Contributing to SuperGhidra
 
-Thank you for your interest in contributing to **SuperGhidra**! SuperGhidra is an open-source, high-performance Ghidra architecture and GPU acceleration suite designed to overcome JVM decompiler bottlenecks, lock contention, and storage bloat.
+Contributions are welcome, whether it's a bug report, a failing binary, a test, or a patch. This page covers the rules that matter before you open a PR.
 
-We welcome contributions from reverse engineers, compiler enthusiasts, and GPU systems developers.
+## Invariants to keep
 
----
+These five are enforced by tests. [`AGENTS.md`](AGENTS.md) lists them too, and [`ARCHITECTURE.md`](ARCHITECTURE.md) shows where each piece lives.
 
-## 🏛️ Code Architecture & Safety Invariants
+1. **Storage writes are append-only.** Sync order is fixed: write the directory and `fsync`, then write the header pointer and `fsync`. Working buffers use LZ4. Snapshot backups use Zstandard.
+2. **The oracle never writes to a Ghidra project.** `ghidra_oracle.py` opens programs with `readOnly=True`. Renames, comments and bookmarks go to the JSON write overlay, not the `.rep` files. Never delete a fresh `.lock` file.
+3. **Automated and neural symbol commits go through the ledger.** Nothing may bypass `ReconstructionObligationLedger` (`VTableSlotVerifier`, `FieldDisplacementVerifier`, `AllocationSizeVerifier`).
+4. **The emulator sidecar protects real devices.** Don't touch `emulator-5564` or `127.0.0.1:21503`. Writes are only allowed on the authorized sandboxes `emulator-5580` and `127.0.0.1:21513`.
+5. **The Z3 checker doesn't guess.** An unhandled instruction, a floating-point operation, or a loop past the unroll bound must return `UNKNOWN` (`is_equivalent=False`), never a false `UNSAT`.
 
-Before submitting code, please review [`AGENTS.md`](AGENTS.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md). All contributions must strictly preserve our core safety invariants:
+## Setup
 
-1. **Storage Layer Safety:**
-   - In-engine BufferFile frame writes must remain append-only.
-   - Sync order is inviolable: **directory first + fsync**, then **header pointer + fsync**.
-   - Working buffers use LZ4 (~4 GB/s); snapshot backups use Zstandard.
-2. **Oracle Lock Safety:**
-   - `ghidra_oracle.py` must open target programs **read-only** (`readOnly=True`).
-   - Mutations (renames, comments, bookmarks) belong in the JSON write-overlay, never directly in the `.rep` database files.
-   - Never automatically delete active `.lock` files.
-3. **EvidenceLedger Invariant Proofs:**
-   - No automated or neural symbol commit may bypass the `ReconstructionObligationLedger` gate (`VTableSlotVerifier`, `FieldDisplacementVerifier`, `AllocationSizeVerifier`).
-4. **Android Emulator Fleet Guard:**
-   - Introspection sidecars must protect real hardware and primary emulator instances (`emulator-5564`, `127.0.0.1:21503`). Mutations are restricted to authorized sandboxes (`emulator-5580`, `127.0.0.1:21513`).
-5. **Formal Verification Soundness:**
-   - Unhandled instructions, floating-point operations, or unroll overflows in the Z3 SMT lifter must return `UNKNOWN` (`is_equivalent=False`), never false `UNSAT`.
+You need Python 3.10 or newer. For the Ghidra-backed parts you also need JDK 21 and Ghidra 11.x or 12.x-DEV.
 
----
-
-## 🛠️ Development Setup
-
-### 1. Requirements
-- **Python:** 3.10 or newer (MSVC 64-bit on Windows, GCC/Clang on Linux/macOS)
-- **Java:** OpenJDK 21 LTS
-- **Ghidra:** Ghidra 11.x or 12.x-DEV
-- **Optional Accelerators:**
-  - `z3-solver` (SMT formal equivalence verification)
-  - `wgpu` (GPU compute shaders via Vulkan, DirectX 12, Metal)
-  - `lz4`, `zstandard` (High-speed compression codecs)
-  - `frida` (Runtime memory introspection)
-
-### 2. Environment Installation
 ```bash
-# Clone the repository
 git clone https://github.com/yuatemycat/SuperGhidra.git
 cd SuperGhidra
-
-# Install editable package with all development dependencies
-pip install -e .[all]
+pip install -e ".[all]"
 ```
 
-### 3. Running the Test Suite
-All PRs must maintain 100% test pass rate across the domain suites:
+The extras are optional. `smt` installs `z3-solver`, `gpu` installs `wgpu`, `storage` installs `lz4` and `zstandard`, and `frida` installs `frida`. Tests that need a missing package skip themselves.
+
+## Running tests
+
 ```bash
-# Run entire test suite
-pytest tests -v
-
-# Run targeted subsystem suite
-pytest tests/core -v
-pytest tests/acceleration -v
-pytest tests/lifters -v
+pytest tests -v                # everything
+pytest tests/core -v           # one domain: core, storage, acceleration, diff, lifters, formats, integrations
 ```
 
----
+All tests should pass before you open a PR. Tests that need real binaries read their paths from environment variables (see the README) and skip when those are unset.
 
-## 📋 Pull Request Workflow
+## Pull requests
 
-1. **Fork & Branch:** Create a feature branch off `master` with a descriptive name (e.g. `feat/arm64-vector-lift` or `fix/lz4-slot-dir`).
-2. **Atomic Commits:** Follow conventional commit formatting:
-   - `feat(...)`: New feature or capability
-   - `fix(...)`: Bug fix or invariant safeguard
-   - `perf(...)`: Benchmark-proven speed or memory optimization
-   - `docs(...)`: Documentation or architectural specifications
-   - `test(...)`: Unit, regression, or integration test cases
-3. **No Working Tree Artifacts:** Do not commit temporary test databases, `__pycache__`, or local `.lock` files. Test runs must write only to temporary directories or `SUPERGHIDRA_DATA_DIR`.
-4. **SMT Equivalence Verification:** If adding or changing P-Code lifters or instruction decoders, include Z3 equivalence proof tests.
-5. **Submit PR:** Open a Pull Request against `master`. Complete the PR template checklist.
+1. Branch off `master` with a short descriptive name, such as `feat/arm64-vector-lift` or `fix/lz4-slot-dir`.
+2. Keep commits small and use a conventional prefix: `feat`, `fix`, `perf`, `docs` or `test`, for example `fix(storage): reject truncated slot directory`. Put the reason in the body if it isn't obvious.
+3. Don't commit test databases, `__pycache__` or `.lock` files. Tests should write only to temporary directories or `SUPERGHIDRA_DATA_DIR`.
+4. If you change a P-code lifter or an instruction decoder, add a Z3 equivalence test for it.
+5. Open the PR against `master` and fill in the template.
 
----
+## Reporting issues
 
-## 🐞 Reporting Issues & Requesting Features
+Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) or [feature request](.github/ISSUE_TEMPLATE/feature_request.yml) template. For a crash or a decompiler hang, include:
 
-- Use the provided [Bug Report](.github/ISSUE_TEMPLATE/bug_report.yml) or [Feature Request](.github/ISSUE_TEMPLATE/feature_request.yml) templates.
-- For crash or decompiler hang reports, include:
-  - Architecture (`x86_64`, `arm64`, `arm32`, `thumb2`)
-  - Function body size (bytes) & basic block count
-  - Resource governor mode (`eco`, `balanced`, `turbo`, `auto`)
-  - Minimal reproducing binary slice or disassembly dump
+- the architecture (`x86_64`, `arm64`, `arm32` or `thumb2`)
+- the function size in bytes and its basic block count
+- the resource governor mode (`eco`, `balanced`, `turbo` or `auto`)
+- a minimal binary slice or disassembly dump that reproduces it
 
----
+## License
 
-## ⚖️ License & Copyright
-
-SuperGhidra is open source under the **Apache License 2.0**. By contributing to this project, you agree that your contributions will be licensed under the Apache License 2.0.
+SuperGhidra is released under the Apache License 2.0. By contributing, you agree that your work is licensed under the same terms.
