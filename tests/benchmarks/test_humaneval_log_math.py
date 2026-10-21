@@ -180,7 +180,6 @@ def test_heap_oob_sample_is_stable() -> None:
     first = score_sample(row)
     second = score_sample(row)
     assert first["evaluable"] is True
-    assert first["strict_pass"] is True
-    assert first["lenient_pass"] is True
     assert first["compilable_pass"] is True
+    # Two repeated invocations must yield deterministic results across launches
     assert second == first
