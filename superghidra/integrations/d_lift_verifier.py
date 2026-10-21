@@ -86,6 +86,7 @@ class ClangSyntaxGate:
         "     typedef intptr_t ssize_t;\n"
         "#    define _SSIZE_T_DEFINED\n"
         "#  endif\n"
+        "   ssize_t write(int fd, const void *buf, size_t count);\n"
         "#endif\n"
         "typedef uint64_t undefined8;\n"
         "typedef uint32_t undefined4;\n"
