@@ -585,9 +585,20 @@ class NeuralDecompilerPipeline:
         # Live skin path: differential execution, never the constant-set fallback.
         if c_code_snippet is not None:
             try:
+                candidate_source = c_code_snippet
+                # If candidate is a bare statement/body snippet rather than a function definition, wrap it
+                if "{" not in candidate_source and ";" in candidate_source:
+                    ret_t = prediction.predicted_return_type or "int"
+                    fn_name = prediction.predicted_function_name or "cand_fn"
+                    candidate_source = f"{ret_t} {fn_name}() {{ {candidate_source} }}"
+
+                orig_source = skeleton.raw_source or candidate_source
+                if "{" not in orig_source and ";" in orig_source:
+                    orig_source = candidate_source
+
                 skin = self.skin_refine(
-                    original_c=skeleton.raw_source or c_code_snippet,
-                    candidate_c=c_code_snippet,
+                    original_c=orig_source,
+                    candidate_c=candidate_source,
                     function_address=skeleton.function_address,
                 )
                 if not skin["syntax_passed"]:

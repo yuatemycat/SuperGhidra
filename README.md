@@ -46,6 +46,30 @@ pip install -e ".[all]"      # or pick extras: smt, gpu, storage, ghidra, frida
 python -m pytest -q
 ```
 
+**Unified CLI:**
+
+SuperGhidra ships with an integrated standalone command-line executable `superghidra`:
+
+```bash
+# Display version and hardware acceleration telemetry
+superghidra version
+
+# Staged P-code decompiler (MBA simplification, opaque branch pruning, goto-free C)
+superghidra decompile target.dll --rva 0x140001000 --arch x86_64 -o decompiled.c
+
+# Import IDA Pro .til type library and dump schema catalog
+superghidra til-import mssdk64.til -o catalog.json
+
+# Match binary bytes against IDA FLIRT signature database
+superghidra flirt-match vc32rtf.sig target.exe --rva 0x1000
+
+# Recover MSVC / MFC C++ class hierarchies, RTTI structures, and virtual call tables
+superghidra rtti-recover app.dll -o classes.json
+
+# Filter raw decompiler output into clean, compilable C
+superghidra filter raw_decompile.c -o clean.c
+```
+
 **Inspect a Windows binary (no Ghidra needed):**
 
 ```bash
