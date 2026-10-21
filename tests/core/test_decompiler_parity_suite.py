@@ -12,7 +12,7 @@ Comprehensive test suite verifying SuperGhidra's live binary analysis tools:
 Evaluates tools against:
   - Synthetic / Mock binaries (x86_64 PEs with synthetic .text, .rdata, RTTI structures)
   - Real Win32 system binaries (`C:\\Windows\\System32\\kernel32.dll`)
-  - Real Hex-Rays IDA Pro core library (`E:\\01_Apps\\Installed\\IDA_PRO\\ida.dll`)
+  - Real Hex-Rays IDA Pro core library (resolved dynamically via `IDA_DIR` / `IDADIR`)
 """
 
 from __future__ import annotations
@@ -42,8 +42,10 @@ from tests.formats.test_msvc_class_recovery import BASE, build_pe_sections
 
 
 KERNEL32_PATH = Path(r"C:\Windows\System32\kernel32.dll")
-IDA_DLL_PATH = Path(r"E:\01_Apps\Installed\IDA_PRO\ida.dll")
-REAL_SIG_PATH = Path(r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig")
+IDA_DIR = os.environ.get("IDA_DIR") or os.environ.get("IDADIR")
+IDA_ROOT = Path(IDA_DIR) if IDA_DIR else None
+IDA_DLL_PATH = (IDA_ROOT / "ida.dll") if IDA_ROOT else None
+REAL_SIG_PATH = (IDA_ROOT / "sig" / "pc" / "bc31cls.sig") if IDA_ROOT else None
 
 
 # =============================================================================
@@ -238,7 +240,7 @@ class TestRealKernel32ParityTools(unittest.TestCase):
 
     def test_kernel32_flirt_scan(self):
         # Fast scan against real Borland/PC signatures
-        sig_arg = str(REAL_SIG_PATH) if REAL_SIG_PATH.is_file() else None
+        sig_arg = str(REAL_SIG_PATH) if (REAL_SIG_PATH and REAL_SIG_PATH.is_file()) else None
         res = match_flirt_signatures(str(KERNEL32_PATH), sig_path=sig_arg)
         self.assertIn("total_patterns", res)
         self.assertIn("matches", res)
@@ -260,8 +262,8 @@ class TestRealIdaDllParityTools(unittest.TestCase):
     """Evaluates live binary tools on real Hex-Rays IDA Pro core library (ida.dll)."""
 
     def setUp(self):
-        if not IDA_DLL_PATH.is_file():
-            self.skipTest(f"ida.dll not present at {IDA_DLL_PATH}")
+        if not (IDA_DLL_PATH and IDA_DLL_PATH.is_file()):
+            self.skipTest(f"ida.dll not present (IDA_DIR={IDA_DIR})")
 
     def test_ida_dll_dataflow_reachability(self):
         t0 = time.perf_counter()
@@ -308,7 +310,7 @@ class TestRealIdaDllParityTools(unittest.TestCase):
         self.assertLess(t_elapsed, 25.0, f"Class recovery on ida.dll took {t_elapsed:.3f}s")
 
     def test_ida_dll_flirt_matching_with_real_sig(self):
-        if not REAL_SIG_PATH.is_file():
+        if not (REAL_SIG_PATH and REAL_SIG_PATH.is_file()):
             self.skipTest(f"Signature file missing: {REAL_SIG_PATH}")
         t0 = time.perf_counter()
         res = match_flirt_signatures(str(IDA_DLL_PATH), sig_path=str(REAL_SIG_PATH))

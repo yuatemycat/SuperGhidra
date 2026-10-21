@@ -4,7 +4,7 @@ scripts/superghidra_on_ida.py
 =============================
 
 Executes SuperGhidra's multi-domain analysis and reverse-engineering pipeline
-directly on an installed Hex-Rays IDA Pro instance (`E:\\01_Apps\\Installed\\IDA_PRO`).
+directly on an installed Hex-Rays IDA Pro instance (configured via IDA_DIR or IDADIR).
 
 Capabilities demonstrated:
   1. Domain 6 (Formats): MSVC RTTI & Exception Handling C++ Class Recovery on `ida.exe` & `ida.dll`.
@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from typing import Optional
 
 # Ensure project root is on PYTHONPATH
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,8 +38,12 @@ from superghidra.core.live_binary_tools import (
 )
 
 
-def run_superghidra_on_ida(ida_dir: str = r"E:\01_Apps\Installed\IDA_PRO") -> None:
-    ida_root = Path(ida_dir)
+def run_superghidra_on_ida(ida_dir: Optional[str] = None) -> None:
+    resolved_path = ida_dir or os.environ.get("IDA_DIR") or os.environ.get("IDADIR")
+    if not resolved_path:
+        print("ERROR: No IDA Pro installation specified. Set IDA_DIR/IDADIR or pass ida_dir.")
+        return
+    ida_root = Path(resolved_path)
     print("=" * 80)
     print("SUPERGHIDRA RUNNING ON HEX-RAYS IDA PRO")
     print(f"Target Installation: {ida_root}")

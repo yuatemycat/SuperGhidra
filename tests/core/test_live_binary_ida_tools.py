@@ -24,15 +24,22 @@ from superghidra.core.parity_engine import CFGSignatureIndex
 from superghidra.formats.ida_til_importer import find_ida_install
 
 
+IDA_DIR = os.environ.get("IDA_DIR") or os.environ.get("IDADIR")
+IDA_ROOT = Path(IDA_DIR) if IDA_DIR else None
+ANDROID_TIL_PATH = str(IDA_ROOT / "til" / "arm" / "android_arm.til") if IDA_ROOT else ""
+BC31CLS_SIG_PATH = str(IDA_ROOT / "sig" / "pc" / "bc31cls.sig") if IDA_ROOT else ""
+IDA_DLL_PATH = str(IDA_ROOT / "ida.dll") if IDA_ROOT else ""
+
+
 class TestLiveBinaryIdaTools(unittest.TestCase):
     """Test FLIRT signature matching and TIL type library live tools."""
 
     @unittest.skipUnless(
-        os.path.isfile(r"E:\01_Apps\Installed\IDA_PRO\til\arm\android_arm.til"),
-        "android_arm.til required",
+        IDA_DIR and os.path.isfile(ANDROID_TIL_PATH),
+        "IDA_DIR not set or android_arm.til not found",
     )
     def test_import_type_library_live(self):
-        til_path = r"E:\01_Apps\Installed\IDA_PRO\til\arm\android_arm.til"
+        til_path = ANDROID_TIL_PATH
         with tempfile.NamedTemporaryFile(suffix=".h", delete=False) as tmp:
             tmp_hdr = tmp.name
 
@@ -63,11 +70,11 @@ class TestLiveBinaryIdaTools(unittest.TestCase):
                     pass
 
     @unittest.skipUnless(
-        os.path.isfile(r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig"),
-        "bc31cls.sig required",
+        IDA_DIR and os.path.isfile(BC31CLS_SIG_PATH),
+        "IDA_DIR not set or bc31cls.sig not found",
     )
     def test_cfg_signature_index_load_flirt(self):
-        sig_path = r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig"
+        sig_path = BC31CLS_SIG_PATH
         idx = CFGSignatureIndex()
         count = idx.load_flirt_signatures(sig_path)
         self.assertGreater(count, 50)
@@ -80,13 +87,12 @@ class TestLiveBinaryIdaTools(unittest.TestCase):
         self.assertIn("VectorImp", sym)
 
     @unittest.skipUnless(
-        os.path.isfile(r"E:\01_Apps\Installed\IDA_PRO\ida.dll")
-        and os.path.isfile(r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig"),
-        "ida.dll and bc31cls.sig required",
+        IDA_DIR and os.path.isfile(IDA_DLL_PATH) and os.path.isfile(BC31CLS_SIG_PATH),
+        "IDA_DIR not set or ida.dll / bc31cls.sig not found",
     )
     def test_match_flirt_signatures_live(self):
-        bin_path = r"E:\01_Apps\Installed\IDA_PRO\ida.dll"
-        sig_path = r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig"
+        bin_path = IDA_DLL_PATH
+        sig_path = BC31CLS_SIG_PATH
 
         res = match_flirt_signatures(bin_path, sig_path=sig_path)
         self.assertIn("binary_path", res)
@@ -97,11 +103,11 @@ class TestLiveBinaryIdaTools(unittest.TestCase):
         self.assertGreater(res["total_patterns"], 50)
 
     @unittest.skipUnless(
-        os.path.isfile(r"E:\01_Apps\Installed\IDA_PRO\ida.dll"),
-        "ida.dll required",
+        IDA_DIR and os.path.isfile(IDA_DLL_PATH),
+        "IDA_DIR not set or ida.dll not found",
     )
     def test_match_flirt_signatures_default_sig_discovery(self):
-        bin_path = r"E:\01_Apps\Installed\IDA_PRO\ida.dll"
+        bin_path = IDA_DLL_PATH
         # Let it discover sigs automatically from find_ida_install() / sig/
         res = match_flirt_signatures(bin_path, sig_path=None)
         self.assertIn("binary_path", res)

@@ -489,6 +489,10 @@ class TestGap4AppcallMarshaller(unittest.TestCase):
         self.assertNotIn("vptr", diff["arg_0"])  # Unchanged field omitted
 
 
+_IDA_DIR = os.environ.get("IDA_DIR") or os.environ.get("IDADIR")
+_BC31CLS_SIG = os.path.join(_IDA_DIR, "sig", "pc", "bc31cls.sig") if _IDA_DIR else None
+
+
 class TestGap5CFGSignatureIndex(unittest.TestCase):
     """Tests Gap 5: Dual-Engine PIC-Masked Prologue Hashes & 32-Dim CFG Cosine Index."""
 
@@ -530,10 +534,10 @@ class TestGap5CFGSignatureIndex(unittest.TestCase):
         self.assertAlmostEqual(matches[0]["cosine_similarity"], 1.0, places=5)
         self.assertTrue(matches[0]["exact_pic_hash_match"])
 
-    @unittest.skipUnless(os.path.isfile(r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig"), "bc31cls.sig required")
+    @unittest.skipUnless(_BC31CLS_SIG and os.path.isfile(_BC31CLS_SIG), "bc31cls.sig required (set IDA_DIR)")
     def test_load_flirt_signatures_integration(self):
         sig_index = CFGSignatureIndex()
-        count = sig_index.load_flirt_signatures(r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig")
+        count = sig_index.load_flirt_signatures(_BC31CLS_SIG)
         self.assertGreater(count, 50)
         self.assertIsNotNone(sig_index.flirt_index)
 

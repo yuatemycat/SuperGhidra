@@ -8,8 +8,8 @@ Comprehensive unit and integration test suite for:
   3. Cross-Domain Type Library and StructLayoutSpec Catalog Integration
 
 Covers both synthetic/mock inputs and real IDA Pro artifacts:
-  - `E:\\01_Apps\\Installed\\IDA_PRO\\sig\\pc\\bc31cls.sig`
-  - `E:\\01_Apps\\Installed\\IDA_PRO\\til\\arm\\android_arm.til`
+  - Real FLIRT signatures (`sig/pc/bc31cls.sig`, resolved via `IDA_DIR`)
+  - Real TIL libraries (`til/arm/android_arm.til`, resolved via `IDA_DIR`)
 """
 
 from __future__ import annotations
@@ -57,10 +57,11 @@ from superghidra.core.live_binary_tools import (
 )
 
 
-IDA_ROOT = Path(r"E:\01_Apps\Installed\IDA_PRO")
-REAL_SIG_PATH = IDA_ROOT / "sig" / "pc" / "bc31cls.sig"
-REAL_TIL_PATH = IDA_ROOT / "til" / "arm" / "android_arm.til"
-REAL_WIN10_TIL_PATH = IDA_ROOT / "til" / "pc" / "mssdk64_win10.til"
+IDA_ENV = os.environ.get("IDA_DIR") or os.environ.get("IDADIR")
+IDA_ROOT = Path(IDA_ENV) if IDA_ENV else find_ida_install()
+REAL_SIG_PATH = (IDA_ROOT / "sig" / "pc" / "bc31cls.sig") if IDA_ROOT else None
+REAL_TIL_PATH = (IDA_ROOT / "til" / "arm" / "android_arm.til") if IDA_ROOT else None
+REAL_WIN10_TIL_PATH = (IDA_ROOT / "til" / "pc" / "mssdk64_win10.til") if IDA_ROOT else None
 
 
 # =============================================================================
@@ -72,7 +73,7 @@ class TestIdaDiscovery(unittest.TestCase):
 
     def test_find_ida_install_custom_and_fallback(self):
         # Existing installation
-        if IDA_ROOT.is_dir():
+        if IDA_ROOT and IDA_ROOT.is_dir():
             detected = find_ida_install()
             self.assertIsNotNone(detected)
             self.assertTrue(detected.is_dir())
@@ -86,20 +87,20 @@ class TestIdaDiscovery(unittest.TestCase):
 
     def test_find_dumpsig_utility(self):
         dumpsig = find_dumpsig()
-        if IDA_ROOT.is_dir() and (IDA_ROOT / "tools" / "flair" / "dumpsig.exe").is_file():
+        if IDA_ROOT and IDA_ROOT.is_dir() and (IDA_ROOT / "tools" / "flair" / "dumpsig.exe").is_file():
             self.assertIsNotNone(dumpsig)
             self.assertTrue(dumpsig.is_file())
             self.assertEqual(dumpsig.name.lower(), "dumpsig.exe")
 
     def test_find_tilib_utility(self):
         tilib = find_tilib()
-        if IDA_ROOT.is_dir() and (IDA_ROOT / "tools" / "tilib" / "tilib.exe").is_file():
+        if IDA_ROOT and IDA_ROOT.is_dir() and (IDA_ROOT / "tools" / "tilib" / "tilib.exe").is_file():
             self.assertIsNotNone(tilib)
             self.assertTrue(tilib.is_file())
             self.assertEqual(tilib.name.lower(), "tilib.exe")
 
     def test_list_available_sigs_grouping(self):
-        if not IDA_ROOT.is_dir():
+        if not (IDA_ROOT and IDA_ROOT.is_dir()):
             self.skipTest("IDA Pro not installed")
         sigs = list_available_sigs()
         self.assertIsInstance(sigs, dict)
@@ -112,7 +113,7 @@ class TestIdaDiscovery(unittest.TestCase):
                 self.assertTrue(p.suffix.lower() == ".sig")
 
     def test_list_available_tils_grouping(self):
-        if not IDA_ROOT.is_dir():
+        if not (IDA_ROOT and IDA_ROOT.is_dir()):
             self.skipTest("IDA Pro not installed")
         tils = list_available_tils()
         self.assertIsInstance(tils, dict)
@@ -267,7 +268,7 @@ class TestFlirtBridgeUnit(unittest.TestCase):
 class TestFlirtBridgeRealSigIntegration(unittest.TestCase):
     """Integration tests loading and matching real Hex-Rays FLIRT .sig files."""
 
-    @unittest.skipUnless(REAL_SIG_PATH.is_file(), f"Real FLIRT signature missing: {REAL_SIG_PATH}")
+    @unittest.skipUnless(REAL_SIG_PATH and REAL_SIG_PATH.is_file(), f"Real FLIRT signature missing: {REAL_SIG_PATH}")
     def test_real_bc31cls_loading_and_benchmarks(self):
         index = FlirtSignatureIndex()
 
@@ -455,7 +456,7 @@ class TestTilImporterUnit(unittest.TestCase):
 class TestTilImporterRealTilIntegration(unittest.TestCase):
     """Integration tests importing real Hex-Rays TIL files (`android_arm.til`, `mssdk64_win10.til`)."""
 
-    @unittest.skipUnless(REAL_TIL_PATH.is_file(), f"Real TIL file missing: {REAL_TIL_PATH}")
+    @unittest.skipUnless(REAL_TIL_PATH and REAL_TIL_PATH.is_file(), f"Real TIL file missing: {REAL_TIL_PATH}")
     def test_real_android_til_import_and_header_export(self):
         t0 = time.perf_counter()
         report = import_til(REAL_TIL_PATH)
@@ -491,7 +492,7 @@ class TestTilImporterRealTilIntegration(unittest.TestCase):
                 except OSError:
                     pass
 
-    @unittest.skipUnless(REAL_WIN10_TIL_PATH.is_file(), f"Real Win10 TIL missing: {REAL_WIN10_TIL_PATH}")
+    @unittest.skipUnless(REAL_WIN10_TIL_PATH and REAL_WIN10_TIL_PATH.is_file(), f"Real Win10 TIL missing: {REAL_WIN10_TIL_PATH}")
     def test_real_win10_til_import(self):
         report = import_til(REAL_WIN10_TIL_PATH)
         self.assertGreater(report.total_types, 500, "mssdk64_win10.til should yield >500 types")

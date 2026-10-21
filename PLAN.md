@@ -208,7 +208,7 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
 
 ### Frontier 3: In-Engine Java Extension (`Ghidra/Skeleton`)
 - [x] ~~**Goal:** Package the transparent LZ4/Zstandard `LocalManagedBufferFile` codec directly into a compiled Ghidra extension `.zip` using Gradle and OpenJDK 21.~~
-- [x] ~~**Impact:** Installs as an official module in `D:\01_Apps\DevTools\ghidra_12.1.3_PUBLIC\Ghidra\Extensions`, enabling GUI users to get transparent block compression without running external scripts.~~
+- [x] ~~**Impact:** Installs as an official module in `<ghidra_install_dir>\Ghidra\Extensions`, enabling GUI users to get transparent block compression without running external scripts.~~
 - [x] ~~**Implemented in:** [`ghidra_extension_skeleton/`](ghidra_extension_skeleton/) & [`ghidra_extension_packager.py`](superghidra/storage/ghidra_extension_packager.py)~~
   - *Accomplished:* Official layout with `extension.properties`, `Module.manifest`, `build.gradle`, `SuperGhidraBufferFileAdapter.java`, `SuperGhidraExtensionPlugin.java`, `CompressionAlgorithm.java`, and packager producing `dist/SuperGhidraCodec-1.0.0.zip`.
 

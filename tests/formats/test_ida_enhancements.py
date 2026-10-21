@@ -42,6 +42,12 @@ from superghidra.formats.ida_flirt_bridge import (
 )
 from tests.formats.test_msvc_class_recovery import build_pe_sections, BASE
 
+_IDA_DIR = os.environ.get("IDA_DIR") or os.environ.get("IDADIR")
+_IDA_ROOT = Path(_IDA_DIR) if _IDA_DIR else find_ida_install()
+_IDA_DLL = (_IDA_ROOT / "ida.dll") if _IDA_ROOT else None
+_ANDROID_TIL = (_IDA_ROOT / "til" / "arm" / "android_arm.til") if _IDA_ROOT else None
+_BC31CLS_SIG = (_IDA_ROOT / "sig" / "pc" / "bc31cls.sig") if _IDA_ROOT else None
+
 
 class TestMsvcEhRecovery(unittest.TestCase):
     """Test MSVC Exception Handling metadata recovery (ThrowInfo / CatchableTypeArray)."""
@@ -99,10 +105,10 @@ class TestMsvcEhRecovery(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-    @unittest.skipUnless(os.path.isfile(r"E:\01_Apps\Installed\IDA_PRO\ida.dll"), "IDA Pro ida.dll required")
+    @unittest.skipUnless(_IDA_DLL and _IDA_DLL.is_file(), "IDA Pro ida.dll required")
     def test_ida_dll_eh_classes(self):
         """Integration test: Verify exception classes are recovered from real ida.dll."""
-        rep = recover_classes(r"E:\01_Apps\Installed\IDA_PRO\ida.dll")
+        rep = recover_classes(str(_IDA_DLL))
         rtti_map = rep.rtti_by_name()
         # Verify classes recovered via Exception Handling tables
         self.assertIn("interr_exc_t", rtti_map)
@@ -149,10 +155,10 @@ class TestIdaTilImporter(unittest.TestCase):
         self.assertIn("size_t", report.typedefs)
         self.assertEqual(report.typedefs["size_t"], "uint32_t")
 
-    @unittest.skipUnless(os.path.isfile(r"E:\01_Apps\Installed\IDA_PRO\til\arm\android_arm.til"), "android_arm.til required")
+    @unittest.skipUnless(_ANDROID_TIL and _ANDROID_TIL.is_file(), "android_arm.til required")
     def test_import_real_android_til(self):
         """Integration test: Import android_arm.til from real IDA installation."""
-        report = import_til(r"E:\01_Apps\Installed\IDA_PRO\til\arm\android_arm.til")
+        report = import_til(_ANDROID_TIL)
         self.assertGreater(report.total_types, 100)
         self.assertGreater(len(report.enums), 50)
         self.assertGreater(len(report.structs), 20)
@@ -195,11 +201,11 @@ class TestIdaFlirtBridge(unittest.TestCase):
         mismatch_probe = bytes.fromhex("5589E5567FE8123459C3")
         self.assertEqual(len(index.match_bytes(mismatch_probe)), 0)
 
-    @unittest.skipUnless(os.path.isfile(r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig"), "bc31cls.sig required")
+    @unittest.skipUnless(_BC31CLS_SIG and _BC31CLS_SIG.is_file(), "bc31cls.sig required")
     def test_real_flirt_sig_loading(self):
         """Integration test: Load real bc31cls.sig and match sample prologue."""
         index = FlirtSignatureIndex()
-        count = index.load_sig_file(r"E:\01_Apps\Installed\IDA_PRO\sig\pc\bc31cls.sig")
+        count = index.load_sig_file(_BC31CLS_SIG)
         self.assertGreater(count, 50)
 
         # Match known prologue

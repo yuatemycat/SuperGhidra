@@ -2,7 +2,7 @@
 
 > **Document Version**: 2.3.0 (gcc head-to-head of published pseudocode recorded, 2026-10-20)  
 > **Target System**: SuperGhidra & SuperghidraMCP  
-> **Location**: E:\\02\_Projects\\SuperGhidra\\docs\\SUPERGHIDRA\_ARCHITECTURE\_AND\_IDA\_PRO\_GAP\_ANALYSIS.md  
+> **Location**: docs/SUPERGHIDRA_ARCHITECTURE_AND_IDA_PRO_GAP_ANALYSIS.md  
 > **Scope**: Structural breakdown of SuperGhidra's 7-domain architecture, objective evaluation of the 7 core technical deficits against Hex-Rays IDA Pro, and the 2-phase engineering roadmap to catch up to and surpass IDA Pro (including its [2026 Product Roadmap](https://hex-rays.com/blog/2026-product-direction-priorities)).
 
 ---

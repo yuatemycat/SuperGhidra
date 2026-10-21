@@ -21,10 +21,11 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 DEFAULT_IDA_PATHS = [
-    r"E:\01_Apps\Installed\IDA_PRO",
     r"C:\Program Files\IDA Pro 8.4",
     r"C:\Program Files\IDA Pro 8.3",
     r"C:\Program Files\IDA Pro 7.7",
+    "/opt/idapro",
+    "/Applications/IDA Pro",
 ]
 
 
@@ -40,19 +41,30 @@ def find_ida_install(custom_path: Optional[str] = None) -> Optional[Path]:
         candidates.append(Path(p))
 
     for p in candidates:
-        if p.is_dir() and ((p / "tilib.exe").is_file() or (p / "tools" / "tilib" / "tilib.exe").is_file() or (p / "ida.dll").is_file()):
+        if p.is_dir() and (
+            (p / "tilib.exe").is_file()
+            or (p / "tools" / "tilib" / "tilib.exe").is_file()
+            or (p / "ida.dll").is_file()
+            or (p / "tilib").is_file()
+            or (p / "tools" / "tilib" / "tilib").is_file()
+            or (p / "libida.so").is_file()
+            or (p / "libida.dylib").is_file()
+            or (p / "ida64").is_file()
+        ):
             return p.resolve()
     return None
 
 
 def find_tilib(ida_dir: Optional[Path] = None) -> Optional[Path]:
-    """Locate the Hex-Rays tilib.exe utility."""
+    """Locate the Hex-Rays tilib utility."""
     root = ida_dir or find_ida_install()
     if not root:
         return None
     options = [
         root / "tools" / "tilib" / "tilib.exe",
         root / "tilib.exe",
+        root / "tools" / "tilib" / "tilib",
+        root / "tilib",
     ]
     for opt in options:
         if opt.is_file():

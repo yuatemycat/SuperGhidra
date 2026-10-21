@@ -32,6 +32,9 @@ def find_dumpsig(ida_dir: Optional[Union[str, Path]] = None) -> Optional[Path]:
         root / "tools" / "flair" / "dumpsig.exe",
         root / "dumpsig.exe",
         root / "flair" / "dumpsig.exe",
+        root / "tools" / "flair" / "dumpsig",
+        root / "dumpsig",
+        root / "flair" / "dumpsig",
     ]
     for c in candidates:
         if c.is_file():
@@ -135,7 +138,9 @@ def dump_flirt_file(sig_path: Union[str, Path], dumpsig_path: Optional[Union[str
     if not sig.is_file():
         raise FileNotFoundError(f"Signature file not found: {sig}")
 
-    dumpsig = Path(dumpsig_path) if dumpsig_path else find_dumpsig()
+    dumpsig = Path(dumpsig_path) if dumpsig_path else find_dumpsig(sig.parents[2] if len(sig.parents) >= 3 else None)
+    if not dumpsig or not dumpsig.is_file():
+        dumpsig = find_dumpsig()
     if not dumpsig or not dumpsig.is_file():
         raise FileNotFoundError("dumpsig.exe not found in IDA Pro installation.")
 
