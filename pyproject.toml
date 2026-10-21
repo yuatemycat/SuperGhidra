@@ -7,7 +7,7 @@ name = "superghidra"
 version = "0.2.0"
 description = "SuperGhidra: High-Performance Ghidra Architecture & GPU Acceleration Suite"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 authors = [
     { name = "yuatemycat" },
 ]
@@ -32,7 +32,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
@@ -97,6 +96,9 @@ py-modules = [
     "gpu_adrp_scanner",
     "gpu_function_seeder",
     "headless_analyzer_tuner",
+    "ida_flirt_bridge",
+    "ida_til_importer",
+    "live_binary_tools",
     "mfc_archive",
     "msvc_class_recovery",
     "native_decompiler_pgo_builder",
@@ -112,6 +114,9 @@ py-modules = [
     "synthetic_symbol_exporter",
     "x86_decode",
 ]
+
+[project.scripts]
+superghidra = "superghidra.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
