@@ -1,6 +1,7 @@
 # SuperGhidra
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/superghidra.svg)](https://pypi.org/project/superghidra/)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB.svg)](https://www.python.org/)
 [![CI](https://github.com/yuatemycat/SuperGhidra/actions/workflows/ci.yml/badge.svg)](https://github.com/yuatemycat/SuperGhidra/actions/workflows/ci.yml)
 
@@ -37,12 +38,31 @@ Each package has its own README under [`superghidra/`](superghidra/).
 
 All numbers come from one Windows development machine. The full reports are in [`docs/benchmarks/`](docs/benchmarks/).
 
-## Quick start
+## Installation
+
+**From PyPI:**
+
+```bash
+pip install superghidra
+```
+
+Optional acceleration and integration extras:
+
+```bash
+pip install "superghidra[all]"       # all optional backends
+pip install "superghidra[smt]"       # Z3 P-code equivalence checker
+pip install "superghidra[gpu]"       # WGPU compute shaders (ADRP/prologue sweeps)
+pip install "superghidra[storage]"   # LZ4 & Zstandard 16 KB page compression
+pip install "superghidra[ghidra]"    # PyGhidra bridge & JVM headless bindings
+pip install "superghidra[frida]"     # Live emulator runtime inspection
+```
+
+**From source (development):**
 
 ```bash
 git clone https://github.com/yuatemycat/SuperGhidra
 cd SuperGhidra
-pip install -e ".[all]"      # or pick extras: smt, gpu, storage, ghidra, frida
+pip install -e ".[all]"
 python -m pytest -q
 ```
 
