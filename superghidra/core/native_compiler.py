@@ -109,7 +109,7 @@ def _compile_command(
         cmd.extend(extra_flags)
         cmd.extend([str(src_path), f"/Fe:{exe_path}", "/link", "/DEBUG:NONE"])
         return cmd, msvc_env()
-    cmd = [compiler, "-O0", str(src_path), "-o", str(exe_path), "-lm", *extra_flags]
+    cmd = [compiler, "-O0", "-fpermissive", "-w", str(src_path), "-o", str(exe_path), "-lm", *extra_flags]
     if language == "C++":
         cmd.append("-std=c++17")
     return cmd, None
