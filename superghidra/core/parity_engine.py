@@ -2037,6 +2037,31 @@ class SuperGhidraSection3MCPServer:
         self.header_importer = ClangHeaderImporter()
         self.block_store = SGDBBlockStore()
         self.datalog = SparseMatrixDatalogEngine()
+        self._schema_cache: Dict[str, Any] = {}
+        self._cache_generation: int = 1
+
+    def clear_cache(self, subsystem: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Invalidates cached schemas, type stores, and tool metadata without restarting the server process.
+        """
+        old_gen = self._cache_generation
+        self._cache_generation += 1
+        if subsystem:
+            self._schema_cache.pop(subsystem, None)
+            return {
+                "status": "ok",
+                "subsystem": subsystem,
+                "generation": self._cache_generation,
+                "cleared": True,
+            }
+        else:
+            self._schema_cache.clear()
+            return {
+                "status": "ok",
+                "subsystem": "all",
+                "generation": self._cache_generation,
+                "cleared": True,
+            }
 
     def list_tools(self) -> List[str]:
         return [
@@ -2048,6 +2073,7 @@ class SuperGhidraSection3MCPServer:
             "import_cxx_header",
             "scan_arm64_adrp_xrefs",
             "query_binary_dataflow",
+            "clear_cache",
         ]
 
     def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -2081,6 +2107,9 @@ class SuperGhidraSection3MCPServer:
                 sink=arguments["sink"],
                 additional_sanitizers=arguments.get("sanitizers", []),
             )
+
+        if tool_name == "clear_cache":
+            return self.clear_cache(subsystem=arguments.get("subsystem"))
 
         raise KeyError(f"Unknown MCP tool: {tool_name}")
 
