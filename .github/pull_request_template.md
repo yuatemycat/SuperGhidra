@@ -6,12 +6,12 @@ Briefly describe the change, feature, or bug fix introduced by this pull request
 
 ## Type of Change
 
-- [ ] 🚀 New feature (non-breaking change which adds capability)
-- [ ] 🐛 Bug fix (non-breaking change which fixes an issue)
-- [ ] ⚡ Performance optimization (reduces latency or memory overhead)
-- [ ] 🛡️ Invariant / Security reinforcement
-- [ ] 📚 Documentation & Specifications
-- [ ] 🧪 Tests / Benchmarks
+- [ ] New feature (non-breaking change which adds capability)
+- [ ] Bug fix (non-breaking change which fixes an issue)
+- [ ] Performance optimization (reduces latency or memory overhead)
+- [ ] Invariant / Security reinforcement
+- [ ] Documentation & Specifications
+- [ ] Tests / Benchmarks
 
 ---
 
