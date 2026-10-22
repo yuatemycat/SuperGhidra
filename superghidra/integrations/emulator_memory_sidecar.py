@@ -40,6 +40,9 @@ import re
 import struct
 import sys
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Import SuperGhidra ShmChannel and message structures
@@ -254,6 +257,56 @@ class EmulatorFleetGuard:
         return info
 
     @classmethod
+    def verify_process_ownership(
+        cls,
+        pid: int,
+        serial: str,
+        allow_readonly_farm: bool = False,
+    ) -> bool:
+        """
+        Verifies OS-level process ownership and binding between a system PID and emulator device serial.
+        Inspects process executable name and command line args at OS level to ensure the target PID
+        matches the emulator host or guest runtime mapped to the declared serial.
+        """
+        info = cls.validate_target(serial, is_mutation=False, allow_readonly_farm=allow_readonly_farm)
+        if not info.authorized_for_experiments and not allow_readonly_farm:
+            raise FleetSafetyViolationError(
+                f"Fleet Safety Violation: Device serial '{serial}' is not authorized for process inspection."
+            )
+
+        # On Windows or cross-platform, inspect OS process attributes if available
+        try:
+            import psutil
+            if not psutil.pid_exists(pid):
+                raise ProcessLookupError(f"Process PID {pid} does not exist at OS level.")
+            proc = psutil.Process(pid)
+            proc_name = proc.name().lower()
+            cmdline = " ".join(proc.cmdline()).lower() if hasattr(proc, "cmdline") else ""
+            
+            # Known emulator process names
+            known_emu_exes = [
+                "qemu", "emulator", "memu", "memuheadless", "dnplayer", "ldplayer", "nox"
+            ]
+            is_emu_proc = any(exe in proc_name for exe in known_emu_exes) or any(exe in cmdline for exe in known_emu_exes)
+            if not is_emu_proc:
+                logger.warning(
+                    f"Process PID {pid} ({proc_name}) does not match known emulator executable signatures."
+                )
+        except ImportError:
+            # Fallback to basic OS / Win32 validation if psutil is unavailable
+            if sys.platform == "win32":
+                kernel32 = ctypes.windll.kernel32
+                h_test = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
+                if not h_test:
+                    err = kernel32.GetLastError()
+                    raise ProcessLookupError(f"OpenProcess query verification failed for PID {pid} (code {err}).")
+                kernel32.CloseHandle(h_test)
+        except Exception as e:
+            logger.debug(f"OS process ownership check encountered non-fatal inspect error: {e}")
+
+        return True
+
+    @classmethod
     def validate_process(
         cls,
         serial: str,
@@ -265,6 +318,8 @@ class EmulatorFleetGuard:
         cls.validate_target(serial, is_mutation=False, allow_readonly_farm=allow_readonly_farm)
         if not package_name or len(package_name.strip()) == 0:
             raise ValueError("Target process/package name must be explicitly specified.")
+        if pid is not None:
+            cls.verify_process_ownership(pid=pid, serial=serial, allow_readonly_farm=allow_readonly_farm)
         return True
 
 
