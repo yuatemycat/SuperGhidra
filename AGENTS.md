@@ -53,12 +53,6 @@ SuperGhidra/
 3. **EvidenceLedger Gate:** No neural or automated symbol/struct commit may bypass `ReconstructionObligationLedger` verification (`VTableSlotVerifier`, `FieldDisplacementVerifier`, `AllocationSizeVerifier`).
 4. **Android Emulator Fleet Guard:** `EmulatorFleetGuard` strictly blocks protected farm devices (`emulator-5564` / `127.0.0.1:5565`, `MEmu_0` / `127.0.0.1:21503`) and denies unknown serials by default.
 5. **SMT Soundness:** Unhandled instructions, floating-point operations, and loops exceeding the unroll bound must return `UNKNOWN` (`equivalent=False`), never false `UNSAT`.
-6. **GitHub visibility split:** This repository has two remotes and the visibility of each is fixed.
-   - `origin` is `https://github.com/yuatemycat/SuperGhidra`. It stays **public**. This is the profile the repo is published under.
-   - `private` is `https://github.com/52191314/SuperGhidra`. It stays **private**.
-   - Never make `52191314/SuperGhidra` public. Never make `yuatemycat/SuperGhidra` private. Never drop either remote.
-   - A push of the same commits may go to both remotes. Visibility stays as above. `gh auth switch --user yuatemycat` before pushing `origin`. `gh auth switch --user 52191314` before pushing `private`. Switch the active `gh` account back to `52191314` when the push is done.
-
 ---
 
 ## 5. Writing Style: Sound Like a Maintainer, Not a Brochure
