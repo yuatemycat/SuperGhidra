@@ -63,6 +63,13 @@ def create_parser() -> argparse.ArgumentParser:
     filter_parser.add_argument("--no-headers", action="store_true", help="Exclude standard header injection")
     filter_parser.add_argument("-o", "--output", type=Path, help="Output file")
 
+    # Subcommand: overlay-sync
+    sync_parser = subparsers.add_parser("overlay-sync", help="Sync write-overlay mutations to Ghidra GUI script")
+    sync_parser.add_argument("--overlay", "-i", type=Path, required=True, help="Path to ghidra_overlay.json or .ghidra-delta.jsonl")
+    sync_parser.add_argument("--out", "-o", type=Path, help="Output Ghidra Python script path")
+    sync_parser.add_argument("--diff", action="store_true", help="Print summary diff report instead of generating script")
+    sync_parser.add_argument("--dry-run", action="store_true", help="Configure generated script for dry run")
+
     return parser
 
 
@@ -268,6 +275,30 @@ def cmd_filter(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_overlay_sync(args: argparse.Namespace) -> int:
+    from superghidra.integrations.ghidra_gui_overlay_sync import OverlaySyncBridge
+
+    if not args.overlay.is_file():
+        print(f"Error: overlay file not found: {args.overlay}", file=sys.stderr)
+        return 1
+
+    bridge = OverlaySyncBridge(args.overlay)
+
+    if getattr(args, "diff", False):
+        report = bridge.generate_diff_report()
+        print(report)
+        return 0
+
+    script = bridge.generate_ghidra_python_script(dry_run=args.dry_run)
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(script, encoding="utf-8")
+        print(f"Ghidra sync script written to {args.out}")
+    else:
+        print(script)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
@@ -285,6 +316,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_rtti_recover(args)
     elif args.command == "filter":
         return cmd_filter(args)
+    elif args.command == "overlay-sync":
+        return cmd_overlay_sync(args)
     else:
         parser.print_help()
         return 0

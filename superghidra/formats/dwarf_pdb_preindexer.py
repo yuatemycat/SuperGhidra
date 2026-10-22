@@ -1020,8 +1020,13 @@ class TypeDeduplicator:
             field_lists: Dict[int, List[StructMember]] = {}
             field_enum_variants: Dict[int, List[EnumVariant]] = {}
             type_names: Dict[int, str] = {}
+            arglists: Dict[int, List[int]] = {}
 
             def cv_type_to_str(ti: int) -> Tuple[str, int]:
+                if ti in type_names:
+                    return type_names[ti], 4
+                if ti == 0x0003:
+                    return "void", 0
                 if ti in type_names:
                     return type_names[ti], 4
                 if ti == 0x0040:
@@ -1143,6 +1148,32 @@ class TypeDeduplicator:
                         self.register_type(name=enum_name, kind=TypeKind.ENUM, byte_size=4, local_id=enum_name, variants=variants)
                         type_names[curr_ti] = enum_name
                         enum_count += 1
+                    curr_ti += 1
+                elif leaf == 0x1002:  # LF_POINTER
+                    if len(body) >= 8:
+                        pointee_ti, attrs = struct.unpack_from("<II", body, 0)
+                        pointee_str, _ = cv_type_to_str(pointee_ti)
+                        ptr_name = f"{pointee_str}*"
+                        type_names[curr_ti] = ptr_name
+                        self.register_type(name=ptr_name, kind=TypeKind.POINTER, byte_size=8, local_id=ptr_name)
+                    curr_ti += 1
+                elif leaf == 0x1201:  # LF_ARGLIST
+                    if len(body) >= 4:
+                        arg_cnt, = struct.unpack_from("<I", body, 0)
+                        arg_tis = []
+                        if len(body) >= 4 + arg_cnt * 4:
+                            arg_tis = list(struct.unpack_from(f"<{arg_cnt}I", body, 4))
+                        arglists[curr_ti] = arg_tis
+                    curr_ti += 1
+                elif leaf == 0x1008:  # LF_PROCEDURE
+                    if len(body) >= 12:
+                        ret_ti, call_conv, func_attr, param_count, arglist_ti = struct.unpack_from("<IBBHI", body, 0)
+                        ret_str, _ = cv_type_to_str(ret_ti)
+                        param_tis = arglists.get(arglist_ti, [])
+                        arg_strs = [cv_type_to_str(t)[0] for t in param_tis]
+                        proto_sig = f"{ret_str}({', '.join(arg_strs)})"
+                        type_names[curr_ti] = proto_sig
+                        self.register_type(name=proto_sig, kind=TypeKind.FUNCTION, byte_size=0, local_id=proto_sig)
                     curr_ti += 1
                 else:
                     curr_ti += 1

@@ -90,6 +90,7 @@ class PcodeOpcode(enum.IntEnum):
     FLOAT_INT2FLOAT = 53
     FLOAT_FLOAT2FLOAT = 54
     FLOAT_TRUNC = 55
+    CALLOTHER = 56
 
 
 
@@ -104,22 +105,30 @@ class AddressSpace(enum.Enum):
 class Varnode:
     """Represents a P-Code Varnode (AddressSpace, offset, size in bytes)."""
     space: AddressSpace
-    offset: int
-    size: int
+    offset: Any
+    size: int = 8
 
     def __repr__(self) -> str:
         if self.space == AddressSpace.CONST:
-            return f"#0x{self.offset:x}:{self.size}"
+            if isinstance(self.offset, int):
+                return f"#0x{self.offset:x}:{self.size}"
+            return f"#{self.offset}:{self.size}"
         elif self.space == AddressSpace.REGISTER:
-            return f"r[0x{self.offset:x}]:{self.size}"
+            if isinstance(self.offset, int):
+                return f"r[0x{self.offset:x}]:{self.size}"
+            return f"r[{self.offset}]:{self.size}"
         elif self.space == AddressSpace.UNIQUE:
-            return f"u[0x{self.offset:x}]:{self.size}"
-        return f"ram[0x{self.offset:x}]:{self.size}"
+            if isinstance(self.offset, int):
+                return f"u[0x{self.offset:x}]:{self.size}"
+            return f"u[{self.offset}]:{self.size}"
+        if isinstance(self.offset, int):
+            return f"ram[0x{self.offset:x}]:{self.size}"
+        return f"ram[{self.offset}]:{self.size}"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "space": self.space.value,
-            "offset": hex(self.offset),
+            "offset": hex(self.offset) if isinstance(self.offset, int) else str(self.offset),
             "size": self.size,
         }
 
@@ -208,6 +217,11 @@ class ARM64PcodeLifter:
     def _fp_varnode(reg_idx: int, size: int = 8) -> Varnode:
         """Maps ARM64 SIMD/FP register index (0..31) to REGISTER Varnode space at offset 0x400 + reg_idx * 16."""
         return Varnode(space=AddressSpace.REGISTER, offset=0x400 + reg_idx * 16, size=size)
+
+    @staticmethod
+    def fp_reg_index(vn: Varnode) -> int:
+        """Extracts ARM64 FP/SIMD register index (0..31) from a register Varnode."""
+        return (vn.offset - 0x400) // 16
 
     def _flag_varnode(self, offset: int) -> Varnode:
         return Varnode(space=AddressSpace.REGISTER, offset=offset, size=1)
@@ -2233,6 +2247,112 @@ class ARM64PcodeLifter:
                     ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rm, vec_size), self._const_varnode(lane_offset, 4)], u_b, pc=pc))
                     ops.append(PcodeOp(op_type, [u_a, u_b], u_res, pc=pc))
                 ops.append(PcodeOp(op_type, [self._fp_varnode(rn, vec_size), self._fp_varnode(rm, vec_size)], self._fp_varnode(rd, vec_size), pc=pc))
+                return ops
+
+        # 35. ARM64 Cryptographic Extension Instructions
+        # (a) AES single-round encryption/decryption & mix columns (2-register)
+        # Format: 0100 1110 0010 1000 01xx 10[Rn:5][Rd:5]
+        # Mask: 0xFFFF0C00 == 0x4E280800
+        if (insn & 0xFFFF0C00) == 0x4E280800:
+            sub_op = (insn >> 12) & 0xF
+            rd = insn & 0x1F
+            rn = (insn >> 5) & 0x1F
+            vd = self._fp_varnode(rd, 16)
+            vn = self._fp_varnode(rn, 16)
+            if sub_op == 0x4:  # AESE: Vd = AESE(Vd, Vn)
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.CALLOTHER,
+                    inputs=[Varnode(AddressSpace.CONST, "arm64_aese"), vd, vn],
+                    output=vd,
+                    pc=pc
+                ))
+                return ops
+            elif sub_op == 0x5:  # AESD: Vd = AESD(Vd, Vn)
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.CALLOTHER,
+                    inputs=[Varnode(AddressSpace.CONST, "arm64_aesd"), vd, vn],
+                    output=vd,
+                    pc=pc
+                ))
+                return ops
+            elif sub_op == 0x6:  # AESMC: Vd = AESMC(Vn)
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.CALLOTHER,
+                    inputs=[Varnode(AddressSpace.CONST, "arm64_aesmc"), vn],
+                    output=vd,
+                    pc=pc
+                ))
+                return ops
+            elif sub_op == 0x7:  # AESIMC: Vd = AESIMC(Vn)
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.CALLOTHER,
+                    inputs=[Varnode(AddressSpace.CONST, "arm64_aesimc"), vn],
+                    output=vd,
+                    pc=pc
+                ))
+                return ops
+
+        # (b) SHA-1 & SHA-256 3-register extension
+        # Format: 0101 1110 000 [Rm:5] [opcode:4] 00 [Rn:5] [Rd:5]
+        # Mask: 0xFFE0FC00
+        if (insn & 0xFFE00000) == 0x5E000000 and (insn & 0x00000C00) == 0:
+            sub_op = (insn >> 12) & 0xF
+            rd = insn & 0x1F
+            rn = (insn >> 5) & 0x1F
+            rm = (insn >> 16) & 0x1F
+            vd = self._fp_varnode(rd, 16)
+            vn = self._fp_varnode(rn, 16)
+            vm = self._fp_varnode(rm, 16)
+            sha_3reg_map = {
+                0x0: "arm64_sha1c",
+                0x1: "arm64_sha1p",
+                0x2: "arm64_sha1m",
+                0x3: "arm64_sha1su0",
+                0x4: "arm64_sha256h",
+                0x5: "arm64_sha256h2",
+                0x6: "arm64_sha256su1",
+            }
+            if sub_op in sha_3reg_map:
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.CALLOTHER,
+                    inputs=[Varnode(AddressSpace.CONST, sha_3reg_map[sub_op]), vd, vn, vm],
+                    output=vd,
+                    pc=pc
+                ))
+                return ops
+
+        # (c) SHA-1 & SHA-256 2-register extension
+        # Format: 0101 1110 0010 1000 00xx 10 [Rn:5] [Rd:5]
+        # Mask: 0xFFFF0C00 == 0x5E280800
+        if (insn & 0xFFFF0C00) == 0x5E280800:
+            sub_op = (insn >> 12) & 0xF
+            rd = insn & 0x1F
+            rn = (insn >> 5) & 0x1F
+            vd = self._fp_varnode(rd, 16)
+            vn = self._fp_varnode(rn, 16)
+            if sub_op == 0x0:  # SHA1H: Sd = SHA1H(Sn)
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.CALLOTHER,
+                    inputs=[Varnode(AddressSpace.CONST, "arm64_sha1h"), vn],
+                    output=vd,
+                    pc=pc
+                ))
+                return ops
+            elif sub_op == 0x1:  # SHA1SU1: Vd = SHA1SU1(Vd, Vn)
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.CALLOTHER,
+                    inputs=[Varnode(AddressSpace.CONST, "arm64_sha1su1"), vd, vn],
+                    output=vd,
+                    pc=pc
+                ))
+                return ops
+            elif sub_op == 0x2:  # SHA256SU0: Vd = SHA256SU0(Vd, Vn)
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.CALLOTHER,
+                    inputs=[Varnode(AddressSpace.CONST, "arm64_sha256su0"), vd, vn],
+                    output=vd,
+                    pc=pc
+                ))
                 return ops
 
         # Generic / Fallback Unimplemented Op

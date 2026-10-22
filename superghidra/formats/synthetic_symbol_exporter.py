@@ -642,20 +642,64 @@ class DWARF5Exporter:
 # 2. Microsoft CodeView / PDB (MSF 7.0) Container Exporter
 # ==============================================================================
 
+# CodeView Leaf Type Constants (TPI stream)
+LF_POINTER = 0x1002
+LF_PROCEDURE = 0x1008
+LF_ARGLIST = 0x1201
+LF_FIELDLIST = 0x1203
+LF_STRUCTURE = 0x1505
+LF_CLASS = 0x1504
+LF_UNION = 0x1506
+LF_ENUM = 0x1507
+LF_MEMBER = 0x150D
+LF_ENUMERATE = 0x1502
+LF_METHOD = 0x150F
+LF_ONEMETHOD = 0x1511
+LF_VFUNCTAB = 0x1409
+
+
 class PDBExporter:
     """
-    Synthesizes a minimal experimental Microsoft Compound File (MSF 7.0 / PDB) with Public Symbol Stream (S_PUB32).
-    NOTE: The PDB output is a minimal experimental container intended for internal synthetic symbol tracking and preindexing.
-    It may not load directly in standard MSVC/LLVM tools because a full Global Symbol Information (GSI) hash table / public stream hash records are omitted.
+    Synthesizes a minimal experimental Microsoft Compound File (MSF 7.0 / PDB) with Public Symbol Stream (S_PUB32)
+    and CodeView TPI Leaf Type records.
     """
 
     MSF_MAGIC = b"Microsoft C/C++ MSF 7.00\r\n\x1a\x44\x53\x00\x00\x00"
     BLOCK_SIZE = 4096
 
-    def __init__(self, symbols: List[ExportSymbol], structs: List[ExportStruct], base_address: int = 0x140000000):
+    # CodeView Leaf Constants
+    LF_POINTER = LF_POINTER
+    LF_PROCEDURE = LF_PROCEDURE
+    LF_ARGLIST = LF_ARGLIST
+    LF_FIELDLIST = LF_FIELDLIST
+    LF_MEMBER = LF_MEMBER
+    LF_STRUCTURE = LF_STRUCTURE
+
+    def __init__(
+        self,
+        symbols: List[ExportSymbol],
+        structs: List[ExportStruct],
+        base_address: int = 0x140000000,
+        type_records: Optional[List[bytes]] = None,
+        function_prototypes: Optional[List[Dict[str, Any]]] = None,
+    ):
         self.symbols = sorted(symbols, key=lambda s: s.address)
         self.structs = structs
         self.base_address = base_address
+        self.type_records = list(type_records or [])
+        self.function_prototypes = list(function_prototypes or [])
+        self.function_type_map: Dict[str, int] = {}
+
+    def export_pdb(self, output_path: Optional[str] = None) -> bytes:
+        """
+        Constructs an MSF 7.0 container with TPI type records, DBI stream, and Public symbols,
+        optionally writing the resulting bytes to disk at output_path.
+        """
+        pdb_bytes = self.build_pdb()
+        if output_path is not None:
+            with open(output_path, "wb") as f:
+                f.write(pdb_bytes)
+        return pdb_bytes
 
     def build_pdb(self) -> bytes:
         """Constructs an MSF 7.0 multi-stream container containing PDB, DBI, and Public streams."""
@@ -708,12 +752,376 @@ class PDBExporter:
         names_table = struct.pack("<IIIII", 0, 0, 0, 0, 0)
         return header + names_table
 
+    @staticmethod
+    def get_cv_builtin_type(type_name: str, size: int = 4) -> int:
+        """Maps a C/C++ type name and byte size to standard CodeView built-in type index."""
+        tn = (type_name or "").lower().strip()
+        if "void" in tn and ("*" in tn or "pointer" in tn):
+            return 0x0603  # T_64PVOID
+        if tn == "void":
+            return 0x0003  # T_VOID
+        if "float" in tn:
+            return 0x0040  # T_REAL32
+        if "double" in tn:
+            return 0x0041  # T_REAL64
+        if "bool" in tn:
+            return 0x0030  # T_BOOL08
+        if "*" in tn or "pointer" in tn:
+            return 0x0603  # T_64PVOID
+        if tn.startswith("uint") or "unsigned" in tn:
+            if size == 1:
+                return 0x0020
+            if size == 2:
+                return 0x0021
+            if size == 8:
+                return 0x0077
+            return 0x0075  # T_UINT4
+        if tn.startswith("int"):
+            if size == 1:
+                return 0x0070
+            if size == 2:
+                return 0x0072
+            if size == 8:
+                return 0x0076
+            return 0x0074  # T_INT4
+        if size == 8:
+            return 0x0077
+        if size == 2:
+            return 0x0021
+        if size == 1:
+            return 0x0020
+        return 0x0075
+
+    @classmethod
+    def _parse_function_signature(cls, sig: str) -> Tuple[int, List[int]]:
+        """Parses a function signature into (return_cv_type, [param_cv_types])."""
+        if not sig or "(" not in sig:
+            return 0x0003, []  # default void()
+
+        paren_open = sig.find("(")
+        paren_close = sig.rfind(")")
+        ret_prefix = sig[:paren_open].strip()
+        params_str = sig[paren_open + 1 : paren_close if paren_close != -1 else len(sig)].strip()
+
+        ret_tokens = ret_prefix.split()
+        if len(ret_tokens) > 1 and not ret_tokens[0].endswith("::"):
+            ret_type_str = ret_tokens[0]
+        else:
+            ret_type_str = "void"
+
+        sz = 8 if ("*" in ret_type_str or "64" in ret_type_str or "long long" in ret_type_str) else 4
+        ret_ti = cls.get_cv_builtin_type(ret_type_str, sz)
+
+        param_tis: List[int] = []
+        if params_str and params_str != "void":
+            for p in params_str.split(","):
+                p_clean = p.strip()
+                if not p_clean:
+                    continue
+                tokens = p_clean.split()
+                if len(tokens) >= 2 and not tokens[0].endswith("*"):
+                    p_type = tokens[0]
+                else:
+                    p_type = p_clean
+                p_sz = 8 if ("*" in p_type or "64" in p_type) else 4
+                param_tis.append(cls.get_cv_builtin_type(p_type, p_sz))
+
+        return ret_ti, param_tis
+
+    @staticmethod
+    def serialize_lf_pointer(
+        pointee_ti: int,
+        ptr_size: int = 8,
+        is_const: bool = False,
+        is_reference: bool = False,
+        ptr_mode: int = 0,
+        include_length: bool = True,
+    ) -> bytes:
+        """
+        Serializes a CodeView LF_POINTER (0x1002) leaf record.
+        - pointee_ti: TypeIndex of underlying pointee type.
+        - ptr_size: Pointer byte size (8 for 64-bit, 4 for 32-bit).
+        - is_const: Whether the pointer is const-qualified.
+        - is_reference: Whether the pointer is an lvalue reference.
+        - ptr_mode: CodeView PointerMode (0 = Pointer, 1 = LValueRef).
+        - include_length: If True, prefixes with 16-bit record byte length.
+        """
+        ptr_kind = 0x0A if ptr_size == 8 else 0x08
+        mode = 1 if is_reference else (ptr_mode & 0x07)
+        attrs = (ptr_kind & 0x1F) | ((mode & 0x07) << 5) | (1 << 8)
+        if is_const:
+            attrs |= (1 << 10)
+        attrs |= ((ptr_size & 0x3F) << 13)
+
+        body = struct.pack("<HII", 0x1002, pointee_ti, attrs)
+        if include_length:
+            return struct.pack("<H", len(body)) + body
+        return bytes(body)
+
+    @staticmethod
+    def serialize_lf_arglist(
+        arg_type_indices: List[int],
+        include_length: bool = True,
+    ) -> bytes:
+        """
+        Serializes a CodeView LF_ARGLIST (0x1201) leaf record.
+        - arg_type_indices: List of 32-bit TypeIndices for function parameters.
+        - include_length: If True, prefixes with 16-bit record byte length.
+        """
+        count = len(arg_type_indices)
+        body = bytearray(struct.pack("<HI", 0x1201, count))
+        if count > 0:
+            body.extend(struct.pack(f"<{count}I", *arg_type_indices))
+        if include_length:
+            return struct.pack("<H", len(body)) + bytes(body)
+        return bytes(body)
+
+    @staticmethod
+    def serialize_lf_procedure(
+        return_type_ti: int,
+        arg_list_ti: int,
+        calling_conv: int = 0,
+        param_count: int = 0,
+        func_attr: int = 0,
+        include_length: bool = True,
+    ) -> bytes:
+        """
+        Serializes a CodeView LF_PROCEDURE (0x1008) leaf record.
+        - return_type_ti: TypeIndex of return type.
+        - arg_list_ti: TypeIndex of corresponding LF_ARGLIST record.
+        - calling_conv: Calling convention (0x00 = NearC, 0x03 = NearFast/x64).
+        - param_count: Parameter count in signature.
+        - func_attr: Function attributes bitfield.
+        - include_length: If True, prefixes with 16-bit record byte length.
+        """
+        body = struct.pack(
+            "<HIBBHI",
+            0x1008,
+            return_type_ti,
+            calling_conv,
+            func_attr,
+            param_count,
+            arg_list_ti,
+        )
+        if include_length:
+            return struct.pack("<H", len(body)) + body
+        return bytes(body)
+
+    @staticmethod
+    def serialize_lf_member(
+        name: str,
+        type_ti: int,
+        offset: int,
+        attr: int = 3,
+        include_length: bool = False,
+    ) -> bytes:
+        """
+        Serializes a CodeView LF_MEMBER (0x150D) record for inclusion in LF_FIELDLIST.
+        - name: Field member name.
+        - type_ti: TypeIndex of member type.
+        - offset: Byte offset within struct.
+        - attr: Access attribute (3 = public, 1 = private, 2 = protected).
+        - include_length: In standard CodeView, member records inside LF_FIELDLIST do not
+          have individual 16-bit length prefixes. If True, prefixes with length.
+        """
+        entry = bytearray(struct.pack("<HHI", 0x150D, attr, type_ti))
+        if offset < 0x8000:
+            entry.extend(struct.pack("<H", offset))
+        else:
+            entry.extend(struct.pack("<HI", 0x8004, offset))
+        entry.extend(name.encode("utf-8") + b"\x00")
+        pad_len = (4 - (len(entry) % 4)) % 4
+        for rem in range(pad_len, 0, -1):
+            entry.append(0xF0 | rem)
+        if include_length:
+            return struct.pack("<H", len(entry)) + bytes(entry)
+        return bytes(entry)
+
+    @classmethod
+    def serialize_lf_fieldlist(
+        cls,
+        members: List[Union[ExportField, bytes, Tuple[str, int, int]]],
+        include_length: bool = True,
+    ) -> bytes:
+        """
+        Serializes a CodeView LF_FIELDLIST (0x1203) leaf record.
+        - members: List of ExportField objects, pre-serialized LF_MEMBER bytes,
+          or (name, type_ti, offset) tuples.
+        - include_length: If True, prefixes with 16-bit record byte length.
+        """
+        flist_body = bytearray(struct.pack("<H", 0x1203))
+        for m in members:
+            if isinstance(m, bytes):
+                flist_body.extend(m)
+            elif isinstance(m, ExportField):
+                cv_type = cls.get_cv_builtin_type(m.type_name, m.size)
+                flist_body.extend(cls.serialize_lf_member(m.name, cv_type, m.offset))
+            elif isinstance(m, (tuple, list)) and len(m) >= 3:
+                name, type_ti, offset = m[0], m[1], m[2]
+                flist_body.extend(cls.serialize_lf_member(name, type_ti, offset))
+
+        if include_length:
+            return struct.pack("<H", len(flist_body)) + bytes(flist_body)
+        return bytes(flist_body)
+
+    @staticmethod
+    def serialize_lf_structure(
+        name: str,
+        size: int,
+        field_list_ti: int,
+        field_count: int,
+        properties: int = 0,
+        derived_from_ti: int = 0,
+        vshape_ti: int = 0,
+        include_length: bool = True,
+    ) -> bytes:
+        """
+        Serializes a CodeView LF_STRUCTURE (0x1505) leaf record.
+        - name: Struct / class name.
+        - size: Total struct size in bytes.
+        - field_list_ti: TypeIndex of associated LF_FIELDLIST record.
+        - field_count: Number of fields / members.
+        - properties: Struct property flags (e.g. 0 = none).
+        - derived_from_ti: TypeIndex of base class (0 = none).
+        - vshape_ti: TypeIndex of vshape table (0 = none).
+        - include_length: If True, prefixes with 16-bit record byte length.
+        """
+        struct_body = bytearray(
+            struct.pack(
+                "<HHHIII",
+                0x1505,
+                field_count,
+                properties,
+                field_list_ti,
+                derived_from_ti,
+                vshape_ti,
+            )
+        )
+        if size < 0x8000:
+            struct_body.extend(struct.pack("<H", size))
+        else:
+            struct_body.extend(struct.pack("<HI", 0x8004, size))
+        struct_body.extend(name.encode("utf-8") + b"\x00")
+        pad_len = (4 - (len(struct_body) % 4)) % 4
+        struct_body.extend(b"\x00" * pad_len)
+
+        if include_length:
+            return struct.pack("<H", len(struct_body)) + bytes(struct_body)
+        return bytes(struct_body)
+
     def _build_tpi_stream(self) -> bytes:
         """
-        Builds CodeView TPI (Type Info) stream containing LF_FIELDLIST (0x1203)
-        and LF_STRUCTURE (0x1505) records for all reconstructed struct definitions.
+        Builds CodeView TPI (Type Info) stream containing standard leaf records:
+        LF_FIELDLIST (0x1203), LF_STRUCTURE (0x1505), LF_POINTER (0x1002),
+        LF_ARGLIST (0x1201), and LF_PROCEDURE (0x1008).
         """
-        if not self.structs:
+        records_buf = bytearray()
+        ti_min = 0x1000
+        current_ti = ti_min
+        type_records_count = 0
+
+        # 0. Pre-supplied raw type records
+        for rec in self.type_records:
+            records_buf.extend(rec)
+            current_ti += 1
+            type_records_count += 1
+
+        # 1. Structure / Class type records
+        struct_type_map: Dict[str, int] = {}
+        for st in self.structs:
+            flist_ti = current_ti
+            flist_rec = self.serialize_lf_fieldlist(st.fields, include_length=True)
+            records_buf.extend(flist_rec)
+            current_ti += 1
+            type_records_count += 1
+
+            struct_ti = current_ti
+            struct_rec = self.serialize_lf_structure(
+                name=st.name,
+                size=st.size,
+                field_list_ti=flist_ti,
+                field_count=len(st.fields),
+                include_length=True,
+            )
+            records_buf.extend(struct_rec)
+            struct_type_map[st.name] = struct_ti
+            current_ti += 1
+            type_records_count += 1
+
+            # Pointer to structure
+            struct_ptr_ti = current_ti
+            ptr_rec = self.serialize_lf_pointer(pointee_ti=struct_ti, ptr_size=8, include_length=True)
+            records_buf.extend(ptr_rec)
+            current_ti += 1
+            type_records_count += 1
+
+        # 2. Explicit Function Prototypes
+        for proto in self.function_prototypes:
+            ret_ti = proto.get("return_type_ti", 0x0003)
+            param_tis = proto.get("param_type_indices", [])
+            calling_conv = proto.get("calling_convention", 0x00)
+
+            arglist_ti = current_ti
+            arglist_rec = self.serialize_lf_arglist(param_tis, include_length=True)
+            records_buf.extend(arglist_rec)
+            current_ti += 1
+            type_records_count += 1
+
+            proc_ti = current_ti
+            proc_rec = self.serialize_lf_procedure(
+                return_type_ti=ret_ti,
+                arg_list_ti=arglist_ti,
+                calling_conv=calling_conv,
+                param_count=len(param_tis),
+                include_length=True,
+            )
+            records_buf.extend(proc_rec)
+            current_ti += 1
+            type_records_count += 1
+
+            func_ptr_rec = self.serialize_lf_pointer(pointee_ti=proc_ti, ptr_size=8, include_length=True)
+            records_buf.extend(func_ptr_rec)
+            current_ti += 1
+            type_records_count += 1
+
+        # 3. Synthetic symbols function prototypes
+        emitted_signatures: Dict[Tuple[int, Tuple[int, ...], int], int] = {}
+        for s in self.symbols:
+            if s.symbol_type == "FUNC":
+                sig_to_parse = s.demangled_name if s.demangled_name else f"void {s.name}()"
+                ret_ti, param_tis = self._parse_function_signature(sig_to_parse)
+                sig_key = (ret_ti, tuple(param_tis), 0x03)
+                if sig_key in emitted_signatures:
+                    self.function_type_map[s.name] = emitted_signatures[sig_key]
+                    continue
+
+                arglist_ti = current_ti
+                arglist_rec = self.serialize_lf_arglist(param_tis, include_length=True)
+                records_buf.extend(arglist_rec)
+                current_ti += 1
+                type_records_count += 1
+
+                proc_ti = current_ti
+                proc_rec = self.serialize_lf_procedure(
+                    return_type_ti=ret_ti,
+                    arg_list_ti=arglist_ti,
+                    calling_conv=0x03,
+                    param_count=len(param_tis),
+                    include_length=True,
+                )
+                records_buf.extend(proc_rec)
+                current_ti += 1
+                type_records_count += 1
+
+                func_ptr_rec = self.serialize_lf_pointer(pointee_ti=proc_ti, ptr_size=8, include_length=True)
+                records_buf.extend(func_ptr_rec)
+                current_ti += 1
+                type_records_count += 1
+
+                emitted_signatures[sig_key] = proc_ti
+                self.function_type_map[s.name] = proc_ti
+
+        if type_records_count == 0:
             tpi_hdr = bytearray(56)
             struct.pack_into(
                 "<IIIIIHHIIiIiIiI", tpi_hdr, 0,
@@ -723,83 +1131,12 @@ class PDBExporter:
             )
             return bytes(tpi_hdr)
 
-        records_buf = bytearray()
-        ti_min = 0x1000
-        current_ti = ti_min
-
-        def get_cv_builtin_type(type_name: str, size: int) -> int:
-            tn = (type_name or "").lower()
-            if "float" in tn:
-                return 0x0040  # T_REAL32
-            if "double" in tn:
-                return 0x0041  # T_REAL64
-            if "*" in tn or "pointer" in tn:
-                return 0x0603  # T_64PVOID
-            if tn.startswith("uint") or "unsigned" in tn:
-                if size == 1:
-                    return 0x0020
-                if size == 2:
-                    return 0x0021
-                if size == 8:
-                    return 0x0077
-                return 0x0075  # T_UINT4
-            if tn.startswith("int"):
-                if size == 1:
-                    return 0x0070
-                if size == 2:
-                    return 0x0072
-                if size == 8:
-                    return 0x0076
-                return 0x0074  # T_INT4
-            if size == 8:
-                return 0x0077
-            if size == 2:
-                return 0x0021
-            if size == 1:
-                return 0x0020
-            return 0x0075
-
-        for st in self.structs:
-            flist_ti = current_ti
-            current_ti += 1
-            struct_ti = current_ti
-            current_ti += 1
-
-            # 1. LF_FIELDLIST (0x1203)
-            flist_body = bytearray(struct.pack("<H", 0x1203))
-            for f in st.fields:
-                cv_type = get_cv_builtin_type(f.type_name, f.size)
-                # LF_MEMBER (0x150D): leaf (2B), attr (2B = 3 for public), type (4B)
-                member_entry = bytearray(struct.pack("<HHI", 0x150D, 3, cv_type))
-                if f.offset < 0x8000:
-                    member_entry.extend(struct.pack("<H", f.offset))
-                else:
-                    member_entry.extend(struct.pack("<HI", 0x8004, f.offset))
-                member_entry.extend(f.name.encode("utf-8") + b"\x00")
-                pad_len = (4 - (len(member_entry) % 4)) % 4
-                for rem in range(pad_len, 0, -1):
-                    member_entry.append(0xF0 | rem)
-                flist_body.extend(member_entry)
-
-            records_buf.extend(struct.pack("<H", len(flist_body)) + flist_body)
-
-            # 2. LF_STRUCTURE (0x1505)
-            struct_body = bytearray(struct.pack("<HHHIII", 0x1505, len(st.fields), 0, flist_ti, 0, 0))
-            if st.size < 0x8000:
-                struct_body.extend(struct.pack("<H", st.size))
-            else:
-                struct_body.extend(struct.pack("<HI", 0x8004, st.size))
-            struct_body.extend(st.name.encode("utf-8") + b"\x00")
-            pad_len = (4 - (len(struct_body) % 4)) % 4
-            struct_body.extend(b"\x00" * pad_len)
-
-            records_buf.extend(struct.pack("<H", len(struct_body)) + struct_body)
-
-        ti_max = current_ti
+        ti_max = 0x1000 + type_records_count
         records_len = len(records_buf)
 
         tpi_hdr = bytearray(56)
-        struct.pack_into("<IIIIIHHIIiIiIiI", tpi_hdr, 0,
+        struct.pack_into(
+            "<IIIIIHHIIiIiIiI", tpi_hdr, 0,
             20040203,
             56,
             ti_min,
@@ -811,7 +1148,7 @@ class PDBExporter:
             0x3FFFF,
             0, 0,
             0, 0,
-            0, 0
+            0, 0,
         )
         return bytes(tpi_hdr) + bytes(records_buf)
 

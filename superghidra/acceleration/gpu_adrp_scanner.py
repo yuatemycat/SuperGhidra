@@ -44,6 +44,11 @@ except ImportError:
     HAS_TORCH = False
     HAS_CUDA = False
 
+# Adaptive GPU threshold: Binaries/buffers below 5 MB are routed to CPU NumPy SIMD
+# to avoid WGPU command queue submission and buffer staging latency (~0.8-1.0 ms).
+ADAPTIVE_GPU_THRESHOLD_BYTES: int = 5 * 1024 * 1024  # 5 MB
+GPU_SCAN_SIZE_THRESHOLD_BYTES: int = ADAPTIVE_GPU_THRESHOLD_BYTES
+
 
 @dataclasses.dataclass
 class ADRPMatch:
@@ -436,12 +441,15 @@ class GPUAdrpScanner:
 
     pack_gpu_match = staticmethod(pack_gpu_match)
     unpack_gpu_match = staticmethod(unpack_gpu_match)
+    ADAPTIVE_GPU_THRESHOLD_BYTES: int = ADAPTIVE_GPU_THRESHOLD_BYTES
+    GPU_SCAN_SIZE_THRESHOLD_BYTES: int = GPU_SCAN_SIZE_THRESHOLD_BYTES
 
     def __init__(self, backend: str = "auto", max_matches: Optional[int] = None):
         self.backend = backend
         self.max_matches = max_matches
         self._wgpu_engine: Optional[WGPUAdrpEngine] = None
         self._torch_engine: Optional[TorchAdrpEngine] = None
+        self.last_dispatched_backend: Optional[str] = None
 
         if backend == "auto":
             if HAS_WGPU:
@@ -481,13 +489,37 @@ class GPUAdrpScanner:
         self.active_backend = "numpy"
         logger.info(f"GPUAdrpScanner: fell back to 'numpy' (reason: {reason})")
 
-    def scan_raw(self, instructions: np.ndarray) -> np.ndarray:
-        """Runs fast sweep over instruction array and returns packed matches."""
+    def scan_raw(
+        self,
+        instructions: np.ndarray,
+        force_gpu: bool = False,
+    ) -> np.ndarray:
+        """Runs fast sweep over instruction array and returns packed matches.
+
+        When backend is 'auto' (or active_backend is 'auto'), buffers under
+        ADAPTIVE_GPU_THRESHOLD_BYTES (5 MB) are automatically routed to the CPU
+        NumPy SIMD engine to eliminate WGPU command queue and staging buffer overhead.
+        Explicit backend='wgpu' (or force_gpu=True) overrides this threshold.
+        """
+        buf_size = int(getattr(instructions, "nbytes", len(instructions) * 4))
+
+        # Adaptive GPU threshold routing:
+        # If backend is 'auto' (or active_backend is 'auto') and buffer is under 5 MB,
+        # route through CPU NumPy SIMD to bypass WGPU command queue and staging overhead.
+        # If explicit backend='wgpu' (or force_gpu=True) is set, force override is respected.
+        is_auto = (self.backend == "auto" or self.active_backend == "auto") and not force_gpu
+        if is_auto and buf_size < ADAPTIVE_GPU_THRESHOLD_BYTES:
+            self.last_dispatched_backend = "numpy"
+            return NumPyAdrpEngine.scan(instructions)
+
         if self.active_backend == "wgpu" and self._wgpu_engine:
+            self.last_dispatched_backend = "wgpu"
             return self._wgpu_engine.scan(instructions)
         elif self.active_backend == "cuda" and self._torch_engine:
+            self.last_dispatched_backend = "cuda"
             return self._torch_engine.scan(instructions)
         else:
+            self.last_dispatched_backend = "numpy"
             return NumPyAdrpEngine.scan(instructions)
 
     def _scan_wgpu(self, instructions: np.ndarray) -> List[Tuple[int, int]]:
@@ -505,6 +537,7 @@ class GPUAdrpScanner:
         data: Union[bytes, bytearray, np.ndarray],
         base_pc: int = 0x100000000,
         filter_same_register: bool = True,
+        force_gpu: bool = False,
     ) -> List[ADRPMatch]:
         """
         Discovers and decodes all ADRP + ADD/LDR reference pairs.
@@ -527,7 +560,7 @@ class GPUAdrpScanner:
         else:
             raise TypeError("Expected bytes, bytearray, or numpy uint32 array.")
 
-        packed_results = self.scan_raw(instructions)
+        packed_results = self.scan_raw(instructions, force_gpu=force_gpu)
         matches: List[ADRPMatch] = []
         total_insns = len(instructions)
 

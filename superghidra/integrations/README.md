@@ -11,6 +11,7 @@
 | [`colab_cloud_orchestrator.py`](colab_cloud_orchestrator.py) | `ColabCloudOrchestrator`, `CloudConfig`, `CloudRuntimeTier` | Google Colab Cloud TPU v5e / NVIDIA T4 pipeline orchestrator with ELF64 `.text` slicing (`extract_elf_executable_slice`), boundary-aware seeding, and HuggingFace Hub streaming. |
 | [`neural_decompiler_pipeline.py`](neural_decompiler_pipeline.py) | `NeuralDecompilerPipeline`, `LLMDecompilerClient`, `SkeletonExtractor`, `DecompiledSkeleton`, `NeuralPrediction`, `VerifiedNeuralCommit` | Two-phase Skeleton-to-Skin neural decompiler normalizing raw C skeletons, querying OpenAI/vLLM/Ollama/Gemini HTTP endpoints, and gating commits via `EvidenceLedger`. |
 | [`d_lift_verifier.py`](d_lift_verifier.py) | `DLiftRewardEngine`, `InMemClangSyntaxGate`, `Z3SemanticEquivalenceGate`, `ReadabilityGate`, `GRPORewardManager`, `DScoreResult` | D-LiFT + Z3 self-verifying neural decompiler backend with 3-gate hierarchical reward (`max(R_syn) < min(R_sem) < min(R_read)`), constant-drift counterexamples, and GRPO advantage normalization. |
+| [`ghidra_gui_overlay_sync.py`](ghidra_gui_overlay_sync.py) | `OverlaySyncBridge`, `generate_ghidra_python_script`, `generate_diff_report`, `sync_to_script` | Synchronizes write-overlay mutations and `.ghidra-delta.jsonl` streams into Ghidra GUI Python scripts wrapped in atomic FlatProgramAPI transactions with console progress logging and diff summaries. |
 
 
 ## 2. Key Data Structures & Invariants

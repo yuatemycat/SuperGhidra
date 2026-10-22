@@ -198,6 +198,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "CloudRuntimeTier": ("superghidra.integrations.colab_cloud_orchestrator", "CloudRuntimeTier"),
     "CloudConfig": ("superghidra.integrations.colab_cloud_orchestrator", "CloudConfig"),
     "ColabCloudOrchestrator": ("superghidra.integrations.colab_cloud_orchestrator", "ColabCloudOrchestrator"),
+    "OverlaySyncBridge": ("superghidra.integrations.ghidra_gui_overlay_sync", "OverlaySyncBridge"),
+    "generate_ghidra_python_script": ("superghidra.integrations.ghidra_gui_overlay_sync", "generate_ghidra_python_script"),
+    "generate_diff_report": ("superghidra.integrations.ghidra_gui_overlay_sync", "generate_diff_report"),
+    "sync_to_script": ("superghidra.integrations.ghidra_gui_overlay_sync", "sync_to_script"),
     # Section 1: E-Graph, MLIR & Staged P-Code Pass Manager
     "EGraphMBADeobfuscatorPass": ("superghidra.lifters.egraph_mlir_pipeline", "EGraphMBADeobfuscatorPass"),
     "SymbolicCFFDeflattenerPass": ("superghidra.lifters.egraph_mlir_pipeline", "SymbolicCFFDeflattenerPass"),

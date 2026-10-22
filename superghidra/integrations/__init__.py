@@ -54,6 +54,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "build_dlift_benchmark_candidates": ("superghidra.integrations.d_lift_verifier", "build_dlift_benchmark_candidates"),
     "symbolic_write_retry_oracle": ("superghidra.integrations.d_lift_verifier", "symbolic_write_retry_oracle"),
     "run_dlift_verification_suite": ("superghidra.integrations.d_lift_verifier", "run_dlift_verification_suite"),
+    "OverlaySyncBridge": ("superghidra.integrations.ghidra_gui_overlay_sync", "OverlaySyncBridge"),
+    "generate_ghidra_python_script": ("superghidra.integrations.ghidra_gui_overlay_sync", "generate_ghidra_python_script"),
+    "generate_diff_report": ("superghidra.integrations.ghidra_gui_overlay_sync", "generate_diff_report"),
+    "sync_to_script": ("superghidra.integrations.ghidra_gui_overlay_sync", "sync_to_script"),
 }
 
 __all__ = list(_EXPORTS.keys()) + ["build_synthetic_dex_bytes", "build_synthetic_jni_elf_bytes"]

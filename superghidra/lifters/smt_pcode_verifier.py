@@ -663,6 +663,9 @@ class PcodeSymbolicSimulator:
                 target_val = state.get_varnode_value(inputs[0])
                 state.branches.append((True, target_val))
 
+        elif opcode == PcodeOpcode.CALLOTHER:
+            state.mark_unknown("Encountered CALLOTHER intrinsic in P-code; usercall side effects unmodeled")
+
         elif opcode == PcodeOpcode.UNIMPLEMENTED:
             state.mark_unknown("Encountered UNIMPLEMENTED opcode in P-code")
 
