@@ -701,6 +701,22 @@ class TestSuperGhidraSection3MCPServer(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.server.call_tool("non_existent_tool", {})
 
+    def test_mcp_clear_cache_invalidation_without_restart(self):
+        """Verifies clear_cache dynamically invalidates schemas and state without restarting process."""
+        self.assertIn("clear_cache", self.server.list_tools())
+        # Populate dummy cached entry
+        self.server._schema_cache["usercall"] = {"cached": True}
+        res = self.server.call_tool("clear_cache", {"subsystem": "usercall"})
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["cleared"], True)
+        self.assertNotIn("usercall", self.server._schema_cache)
+
+        # Clear all
+        self.server._schema_cache["all_subsystems"] = {"test": 123}
+        res_all = self.server.call_tool("clear_cache", {})
+        self.assertEqual(res_all["status"], "ok")
+        self.assertEqual(len(self.server._schema_cache), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
