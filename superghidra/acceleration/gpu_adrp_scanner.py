@@ -216,8 +216,14 @@ class WGPUAdrpEngine:
         if not HAS_WGPU:
             raise RuntimeError("wgpu package is not installed.")
         self.max_matches = max_matches
-        self.adapter = wgpu.gpu.request_adapter_sync()
-        self.device = self.adapter.request_device_sync()
+        # Request adapter with graceful fallback if Metal/Vulkan/D3D12 hardware adapter is unavailable
+        try:
+            self.adapter = wgpu.gpu.request_adapter_sync()
+            if self.adapter is None:
+                raise RuntimeError("No suitable graphics adapter found for WGPU (unsupported Metal or missing GPU driver)")
+            self.device = self.adapter.request_device_sync()
+        except Exception as e:
+            raise RuntimeError(f"WGPU adapter request failed: {e}") from e
         self._init_pipeline()
 
     def _init_pipeline(self) -> None:
