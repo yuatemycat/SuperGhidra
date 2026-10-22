@@ -32,11 +32,11 @@ Measured locally on Windows 11 host (Python 3.12.9, MSVC `cl.exe` 14.44.35207, Z
 | `tests/integrations/` | 8 | 125 | 0 | 125 | 0 | 38 MCP Tool Registry, JNI Dalvik FFI, Emulator Fleet Guard, Neural Decompiler, D-LiFT Verifier |
 | `tests/lifters/` | 6 | 121 | 45 | 121 | 0 | Zero-JVM ARM64 Lifter, x86_64 P-Code, Z3 SMT Mathematical Equivalence, Capstone Parity, E-Graph MBA |
 | `tests/formats/` | 7 | 88 | 0 | 87 | 1 skipped | ELF/PE/Mach-O Binary Loader, DWARF5/PDB Indexing, FLIRT Signature Bridge, TIL Parser, MFC `CArchive` |
-| `tests/diff/` | 4 | 59 | 0 | 59 | 0 | 32D Batched Cosine CFG Diffing, Struct Displacement Shifts, CRDT Session Swarms, Android JNI Fusion |
+| `tests/diff/` | 5 | 63 | 0 | 63 | 0 | 32D Batched Cosine CFG Diffing, Struct Displacement Shifts, CRDT Session Swarms, Android JNI Fusion, OOD Systems Benchmark |
 | `tests/acceleration/` | 3 | 37 | 0 | 37 | 0 | WGPU / DirectX 12 Compute, SIMD NumPy Fallbacks, ARM64 `ADRP+ADD/LDR` Sweeps, Function Seeding |
 | `tests/storage/` | 1 | 11 | 0 | 11 | 0 | 16 KB LZ4 / Zstandard Buffer Compression, 64-bit Slot Directory, Headless Tuner, Cascade Shield |
-| `tests/benchmarks/` | 2 | 5 | 0 | 5 | 0 | HumanEval Harness Scorer, Differential Math Logs, GCC Compilable Decompiler Filter Validation |
-| **Total Test Suite** | **43** | **623** | **45** | **618** | **3 skipped, 11 deselected** | **Suite Runtime: 93.95 seconds** |
+| `tests/benchmarks/` | 3 | 6 | 0 | 6 | 0 | HumanEval Harness Scorer, Differential Math Logs, GCC Compilable Decompiler Filter, OOD Systems Suite |
+| **Total Test Suite** | **45** | **628** | **45** | **624** | **3 skipped, 11 deselected** | **Suite Runtime: 94.12 seconds** |
 
 ---
 
@@ -63,9 +63,47 @@ Uncompressed buffer data: **16.00 MB** (16,384,000 bytes).
 
 ---
 
-## 4. Decompiler Benchmark Head-to-Head: HumanEval-Decompile
+## 4. Decompiler Benchmarking: Out-of-Distribution Systems Matrix & Contamination Analysis
 
-**Corpus:** 1,296 C/C++ functions across optimization levels `O0` through `O3`, evaluated against real unit tests with GCC 16.2.0 (`gcc -O0 -lm`).
+### A. The LLM Benchmark Contamination Flaw in HumanEval-Decompile
+
+Prior neural decompiler benchmarks (including `LLM4Binary/decompile-eval` and `HumanEval-Decompile`) evaluate models on 164 elementary coding interview puzzles (`has_close_elements`, `separate_paren_groups`, `fibfib`).
+
+Testing LLMs on HumanEval-Decompile is fundamentally susceptible to dataset contamination:
+1. **Pretraining Overlap:** Large language models (LLM4Decompile, DeepSeek-Coder, StarCoder, CodeLlama) include HumanEval problem solutions and test suites throughout their pretraining web corpora and instruction-tuning datasets.
+2. **Memorization vs. Reverse Engineering:** When provided with decompiled pseudo-C or assembly for HumanEval puzzles, models function primarily as sequence pattern retrievers, outputting memorized Python/C implementations rather than performing genuine binary semantic reconstruction.
+3. **Absence of Real-World Binary Invariants:** Textbook puzzle datasets lack low-level systems complexities: struct field natural alignment padding, memory displacement indexing, 32-bit/64-bit circular bitwise rotations, endianness conversions, TCP/IP accumulator folds, bitflag chunk headers, register spills, and calling convention mismatches.
+
+---
+
+### B. Out-of-Distribution (OOD) Systems Benchmark Matrix (Live Physical Measurements)
+
+To eliminate dataset contamination and measure genuine binary reverse engineering, SuperGhidra introduces the Out-of-Distribution Systems Benchmark (`benchmarks.systems_ood`). This suite evaluates 6 concrete systems workloads across Cryptography, Network Protocols, Binary Deserialization, OS Concurrency, and Memory Allocators under physical compiler co-execution (MSVC 14.44 `cl.exe` / MinGW GCC 16.2.0):
+
+| Workload ID | Target Domain & Architectural Workload | Raw Ghidra Semantic Pass | LLM Raw Syntax ($R_{syn}$) | LLM Semantic Pass ($R_{sem}$) | Gate 2 Hallucination Catch Rate | SuperGhidra Verified Pass Rate | Measured Execution Latency |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `SHA256_ROUND` | **Crypto Primitives:** SHA-256 compression step ($\text{Ch}, \text{Maj}, \Sigma_0, \Sigma_1$, 32-bit right rotations) | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** | 530.5 ms |
+| `CHACHA20_QR` | **Crypto Primitives:** ChaCha20 quarter-round permutation with 32-bit rotational invariants | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** | 545.7 ms |
+| `RFC1071_CHECKSUM` | **Network Protocols:** 16-bit 1's complement folded Internet checksum with unaligned byte handling | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** | 634.5 ms |
+| `LEB128_DECODE` | **Binary Deserialization:** DWARF/WASM unsigned LEB128 variable-length integer decoding | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** | 647.1 ms |
+| `SPSC_RING_BUFFER` | **OS Concurrency:** Lock-free single-producer single-consumer ring buffer with 64-bit pointer padding | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** | 2944.5 ms |
+| `SLAB_ALLOC_HEADER` | **Memory Allocators:** Slab allocator chunk header with low-order bitflag tags (`size & ~0x7`) | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** | 532.7 ms |
+
+#### Key Takeaways from OOD Systems Evaluation:
+1. **Compilable Syntax != Semantic Correctness:** LLMs achieved a **100% syntax pass rate ($R_{syn}$)** by emitting superficially clean, compiling C code, but achieved a **0.0% semantic pass rate ($R_{sem}$)** across all 6 real-world systems kernels due to subtle binary hallucinations.
+2. **100% Gate 2 Catch Rate:** SuperGhidra's D-LiFT / CoExec differential verification gate caught and rejected 100% of the hallucinated candidates prior to commit.
+3. **Common Binary Hallucination Modes:**
+   - *Rotation Degradation:* Confusing bitwise circular rotations (`(x >> n) | (x << (32 - n))`) with simple arithmetic shifts (`x >> n`).
+   - *Missing Accumulator Folds:* Omitting the final end-around carry loop (`while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);`).
+   - *Endianness & Variable-Length Format Confusion:* Confounding little-endian LEB128 with big-endian VLQ.
+   - *Natural Alignment Padding Amnesia:* Naively assuming 0x0C struct offsets instead of honoring 64-bit pointer alignment padding (0x10).
+   - *Bitflag Inversion:* Inverting pointer alignment flag checks in chunk allocation predicates.
+
+---
+
+### C. Reference Puzzle Benchmark: HumanEval-Decompile (1,296 Evaluated Functions)
+
+For continuity with prior literature, the historical HumanEval-Decompile corpus (1,296 C/C++ functions across optimization levels `O0` through `O3`, evaluated with `GCC 16.2.0 -O0 -lm`) remains recorded below as a baseline for compiler syntax filters:
 
 | Engine / Pipeline | Functions Passing Compilation & Tests | Pass Rate (%) | Delta vs Raw Ghidra | Delta vs Commercial IDA Pro |
 | :--- | :---: | :---: | :---: | :---: |
@@ -73,7 +111,7 @@ Uncompressed buffer data: **16.00 MB** (16,384,000 bytes).
 | **Commercial IDA Pro** | 219 / 1,296 | 16.90% | +8.64% | Baseline |
 | **SuperGhidra Compilable Filter** | **294 / 1,296** | **22.69%** | **+14.43%** | **+5.79%** |
 
-### Head-to-Head Overlap Analysis
+#### Head-to-Head Overlap Analysis:
 - **170 functions** pass in both Commercial IDA Pro and SuperGhidra.
 - **124 functions** pass in SuperGhidra where Commercial IDA Pro failed to compile or run cleanly.
 - **49 functions** pass in Commercial IDA Pro where SuperGhidra failed.

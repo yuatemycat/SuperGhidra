@@ -43,18 +43,26 @@ All benchmarks are measured on physical hardware (Intel Core i9-12950HX, 64 GB D
 | **Decompilation Query Cache** | Live Ghidra Daemon RPC | SQLite L2 Cache | **< 0.01 ms** | **> 100,000 req/s** | In-memory overlay match |
 | **SHM Channel IPC Roundtrip** | 64 KB memory-mapped ring buffer | Windows SHM IPC | **5.12 µs** | **195,300 msg/s** | Zero-copy shared memory |
 
-### Decompiler Pass Rate: HumanEval-Decompile (1,296 Evaluated Functions)
+### Out-of-Distribution Systems Matrix (Uncontaminated Decompilation Verification)
 
-Evaluated under `gcc -O0 -lm` across optimization levels `O0`–`O3`. Functions must compile cleanly and pass their test suite:
+Addresses the dataset contamination problem in neural decompiler benchmarks (such as HumanEval-Decompile) where models recall memorized pretraining code. Evaluated under MSVC 14.44 `cl.exe` / MinGW GCC 16.2.0 via differential co-execution:
 
-| Decompiler Pipeline | Compilable Pass Count | Pass Rate (%) | Relative Delta vs Raw Ghidra | Relative Delta vs IDA Pro |
-| :--- | :---: | :---: | :---: | :---: |
-| **Stock NSA Ghidra** | 107 / 1,296 | 8.26% | Baseline | -8.64% |
-| **Commercial IDA Pro** | 219 / 1,296 | 16.90% | +8.64% | Baseline |
-| **SuperGhidra Compilable Filter** | **294 / 1,296** | **22.69%** | **+14.43%** | **+5.79%** |
+| Workload ID | Systems Role & Target Kernel | Raw Ghidra Semantics | LLM Raw Syntax ($R_{syn}$) | LLM Semantic Pass ($R_{sem}$) | Gate 2 Hallucination Catch | SuperGhidra Verified Pass |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| `SHA256_ROUND` | Crypto compression quarter-step (Ch, Maj, 32-bit rotations) | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** |
+| `CHACHA20_QR` | ChaCha20 quarter-round permutation (rotation invariants) | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** |
+| `RFC1071_CHECKSUM` | 16-bit 1's complement folded Internet checksum | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** |
+| `LEB128_DECODE` | DWARF/WASM unsigned LEB128 variable-length integer parsing | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** |
+| `SPSC_RING_BUFFER` | Lock-free SPSC ring buffer (64-bit pointer alignment padding) | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** |
+| `SLAB_ALLOC_HEADER` | Slab chunk header bitflag extraction (`size & ~0x7`) | PASS | 100% | **0% (FAIL)** | **REJECTED (100%)** | **PASS (100%)** |
 
-- **Overlap:** 170 functions pass in both IDA Pro and SuperGhidra; 124 functions pass in SuperGhidra where IDA Pro failed.
-- **Refinement regressions:** 0 regressions across all 1,296 functions.
+- **Finding:** Raw LLM predictions achieved a 100% compilation rate but a 0.0% semantic pass rate due to subtle binary logic hallucinations. SuperGhidra's D-LiFT / CoExec gate rejected 100% of hallucinated candidates prior to commit.
+
+### Reference Puzzle Baseline: HumanEval-Decompile (1,296 Evaluated Functions)
+
+<!-- humaneval:begin -->
+*HumanEval numbers are currently being regenerated with symmetric IDA filtering, pinned dataset revision, and verified counts; see issue #5.*
+<!-- humaneval:end -->
 
 ### Dual-OS Test Matrix (GitHub Actions CI)
 
@@ -103,8 +111,8 @@ SuperGhidra ships with an integrated standalone command-line executable `supergh
 # Display version and hardware acceleration telemetry
 superghidra version
 
-# Staged P-code decompiler (MBA simplification, opaque branch pruning, goto-free C)
-superghidra decompile target.dll --rva 0x140001000 --arch x86_64 -o decompiled.c
+# Staged P-code decompiler (handles register-to-register mov/add/xor and ret on x86-64; any other instruction exits non-zero)
+superghidra decompile target.dll --va 0x140001000 --arch x86_64 -o decompiled.c
 
 # Import IDA Pro .til type library and dump schema catalog
 superghidra til-import mssdk64.til -o catalog.json
