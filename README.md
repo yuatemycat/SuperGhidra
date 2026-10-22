@@ -184,7 +184,7 @@ Run `python ghidra_oracle.py --help` to list every command.
 
 ## MCP
 
-Most modules are also exposed as MCP tools through a [pyghidra-mcp](https://github.com/clearbluejar/pyghidra-mcp) fork, including `recover_cpp_classes`, `trace_serialize`, `decode_carchive`, `diff_binaries`, `verify_smt_equivalence` and `gpu_adrp_scan`. This lets an AI agent drive them directly.
+SuperGhidra tools are exposed as Model Context Protocol (MCP) tools through [SuperghidraMCP](https://github.com/yuatemycat/SuperghidraMCP) (an Apache-2.0 MCP server built on [pyghidra-mcp](https://github.com/clearbluejar/pyghidra-mcp)). It provides 38 tools to Claude, Antigravity, and Codex, including `recover_cpp_classes`, `trace_serialize`, `decode_carchive`, `diff_binaries`, `verify_smt_equivalence`, and `gpu_adrp_scan`. This lets an AI agent drive analysis workflows directly without manually orchestrating headless Ghidra scripts.
 
 ## Known limitations
 
