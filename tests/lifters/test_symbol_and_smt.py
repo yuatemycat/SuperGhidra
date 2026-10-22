@@ -763,6 +763,110 @@ class TestARM64ExtendedLifterAndSMT(unittest.TestCase):
         self.assertEqual(ops_stxr[1].opcode, PcodeOpcode.COPY)
         self.assertEqual(ops_stxr[1].output.offset, 16)  # W2 status
 
+    def test_arm64_cas_and_atomic_memory_ops_lifting(self):
+        """Validates lifting of ARMv8.1-A CAS, SWP, LDADD, and bitwise atomic ops."""
+        # 1. CAS X0, X1, [X2] (0xC8A07C41)
+        insn_cas = 0xC8A07C41
+        ops_cas = self.lifter.lift_instruction(0x1000, insn_cas)
+        self.assertEqual(len(ops_cas), 3)
+        self.assertEqual(ops_cas[0].opcode, PcodeOpcode.LOAD)
+        self.assertEqual(ops_cas[1].opcode, PcodeOpcode.STORE)
+        self.assertEqual(ops_cas[2].opcode, PcodeOpcode.COPY)
+        self.assertEqual(ops_cas[0].inputs[1].offset, 16)  # Base X2
+        self.assertEqual(ops_cas[1].inputs[2].offset, 8)   # Stored X1 (desired)
+        self.assertEqual(ops_cas[2].output.offset, 0)      # Loaded to X0 (comparand reg)
+
+        # 2. SWP X1, X0, [X2] (0xF8218040)
+        insn_swp = 0xF8218040
+        ops_swp = self.lifter.lift_instruction(0x1004, insn_swp)
+        self.assertEqual(len(ops_swp), 3)
+        self.assertEqual(ops_swp[0].opcode, PcodeOpcode.LOAD)
+        self.assertEqual(ops_swp[1].opcode, PcodeOpcode.STORE)
+        self.assertEqual(ops_swp[2].opcode, PcodeOpcode.COPY)
+        self.assertEqual(ops_swp[0].inputs[1].offset, 16)  # Base X2
+        self.assertEqual(ops_swp[1].inputs[2].offset, 8)   # Stored X1
+        self.assertEqual(ops_swp[2].output.offset, 0)      # Loaded to X0
+
+        # 3. LDADD X1, X0, [X2] (0xF8210040)
+        insn_ldadd = 0xF8210040
+        ops_ldadd = self.lifter.lift_instruction(0x1008, insn_ldadd)
+        self.assertEqual(len(ops_ldadd), 4)
+        self.assertEqual(ops_ldadd[0].opcode, PcodeOpcode.LOAD)
+        self.assertEqual(ops_ldadd[1].opcode, PcodeOpcode.INT_ADD)
+        self.assertEqual(ops_ldadd[2].opcode, PcodeOpcode.STORE)
+        self.assertEqual(ops_ldadd[3].opcode, PcodeOpcode.COPY)
+
+        # 4. LDSET X1, X0, [X2] (0xF8213040)
+        insn_ldset = 0xF8213040
+        ops_ldset = self.lifter.lift_instruction(0x100C, insn_ldset)
+        self.assertEqual(ops_ldset[1].opcode, PcodeOpcode.INT_OR)
+
+        # 5. LDCLR X1, X0, [X2] (0xF8211040)
+        insn_ldclr = 0xF8211040
+        ops_ldclr = self.lifter.lift_instruction(0x1010, insn_ldclr)
+        self.assertEqual(ops_ldclr[1].opcode, PcodeOpcode.INT_NEGATE)
+        self.assertEqual(ops_ldclr[2].opcode, PcodeOpcode.INT_AND)
+
+    def test_arm64_simd_bitwise_and_vector_math_lifting(self):
+        """Validates lifting of ARM64 SIMD vector bitwise, arithmetic, and pairwise ops."""
+        # 1. ORR V0.16B, V1.16B, V2.16B (0x4EA21C20)
+        insn_orr = 0x4EA21C20
+        ops_orr = self.lifter.lift_instruction(0x1000, insn_orr)
+        self.assertEqual(len(ops_orr), 1)
+        self.assertEqual(ops_orr[0].opcode, PcodeOpcode.INT_OR)
+        self.assertEqual(ops_orr[0].output.offset, 1024)       # V0 (0x400 offset)
+        self.assertEqual(ops_orr[0].output.size, 16)          # 128-bit vector
+
+        # 2. AND V0.16B, V1.16B, V2.16B (0x4E221C20)
+        insn_and = 0x4E221C20
+        ops_and = self.lifter.lift_instruction(0x1004, insn_and)
+        self.assertEqual(len(ops_and), 1)
+        self.assertEqual(ops_and[0].opcode, PcodeOpcode.INT_AND)
+        self.assertEqual(ops_and[0].output.size, 16)
+
+        # 3. EOR V0.16B, V1.16B, V2.16B (0x6E221C20)
+        insn_eor = 0x6E221C20
+        ops_eor = self.lifter.lift_instruction(0x1008, insn_eor)
+        self.assertEqual(len(ops_eor), 1)
+        self.assertEqual(ops_eor[0].opcode, PcodeOpcode.INT_XOR)
+
+        # 4. BIC V0.16B, V1.16B, V2.16B (0x4E621C20)
+        insn_bic = 0x4E621C20
+        ops_bic = self.lifter.lift_instruction(0x100C, insn_bic)
+        self.assertEqual(len(ops_bic), 2)
+        self.assertEqual(ops_bic[0].opcode, PcodeOpcode.INT_NEGATE)
+        self.assertEqual(ops_bic[1].opcode, PcodeOpcode.INT_AND)
+
+        # 5. ADD V0.4S, V1.4S, V2.4S (0x4EA28420)
+        insn_add = 0x4EA28420
+        ops_add = self.lifter.lift_instruction(0x1010, insn_add)
+        self.assertGreater(len(ops_add), 1)
+        self.assertEqual(ops_add[-1].opcode, PcodeOpcode.INT_ADD)
+        self.assertEqual(ops_add[-1].output.offset, 1024)
+
+        # 6. SUB V0.4S, V1.4S, V2.4S (0x6EA28420)
+        insn_sub = 0x6EA28420
+        ops_sub = self.lifter.lift_instruction(0x1014, insn_sub)
+        self.assertEqual(ops_sub[-1].opcode, PcodeOpcode.INT_SUB)
+
+        # 7. ADDP V0.4S, V1.4S, V2.4S (0x4EA2BC20)
+        insn_addp = 0x4EA2BC20
+        ops_addp = self.lifter.lift_instruction(0x1018, insn_addp)
+        self.assertGreater(len(ops_addp), 1)
+        self.assertEqual(ops_addp[-1].opcode, PcodeOpcode.INT_ADD)
+
+        # 8. FADD V0.4S, V1.4S, V2.4S (0x4E22D420)
+        insn_fadd = 0x4E22D420
+        ops_fadd = self.lifter.lift_instruction(0x101C, insn_fadd)
+        self.assertGreater(len(ops_fadd), 1)
+        self.assertEqual(ops_fadd[-1].opcode, PcodeOpcode.FLOAT_ADD)
+
+        # 9. FADDP V0.4S, V1.4S, V2.4S (0x6E22D420)
+        insn_faddp = 0x6E22D420
+        ops_faddp = self.lifter.lift_instruction(0x1020, insn_faddp)
+        self.assertGreater(len(ops_faddp), 1)
+        self.assertEqual(ops_faddp[-1].opcode, PcodeOpcode.FLOAT_ADD)
+
     def test_bitfield_and_shift_immediate_ops(self):
         """Validates UBFM (LSL, LSR, UXTB, UXTH) and SBFM (ASR)."""
         # 1. UBFM as LSL x0, x1, #5 (immr = 59, imms = 58)
