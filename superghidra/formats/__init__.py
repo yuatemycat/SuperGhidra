@@ -57,6 +57,19 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "find_dumpsig": ("superghidra.formats.ida_flirt_bridge", "find_dumpsig"),
     "list_available_sigs": ("superghidra.formats.ida_flirt_bridge", "list_available_sigs"),
     "FlirtSignatureIndex": ("superghidra.formats.ida_flirt_bridge", "FlirtSignatureIndex"),
+    "MigratedField": ("superghidra.formats.database_migrator", "MigratedField"),
+    "MigratedStruct": ("superghidra.formats.database_migrator", "MigratedStruct"),
+    "MigratedSegment": ("superghidra.formats.database_migrator", "MigratedSegment"),
+    "MigratedFunction": ("superghidra.formats.database_migrator", "MigratedFunction"),
+    "MigratedComment": ("superghidra.formats.database_migrator", "MigratedComment"),
+    "MigratedXref": ("superghidra.formats.database_migrator", "MigratedXref"),
+    "MigratedSymbol": ("superghidra.formats.database_migrator", "MigratedSymbol"),
+    "MigratedProject": ("superghidra.formats.database_migrator", "MigratedProject"),
+    "IdaDatabaseMigrator": ("superghidra.formats.database_migrator", "IdaDatabaseMigrator"),
+    "BinaryNinjaDatabaseMigrator": ("superghidra.formats.database_migrator", "BinaryNinjaDatabaseMigrator"),
+    "DatabaseMigrator": ("superghidra.formats.database_migrator", "DatabaseMigrator"),
+    "create_synthetic_ida_database": ("superghidra.formats.database_migrator", "create_synthetic_ida_database"),
+    "create_synthetic_bndb_database": ("superghidra.formats.database_migrator", "create_synthetic_bndb_database"),
 }
 
 __all__ = list(_EXPORTS.keys())

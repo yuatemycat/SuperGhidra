@@ -97,6 +97,11 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "import_type_library": ("superghidra.core.live_binary_tools", "import_type_library"),
     "get_struct_catalog": ("superghidra.core.live_binary_tools", "get_struct_catalog"),
     "STRUCT_CATALOG": ("superghidra.core.live_binary_tools", "STRUCT_CATALOG"),
+    "ClusterCoordinator": ("superghidra.core.cluster_daemon", "ClusterCoordinator"),
+    "ClusterWorkerNode": ("superghidra.core.cluster_daemon", "ClusterWorkerNode"),
+    "TaskEnvelope": ("superghidra.core.cluster_daemon", "TaskEnvelope"),
+    "ClusterTaskType": ("superghidra.core.cluster_daemon", "ClusterTaskType"),
+    "WorkerStatus": ("superghidra.core.cluster_daemon", "WorkerStatus"),
 }
 
 __all__ = list(_EXPORTS.keys())

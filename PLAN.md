@@ -249,6 +249,24 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
 - [x] ~~**ARM32/Thumb-2 decoder** ([`arm_thumb_decode.py`](superghidra/lifters/arm_thumb_decode.py)): 16-bit Thumb, 32-bit Thumb-2, 32-bit ARM state; memory displacement extraction (`LDR`/`STR`/`LDRB`/`STRB`/`LDRH`/`STRH`/`LDRD`/`STRD`), branch and call target resolution, prologue/epilogue detection. Integrated into [`struct_shift_migrator.py`](superghidra/diff/struct_shift_migrator.py) and [`binary_diff_engine.py`](superghidra/diff/binary_diff_engine.py) (`extract_cfgs_from_arm32_bytes`).~~
 - [x] ~~**CArchive stream decoder driven by recovered `Serialize()` layouts (LiquidWork integration)** (`src/mfc_decoder.rs`): pure Rust deserializer, schema-driven layout engine, SolidWorks `Contents/Config-0-ResolvedFeatures` bidirectional extractor and in-place dimension mutator.~~
 
+### Frontier 8: Distributed Daemon Clustering (gRPC)
+- [x] ~~**Goal:** Multi-node Ghidra analysis worker orchestration over resilient gRPC protocol.~~
+- [x] ~~**Target Modules:** [superghidra/core/cluster_daemon.py](superghidra/core/cluster_daemon.py), root shim [cluster_daemon.py](cluster_daemon.py)~~
+- [x] ~~**Accomplished:** ClusterCoordinator with round-robin and load-aware task dispatching, heartbeat timeout detection, in-flight task failover, genuine gRPC and in-process fallback channels; ClusterWorkerNode async runner.~~
+- [x] ~~**Tests:** [	ests/core/test_cluster_daemon.py](tests/core/test_cluster_daemon.py) (7 passed).~~
+
+### Frontier 9: Full IDA Pro (.idb/.i64) & Binary Ninja (.bndb) Project Database Migrator
+- [x] ~~**Goal:** Convert full project databases beyond FLIRT/TIL into SuperGhidra overlays, delta event logs, and EvidenceLedger obligations.~~
+- [x] ~~**Target Modules:** [superghidra/formats/database_migrator.py](superghidra/formats/database_migrator.py), root shim [database_migrator.py](database_migrator.py)~~
+- [x] ~~**Accomplished:** Container parser for 32/64-bit IDA archives (.idb, .i64, .id0, .id1, .nam, .til, tagged records) and Binary Ninja SQLite databases (.bndb). Universal Migration IR (MigratedProject) exporting to WriteOverlay, .ghidra-delta.jsonl, ReconstructionObligationLedger, and synthetic DWARF 5/PDB containers.~~
+- [x] ~~**Tests:** [	ests/formats/test_database_migrator.py](tests/formats/test_database_migrator.py) (14 passed).~~
+
+### Frontier 10: Browser WebAssembly Decompiler UI & Wasm Pipeline
+- [x] ~~**Goal:** Dynamic WebAssembly binary emitter and interactive offline-capable client-side web application generator.~~
+- [x] ~~**Target Modules:** [superghidra/lifters/wasm_decompiler_pipeline.py](superghidra/lifters/wasm_decompiler_pipeline.py), root shim [wasm_decompiler_pipeline.py](wasm_decompiler_pipeline.py)~~
+- [x] ~~**Accomplished:** Pure-Python WebAssembly 1.0 binary module builder (WasmModuleBuilder), C AST tokenizer with RVA cross-reference jump mapping, interactive HTML5/SVG CFG and syntax-highlighted decompiler web bundle generator (export_wasm_decompiler_package), and embedded HTTP server (WasmViewerServer).~~
+- [x] ~~**Tests:** [	ests/lifters/test_wasm_decompiler_pipeline.py](tests/lifters/test_wasm_decompiler_pipeline.py) (7 passed).~~
+
 ---
 
 ## 📊 Verification (2026-10-20)
