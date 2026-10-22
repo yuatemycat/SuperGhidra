@@ -87,6 +87,10 @@ class TestParityBenchmarkScorecard(unittest.TestCase):
         self.assertEqual(res["function_name"], "compute_sum")
         self.assertTrue(res["is_goto_free"])
         self.assertNotIn("goto ", res["c_code"])
+        body = res["c_code"].split("{", 1)[1].rsplit("}", 1)[0]
+        self.assertIn("rax = rbx;", body)
+        self.assertIn("rax = rax + rbx;", body)
+        self.assertNotIn("rcx", body)
 
 
 if __name__ == "__main__":
