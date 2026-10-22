@@ -67,7 +67,13 @@ class TestAdaptiveThreshold(unittest.TestCase):
         if not HAS_WGPU:
             self.skipTest("WGPU backend not available on this platform")
 
-        scanner = GPUAdrpScanner(backend="wgpu")
+        try:
+            scanner = GPUAdrpScanner(backend="wgpu")
+        except RuntimeError as e:
+            self.skipTest(f"WGPU hardware adapter unavailable: {e}")
+
+        if scanner.active_backend != "wgpu" or scanner._wgpu_engine is None:
+            self.skipTest("WGPU hardware adapter unavailable on this runner")
         small_stream = generate_synthetic_stream(size_bytes=512 * 1024, seed=303)  # 512 KB
         self.assertLess(small_stream.nbytes, ADAPTIVE_GPU_THRESHOLD_BYTES)
 
@@ -110,7 +116,13 @@ class TestAdaptiveThreshold(unittest.TestCase):
         stream = generate_synthetic_stream(size_bytes=1 * 1024 * 1024, seed=505)
 
         scanner_auto = GPUAdrpScanner(backend="auto")
-        scanner_wgpu = GPUAdrpScanner(backend="wgpu")
+        try:
+            scanner_wgpu = GPUAdrpScanner(backend="wgpu")
+        except RuntimeError as e:
+            self.skipTest(f"WGPU hardware adapter unavailable: {e}")
+
+        if scanner_wgpu.active_backend != "wgpu" or scanner_wgpu._wgpu_engine is None:
+            self.skipTest("WGPU hardware adapter unavailable on this runner")
 
         matches_numpy = scanner_auto.scan_matches(stream)
         self.assertEqual(scanner_auto.last_dispatched_backend, "numpy")

@@ -181,6 +181,10 @@ def test_in_process_worker_node_execution():
 
 def test_grpc_transport_worker_cluster():
     """Test full gRPC server and gRPC worker channel over loopback."""
+    from superghidra.core.cluster_daemon import _GRPC_AVAILABLE
+    if not _GRPC_AVAILABLE:
+        pytest.skip("grpcio is not installed in the environment")
+
     coord = ClusterCoordinator()
     port = coord.start_grpc_server(host="127.0.0.1", port=0)
     assert port > 0
