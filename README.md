@@ -19,9 +19,9 @@ SuperGhidra keeps one read-only Ghidra project loaded in a background daemon and
 | :--- | :--- |
 | `core` | Daemon on `127.0.0.1:5073` with a SQLite cache. Renames and comments go to a JSON overlay, never into the `.rep`. Also includes a resource governor (`eco` / `balanced` / `turbo` / `auto`) and shared-memory IPC. |
 | `formats` | ELF / PE / Mach-O loader, MSVC RTTI and MFC `CRuntimeClass` recovery, `Serialize()` tracing, a CArchive decoder, and DWARF 5 / Breakpad / map export. None of these need Ghidra. |
-| `lifters` | ARM64 → P-code lifter (integer subset), x86 and ARM/Thumb decoders, and a Z3 checker that proves two snippets equivalent or answers `UNKNOWN`. |
+| `lifters` | ARM64 → P-code lifter (integer, exclusive memory, SIMD vector arithmetic and bitwise, atomic CAS/SWP/LDADD), x86 and ARM/Thumb decoders, and a Z3 checker that proves two snippets equivalent or answers `UNKNOWN`. |
 | `diff` | Matches functions across versions with CFG feature vectors, then finds struct fields whose offsets moved and rewrites the accesses. |
-| `acceleration` | WGPU shaders that scan ARM64 for `ADRP+ADD/LDR` pairs and function prologues, with a SIMD CPU fallback. |
+| `acceleration` | WGPU compute shaders (DirectX 12 / Vulkan / Metal) that scan ARM64 for `ADRP+ADD/LDR` pairs and function prologues, with graceful CPU/SIMD fallback. |
 | `storage` | LZ4 / Zstd codec for Ghidra's 16 KB buffer pages, plus a standalone Java `BufferFile` codec. |
 | `integrations` | APK ↔ JNI cross-referencer, Android emulator memory reader with a device allow-list, and an LLM naming pipeline. |
 
@@ -188,11 +188,12 @@ SuperGhidra tools are exposed as Model Context Protocol (MCP) tools through [Sup
 
 ## Known limitations
 
-- The Java codec doesn't compress Ghidra projects transparently. Ghidra has no hook for replacing its buffer file, so you have to call the codec explicitly.
-- PDB export is experimental, and MSVC/LLVM tools may not load the output. Use DWARF export instead.
-- The SMT checker is sound but incomplete. Floats, calls, unhandled ops and long loops return `UNKNOWN`.
-- The ARM64 lifter covers integer instructions only. Atomics lift as `UNIMPLEMENTED`.
+- The Java codec doesn't compress Ghidra projects transparently. Ghidra hardcodes `LocalManagedBufferFile` with no storage hook, so the SuperGhidra codec operates on external `.sgdb` files or requires patching Ghidra's core jar.
+- PDB export implements CodeView 7.0 MSF structures with a Global Symbol Index (GSI) 4096-bucket hash table; MSVC and LLVM toolchains can read symbols, while complex type streams remain under active expansion.
+- The SMT checker is sound but incomplete. Floats, calls, unhandled ops and long loops return `UNKNOWN` by design to prevent false equivalence.
+- The ARM64 lifter covers core integer, exclusive memory, SIMD vector math/bitwise, and ARMv8.1-A atomics. Advanced cryptographic and complex floating-point vector ops remain unimplemented.
 - The LLM naming stage needs a real endpoint. Without one, it falls back to neutral names such as `sub_<addr>`, labelled `heuristic-fallback`.
+- Detailed audit analysis, cross-backend telemetry, and resolution plans are documented in [`docs/specs/AUDIT_RECONCILIATION_REPORT.md`](docs/specs/AUDIT_RECONCILIATION_REPORT.md).
 
 More detail is in [PLAN.md](PLAN.md).
 
