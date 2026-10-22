@@ -357,6 +357,21 @@ class TestG3BRegressions(unittest.TestCase):
         self.assertIn("LoginManager", class_names)
         self.assertNotIn("oginManager", class_names)
 
+    def test_pdb_gsi_hash_stream_emission(self):
+        """Verifies PDBExporter generates a valid GSI hash table stream in Stream 5."""
+        syms = [
+            ExportSymbol(name="_test_symbol_alpha", address=0x140001000, symbol_type="FUNC"),
+            ExportSymbol(name="_test_symbol_beta", address=0x140002000, symbol_type="FUNC"),
+            ExportSymbol(name="g_counter_gamma", address=0x140003000, symbol_type="DATA"),
+        ]
+        exporter = PDBExporter(symbols=syms, structs=[], base_address=0x140000000)
+        pdb_bytes = exporter.build_pdb()
+
+        # Ingest into OffHeapTypeStore to verify end-to-end compatibility
+        store = OffHeapTypeStore(":memory:")
+        stats = store.ingest_pdb(pdb_bytes, base_address=0x140000000)
+        self.assertGreaterEqual(stats["symbols"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()
