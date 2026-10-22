@@ -1926,6 +1926,39 @@ class ARM64PcodeLifter:
                 ))
             return ops
 
+        # 29. ARM64 Load/Store Exclusive / Atomic Ops (LDXR, STXR, LDAR, STLR): (insn & 0x3F200000) == 0x08000000
+        if (insn & 0x3F200000) == 0x08000000:
+            size_code = (insn >> 30) & 3
+            size = 1 << size_code  # 1, 2, 4, or 8 bytes
+            l_bit = (insn >> 22) & 1  # 1=Load (LDXR/LDAR), 0=Store (STXR/STLR)
+            rn = (insn >> 5) & 0x1F
+            rt = insn & 0x1F
+            rn_node = self._gpr_varnode(rn, 8, allow_sp=True)
+            if l_bit == 1:
+                # LDXR / LDAR: rt = [rn]
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.LOAD,
+                    inputs=[Varnode(space=AddressSpace.RAM, offset=0, size=size), rn_node],
+                    output=self._gpr_varnode(rt, size, allow_sp=False, is_dest=True),
+                    pc=pc
+                ))
+                return ops
+            else:
+                # STXR / STLR: [rn] = rt, rs = 0
+                rs = (insn >> 16) & 0x1F
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.STORE,
+                    inputs=[Varnode(space=AddressSpace.RAM, offset=0, size=size), rn_node, self._gpr_varnode(rt, size, allow_sp=False)],
+                    pc=pc
+                ))
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.COPY,
+                    inputs=[self._const_varnode(0, 4)],
+                    output=self._gpr_varnode(rs, 4, allow_sp=False, is_dest=True),
+                    pc=pc
+                ))
+                return ops
+
         # Generic / Fallback Unimplemented Op
         ops.append(PcodeOp(
             opcode=PcodeOpcode.UNIMPLEMENTED,

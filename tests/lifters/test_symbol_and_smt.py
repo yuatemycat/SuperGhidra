@@ -745,6 +745,24 @@ class TestARM64ExtendedLifterAndSMT(unittest.TestCase):
         self.assertTrue(res_sub.equivalent)
         self.assertEqual(res_sub.status, "UNSAT")
 
+    def test_arm64_atomic_exclusive_load_store_lifting(self):
+        """Validates lifting of ARM64 atomic exclusive instructions (LDXR, STXR)."""
+        # LDXR X0, [X1]
+        insn_ldxr = 0xC85F7C20
+        ops_ldxr = self.lifter.lift_instruction(0x1000, insn_ldxr)
+        self.assertEqual(len(ops_ldxr), 1)
+        self.assertEqual(ops_ldxr[0].opcode, PcodeOpcode.LOAD)
+        self.assertEqual(ops_ldxr[0].output.offset, 0)   # X0
+        self.assertEqual(ops_ldxr[0].inputs[1].offset, 8) # X1
+
+        # STXR W2, X0, [X1]
+        insn_stxr = 0xC8027C20
+        ops_stxr = self.lifter.lift_instruction(0x1004, insn_stxr)
+        self.assertEqual(len(ops_stxr), 2)
+        self.assertEqual(ops_stxr[0].opcode, PcodeOpcode.STORE)
+        self.assertEqual(ops_stxr[1].opcode, PcodeOpcode.COPY)
+        self.assertEqual(ops_stxr[1].output.offset, 16)  # W2 status
+
     def test_bitfield_and_shift_immediate_ops(self):
         """Validates UBFM (LSL, LSR, UXTB, UXTH) and SBFM (ASR)."""
         # 1. UBFM as LSL x0, x1, #5 (immr = 59, imms = 58)
