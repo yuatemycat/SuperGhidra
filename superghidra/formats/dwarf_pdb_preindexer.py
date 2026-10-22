@@ -1171,9 +1171,14 @@ class TypeDeduplicator:
                 continue
 
             off = 0
-            if len(s_bytes) >= 16:
-                h0, h1, h2 = struct.unpack_from("<III", s_bytes, 0)
-                if h2 == len(s_bytes) - 12:
+            if len(s_bytes) >= 12:
+                sym_hash_sz, addr_map_sz, num_sym_bytes = struct.unpack_from("<III", s_bytes, 0)
+                # Standard PDB Public stream header:
+                # sym_hash_size (u32), addr_map_size (u32), num_sym_bytes (u32)
+                # Followed immediately by num_sym_bytes of symbol records
+                if 12 + num_sym_bytes <= len(s_bytes) and num_sym_bytes > 0:
+                    off = 12
+                elif num_sym_bytes == len(s_bytes) - 12:
                     off = 12
 
             while off + 4 <= len(s_bytes):

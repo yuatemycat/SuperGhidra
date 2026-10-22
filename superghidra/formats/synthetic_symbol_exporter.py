@@ -851,9 +851,15 @@ class PDBExporter:
         return bytes(dbi_hdr)
 
     def _build_public_stream(self) -> bytes:
-        """Builds CodeView S_PUB32 (0x110e) records for all public symbols."""
+        """
+        Builds CodeView S_PUB32 (0x110e) records along with a valid Global Symbol
+        Information (GSI) hash table stream for public symbols.
+        """
         records = bytearray()
+        rec_offsets: List[int] = []
+
         for sym in self.symbols:
+            rec_offsets.append(len(records))
             # RVA relative to base address
             rva = max(sym.address - self.base_address, 0x1000)
             name_bytes = sym.name.encode("utf-8") + b"\x00"
@@ -867,10 +873,59 @@ class PDBExporter:
             rec_len = len(rec_content)
             records.extend(struct.pack("<H", rec_len) + rec_content)
 
+        sym_records = bytes(records)
+        num_sym_bytes = len(sym_records)
+
+        # Build GSI Hash Table for S_PUB32 records
+        IPHR_HASH = 4096
+        hash_records = bytearray()
+        buckets: List[List[int]] = [[] for _ in range(IPHR_HASH)]
+
+        for idx, sym in enumerate(self.symbols):
+            rec_off = rec_offsets[idx]
+            h = 0
+            for b in sym.name.encode("utf-8"):
+                h = ((h << 5) + h + b) & 0xFFFFFFFF
+            bucket_idx = (h ^ (h >> 16)) % IPHR_HASH
+            # GSI Hash Record: record offset in sym stream (1-based / ref), ref_count (or 1)
+            hash_rec_offset = len(hash_records)
+            hash_records.extend(struct.pack("<II", rec_off + 1, 1))
+            buckets[bucket_idx].append(hash_rec_offset)
+
+        # Compressed bitmap and bucket table
+        # 4096 bits = 128 uint32 words
+        bitmap_words = [0] * (IPHR_HASH // 32)
+        compressed_buckets = bytearray()
+        for b_i, b_entries in enumerate(buckets):
+            if b_entries:
+                bitmap_words[b_i // 32] |= (1 << (b_i % 32))
+                # For each bucket entry, store offset into hash_records
+                for entry_off in b_entries:
+                    compressed_buckets.extend(struct.pack("<I", entry_off))
+
+        bitmap_bytes = struct.pack(f"<{len(bitmap_words)}I", *bitmap_words)
+
+        # GSI Stream Header:
+        # ver_sig: u32 = 0xFFFFFFFF
+        # ver_hdr: u32 = 0xEFFE0000 + 19990810 (V70 = 0xEFFE0000 | 19990810)
+        # hash_records_len: u32
+        # buckets_len: u32 (bitmap + compressed buckets)
+        gsi_hash_hdr = struct.pack(
+            "<IIII",
+            0xFFFFFFFF,
+            0xEFFE0000 | 19990810,
+            len(hash_records),
+            len(bitmap_bytes) + len(compressed_buckets),
+        )
+        gsi_hash_stream = gsi_hash_hdr + bytes(hash_records) + bitmap_bytes + bytes(compressed_buckets)
+
+        sym_hash_size = len(gsi_hash_stream)
+        addr_map_size = 0  # Optional address sort map
+
         # Public stream header:
-        # sym_hash = 0, addr_hash = 0, num_sym_bytes = len(records)
-        hdr = struct.pack("<III", 0, 0, len(records))
-        return hdr + bytes(records)
+        # sym_hash_size (u32), addr_map_size (u32), num_sym_bytes (u32)
+        hdr = struct.pack("<III", sym_hash_size, addr_map_size, num_sym_bytes)
+        return hdr + sym_records + gsi_hash_stream
 
     def _pack_msf(self, streams: List[bytes]) -> bytes:
         """Packs multiple streams into a standard MSF 7.0 block-aligned file."""
