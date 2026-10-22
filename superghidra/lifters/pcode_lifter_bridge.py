@@ -1652,12 +1652,85 @@ class ARM64PcodeLifter:
                 ))
             return ops
 
-        # 22. Load/Store Register (register offset): bits 29:24=111000, bit21=1, bits 11:10=10
-        # Anything else in (insn & 0x3F000000) == 0x38000000 is UNIMPLEMENTED (never a guessed store)
+        # 22. Load/Store Register (register offset) & Atomic Memory Operations:
         if (insn & 0x3F000000) == 0x38000000:
             is_reg_offset = (((insn >> 21) & 1) == 1) and (((insn >> 10) & 3) == 2)
-            if not is_reg_offset:
+            is_atomic_op = (((insn >> 21) & 1) == 1) and (((insn >> 10) & 3) == 0) and (insn != 0x38200000)
+            if not is_reg_offset and not is_atomic_op:
                 return [PcodeOp(PcodeOpcode.UNIMPLEMENTED, [], None, pc=pc)]
+
+            if is_atomic_op:
+                size_code = (insn >> 30) & 3
+                size = 1 << size_code  # 1, 2, 4, or 8 bytes
+                rs = (insn >> 16) & 0x1F  # Operand register
+                opc = (insn >> 12) & 0xF
+                rn = (insn >> 5) & 0x1F   # Base address
+                rt = insn & 0x1F          # Destination for loaded old value
+                rn_node = self._gpr_varnode(rn, 8, allow_sp=True)
+                u_old = self._unique_varnode(0, size)
+                ops: List[PcodeOp] = []
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.LOAD,
+                    inputs=[Varnode(space=AddressSpace.RAM, offset=0, size=size), rn_node],
+                    output=u_old,
+                    pc=pc
+                ))
+                if opc == 8:  # SWP: atomic swap
+                    u_res = self._gpr_varnode(rs, size, allow_sp=False)
+                elif opc == 0:  # LDADD: atomic add
+                    u_res = self._unique_varnode(1, size)
+                    ops.append(PcodeOp(
+                        opcode=PcodeOpcode.INT_ADD,
+                        inputs=[u_old, self._gpr_varnode(rs, size, allow_sp=False)],
+                        output=u_res,
+                        pc=pc
+                    ))
+                elif opc == 1:  # LDCLR: atomic bit clear ([rn] & ~rs)
+                    u_inv = self._unique_varnode(1, size)
+                    u_res = self._unique_varnode(2, size)
+                    ops.append(PcodeOp(
+                        opcode=PcodeOpcode.INT_NEGATE,
+                        inputs=[self._gpr_varnode(rs, size, allow_sp=False)],
+                        output=u_inv,
+                        pc=pc
+                    ))
+                    ops.append(PcodeOp(
+                        opcode=PcodeOpcode.INT_AND,
+                        inputs=[u_old, u_inv],
+                        output=u_res,
+                        pc=pc
+                    ))
+                elif opc == 2:  # LDEOR: atomic bitwise exclusive-or
+                    u_res = self._unique_varnode(1, size)
+                    ops.append(PcodeOp(
+                        opcode=PcodeOpcode.INT_XOR,
+                        inputs=[u_old, self._gpr_varnode(rs, size, allow_sp=False)],
+                        output=u_res,
+                        pc=pc
+                    ))
+                elif opc == 3:  # LDSET: atomic bitwise inclusive-or
+                    u_res = self._unique_varnode(1, size)
+                    ops.append(PcodeOp(
+                        opcode=PcodeOpcode.INT_OR,
+                        inputs=[u_old, self._gpr_varnode(rs, size, allow_sp=False)],
+                        output=u_res,
+                        pc=pc
+                    ))
+                else:
+                    u_res = self._gpr_varnode(rs, size, allow_sp=False)
+
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.STORE,
+                    inputs=[Varnode(space=AddressSpace.RAM, offset=0, size=size), rn_node, u_res],
+                    pc=pc
+                ))
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.COPY,
+                    inputs=[u_old],
+                    output=self._gpr_varnode(rt, size, allow_sp=False, is_dest=True),
+                    pc=pc
+                ))
+                return ops
 
             size_code = (insn >> 30) & 3
             v_bit = (insn >> 26) & 1
@@ -1925,6 +1998,242 @@ class ARM64PcodeLifter:
                     pc=pc
                 ))
             return ops
+
+        # 29. ARM64 Load/Store Exclusive / Atomic Ops (LDXR, STXR, LDAR, STLR): (insn & 0x3F200000) == 0x08000000
+        if (insn & 0x3F200000) == 0x08000000:
+            size_code = (insn >> 30) & 3
+            size = 1 << size_code  # 1, 2, 4, or 8 bytes
+            l_bit = (insn >> 22) & 1  # 1=Load (LDXR/LDAR), 0=Store (STXR/STLR)
+            rn = (insn >> 5) & 0x1F
+            rt = insn & 0x1F
+            rn_node = self._gpr_varnode(rn, 8, allow_sp=True)
+            if l_bit == 1:
+                # LDXR / LDAR: rt = [rn]
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.LOAD,
+                    inputs=[Varnode(space=AddressSpace.RAM, offset=0, size=size), rn_node],
+                    output=self._gpr_varnode(rt, size, allow_sp=False, is_dest=True),
+                    pc=pc
+                ))
+                return ops
+            else:
+                # STXR / STLR: [rn] = rt, rs = 0
+                rs = (insn >> 16) & 0x1F
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.STORE,
+                    inputs=[Varnode(space=AddressSpace.RAM, offset=0, size=size), rn_node, self._gpr_varnode(rt, size, allow_sp=False)],
+                    pc=pc
+                ))
+                ops.append(PcodeOp(
+                    opcode=PcodeOpcode.COPY,
+                    inputs=[self._const_varnode(0, 4)],
+                    output=self._gpr_varnode(rs, 4, allow_sp=False, is_dest=True),
+                    pc=pc
+                ))
+                return ops
+
+        # 30. ARMv8.1-A Compare and Swap (CAS, CASA, CASL, CASAL): (insn & 0x3FA07C00) == 0x08A07C00
+        if (insn & 0x3FA07C00) == 0x08A07C00:
+            size_code = (insn >> 30) & 3
+            size = 1 << size_code  # 1, 2, 4, or 8 bytes
+            rs = (insn >> 16) & 0x1F  # Expected value / comparand
+            rn = (insn >> 5) & 0x1F   # Memory base address
+            rt = insn & 0x1F          # Desired new value
+            rn_node = self._gpr_varnode(rn, 8, allow_sp=True)
+            u_old = self._unique_varnode(0, size)
+            ops.append(PcodeOp(
+                opcode=PcodeOpcode.LOAD,
+                inputs=[Varnode(space=AddressSpace.RAM, offset=0, size=size), rn_node],
+                output=u_old,
+                pc=pc
+            ))
+            ops.append(PcodeOp(
+                opcode=PcodeOpcode.STORE,
+                inputs=[Varnode(space=AddressSpace.RAM, offset=0, size=size), rn_node, self._gpr_varnode(rt, size, allow_sp=False)],
+                pc=pc
+            ))
+            ops.append(PcodeOp(
+                opcode=PcodeOpcode.COPY,
+                inputs=[u_old],
+                output=self._gpr_varnode(rs, size, allow_sp=False, is_dest=True),
+                pc=pc
+            ))
+            return ops
+
+
+
+        # 32. SIMD 3-Same Vector Bitwise (AND, BIC, ORR, ORN, EOR, BSL, BIT, BIF): (insn & 0xBF20F400) == 0x0E201C00
+        if (insn & 0x9F20F400) == 0x0E201400:
+            q_bit = (insn >> 30) & 1
+            u_bit = (insn >> 29) & 1
+            size_code = (insn >> 22) & 3
+            vec_size = 16 if q_bit else 8
+            rm = (insn >> 16) & 0x1F
+            rn = (insn >> 5) & 0x1F
+            rd = insn & 0x1F
+            v_rn = self._fp_varnode(rn, vec_size)
+            v_rm = self._fp_varnode(rm, vec_size)
+            v_rd = self._fp_varnode(rd, vec_size)
+
+            if u_bit == 0:
+                if size_code == 0:  # AND
+                    ops.append(PcodeOp(PcodeOpcode.INT_AND, [v_rn, v_rm], v_rd, pc=pc))
+                    return ops
+                elif size_code == 1:  # BIC (rn AND NOT rm)
+                    u_not = self._unique_varnode(0, vec_size)
+                    ops.append(PcodeOp(PcodeOpcode.INT_NEGATE, [v_rm], u_not, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_AND, [v_rn, u_not], v_rd, pc=pc))
+                    return ops
+                elif size_code == 2:  # ORR
+                    ops.append(PcodeOp(PcodeOpcode.INT_OR, [v_rn, v_rm], v_rd, pc=pc))
+                    return ops
+                elif size_code == 3:  # ORN (rn OR NOT rm)
+                    u_not = self._unique_varnode(0, vec_size)
+                    ops.append(PcodeOp(PcodeOpcode.INT_NEGATE, [v_rm], u_not, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_OR, [v_rn, u_not], v_rd, pc=pc))
+                    return ops
+            else:
+                if size_code == 0:  # EOR
+                    ops.append(PcodeOp(PcodeOpcode.INT_XOR, [v_rn, v_rm], v_rd, pc=pc))
+                    return ops
+                elif size_code == 1:  # BSL: rd = (rd & rn) | (~rd & rm)
+                    u_t = self._unique_varnode(0, vec_size)
+                    u_f = self._unique_varnode(1, vec_size)
+                    u_not_rd = self._unique_varnode(2, vec_size)
+                    ops.append(PcodeOp(PcodeOpcode.INT_AND, [v_rd, v_rn], u_t, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_NEGATE, [v_rd], u_not_rd, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_AND, [u_not_rd, v_rm], u_f, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_OR, [u_t, u_f], v_rd, pc=pc))
+                    return ops
+                elif size_code == 2:  # BIT: rd = (rm & rn) | (~rm & rd)
+                    u_t = self._unique_varnode(0, vec_size)
+                    u_f = self._unique_varnode(1, vec_size)
+                    u_not_rm = self._unique_varnode(2, vec_size)
+                    ops.append(PcodeOp(PcodeOpcode.INT_AND, [v_rm, v_rn], u_t, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_NEGATE, [v_rm], u_not_rm, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_AND, [u_not_rm, v_rd], u_f, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_OR, [u_t, u_f], v_rd, pc=pc))
+                    return ops
+                elif size_code == 3:  # BIF: rd = (~rm & rn) | (rm & rd)
+                    u_t = self._unique_varnode(0, vec_size)
+                    u_f = self._unique_varnode(1, vec_size)
+                    u_not_rm = self._unique_varnode(2, vec_size)
+                    ops.append(PcodeOp(PcodeOpcode.INT_NEGATE, [v_rm], u_not_rm, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_AND, [u_not_rm, v_rn], u_t, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_AND, [v_rm, v_rd], u_f, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_OR, [u_t, u_f], v_rd, pc=pc))
+                    return ops
+
+        # 33. SIMD Vector Integer Arithmetic & Pairwise (ADD, SUB, ADDP, MUL): (insn & 0xBF200400) == 0x0E200400
+        if (insn & 0x9F200400) == 0x0E200400:
+            q_bit = (insn >> 30) & 1
+            u_bit = (insn >> 29) & 1
+            size_code = (insn >> 22) & 3
+            elem_size = 1 << size_code  # 1, 2, 4, or 8 bytes
+            vec_size = 16 if q_bit else 8
+            rm = (insn >> 16) & 0x1F
+            sub_opc = (insn >> 11) & 0x1F
+            rn = (insn >> 5) & 0x1F
+            rd = insn & 0x1F
+
+            if sub_opc == 0x10 and u_bit == 0:  # ADD (vector)
+                num_lanes = vec_size // elem_size
+                for lane in range(num_lanes):
+                    lane_offset = lane * elem_size
+                    u_a = self._unique_varnode(lane * 3, elem_size)
+                    u_b = self._unique_varnode(lane * 3 + 1, elem_size)
+                    u_res = self._unique_varnode(lane * 3 + 2, elem_size)
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rn, vec_size), self._const_varnode(lane_offset, 4)], u_a, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rm, vec_size), self._const_varnode(lane_offset, 4)], u_b, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_ADD, [u_a, u_b], u_res, pc=pc))
+                ops.append(PcodeOp(PcodeOpcode.INT_ADD, [self._fp_varnode(rn, vec_size), self._fp_varnode(rm, vec_size)], self._fp_varnode(rd, vec_size), pc=pc))
+                return ops
+            elif sub_opc == 0x10 and u_bit == 1:  # SUB (vector)
+                num_lanes = vec_size // elem_size
+                for lane in range(num_lanes):
+                    lane_offset = lane * elem_size
+                    u_a = self._unique_varnode(lane * 3, elem_size)
+                    u_b = self._unique_varnode(lane * 3 + 1, elem_size)
+                    u_res = self._unique_varnode(lane * 3 + 2, elem_size)
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rn, vec_size), self._const_varnode(lane_offset, 4)], u_a, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rm, vec_size), self._const_varnode(lane_offset, 4)], u_b, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_SUB, [u_a, u_b], u_res, pc=pc))
+                ops.append(PcodeOp(PcodeOpcode.INT_SUB, [self._fp_varnode(rn, vec_size), self._fp_varnode(rm, vec_size)], self._fp_varnode(rd, vec_size), pc=pc))
+                return ops
+            elif sub_opc == 0x17 and u_bit == 0:  # ADDP (pairwise add vector)
+                num_lanes = vec_size // elem_size
+                half_lanes = num_lanes // 2
+                for i in range(half_lanes):
+                    u_a0 = self._unique_varnode(1 + i * 3, elem_size)
+                    u_a1 = self._unique_varnode(1 + i * 3 + 1, elem_size)
+                    u_s = self._unique_varnode(1 + i * 3 + 2, elem_size)
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rn, vec_size), self._const_varnode(2 * i * elem_size, 4)], u_a0, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rn, vec_size), self._const_varnode((2 * i + 1) * elem_size, 4)], u_a1, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_ADD, [u_a0, u_a1], u_s, pc=pc))
+                for i in range(half_lanes):
+                    u_b0 = self._unique_varnode(100 + i * 3, elem_size)
+                    u_b1 = self._unique_varnode(100 + i * 3 + 1, elem_size)
+                    u_s = self._unique_varnode(100 + i * 3 + 2, elem_size)
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rm, vec_size), self._const_varnode(2 * i * elem_size, 4)], u_b0, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rm, vec_size), self._const_varnode((2 * i + 1) * elem_size, 4)], u_b1, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_ADD, [u_b0, u_b1], u_s, pc=pc))
+                ops.append(PcodeOp(PcodeOpcode.INT_ADD, [self._fp_varnode(rn, vec_size), self._fp_varnode(rm, vec_size)], self._fp_varnode(rd, vec_size), pc=pc))
+                return ops
+            elif sub_opc == 0x13 and u_bit == 0:  # MUL (vector)
+                num_lanes = vec_size // elem_size
+                for lane in range(num_lanes):
+                    lane_offset = lane * elem_size
+                    u_a = self._unique_varnode(lane * 3, elem_size)
+                    u_b = self._unique_varnode(lane * 3 + 1, elem_size)
+                    u_res = self._unique_varnode(lane * 3 + 2, elem_size)
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rn, vec_size), self._const_varnode(lane_offset, 4)], u_a, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rm, vec_size), self._const_varnode(lane_offset, 4)], u_b, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.INT_MULT, [u_a, u_b], u_res, pc=pc))
+                ops.append(PcodeOp(PcodeOpcode.INT_MULT, [self._fp_varnode(rn, vec_size), self._fp_varnode(rm, vec_size)], self._fp_varnode(rd, vec_size), pc=pc))
+                return ops
+
+        # 34. SIMD Vector Floating-Point 3-Same & Pairwise (FADD, FSUB, FMUL, FDIV, FADDP): (insn & 0x9F200400) == 0x0E200400
+        if (insn & 0x9F200400) == 0x0E200400:
+            q_bit = (insn >> 30) & 1
+            u_bit = (insn >> 29) & 1
+            sz_raw = (insn >> 22) & 3
+            # sz bit 22: 0=Single (4 bytes), 1=Double (8 bytes)
+            # sz bit 23: for sub_opc=0x1A, bit 23 determines FADD (0) vs FSUB (1)
+            fp_elem_size = 8 if (sz_raw & 1) else 4
+            vec_size = 16 if q_bit else 8
+            rm = (insn >> 16) & 0x1F
+            sub_opc = (insn >> 11) & 0x1F
+            rn = (insn >> 5) & 0x1F
+            rd = insn & 0x1F
+
+            op_type = None
+            if sub_opc == 0x1A:
+                if (sz_raw & 2) == 0:
+                    # FADD (u_bit=0) or FADDP (u_bit=1)
+                    op_type = PcodeOpcode.FLOAT_ADD
+                else:
+                    # FSUB (u_bit=0)
+                    if u_bit == 0:
+                        op_type = PcodeOpcode.FLOAT_SUB
+            elif sub_opc == 0x1B and u_bit == 1:
+                # FMUL
+                op_type = PcodeOpcode.FLOAT_MULT
+            elif sub_opc == 0x1F and u_bit == 1:
+                # FDIV
+                op_type = PcodeOpcode.FLOAT_DIV
+
+            if op_type is not None:
+                num_lanes = vec_size // fp_elem_size
+                for lane in range(num_lanes):
+                    lane_offset = lane * fp_elem_size
+                    u_a = self._unique_varnode(lane * 3, fp_elem_size)
+                    u_b = self._unique_varnode(lane * 3 + 1, fp_elem_size)
+                    u_res = self._unique_varnode(lane * 3 + 2, fp_elem_size)
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rn, vec_size), self._const_varnode(lane_offset, 4)], u_a, pc=pc))
+                    ops.append(PcodeOp(PcodeOpcode.SUBPIECE, [self._fp_varnode(rm, vec_size), self._const_varnode(lane_offset, 4)], u_b, pc=pc))
+                    ops.append(PcodeOp(op_type, [u_a, u_b], u_res, pc=pc))
+                ops.append(PcodeOp(op_type, [self._fp_varnode(rn, vec_size), self._fp_varnode(rm, vec_size)], self._fp_varnode(rd, vec_size), pc=pc))
+                return ops
 
         # Generic / Fallback Unimplemented Op
         ops.append(PcodeOp(
