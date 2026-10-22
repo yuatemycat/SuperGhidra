@@ -11,6 +11,7 @@ These five are enforced by tests. [`AGENTS.md`](AGENTS.md) lists them too, and [
 3. **Automated and neural symbol commits go through the ledger.** Nothing may bypass `ReconstructionObligationLedger` (`VTableSlotVerifier`, `FieldDisplacementVerifier`, `AllocationSizeVerifier`).
 4. **The emulator sidecar protects real devices.** Don't touch `emulator-5564` or `127.0.0.1:21503`. Writes are only allowed on the authorized sandboxes `emulator-5580` and `127.0.0.1:21513`.
 5. **The Z3 checker doesn't guess.** An unhandled instruction, a floating-point operation, or a loop past the unroll bound must return `UNKNOWN` (`is_equivalent=False`), never a false `UNSAT`.
+6. **No placeholder results.** When a tool cannot produce a result from its input, it raises or exits non-zero. It never returns output that looks real but was not derived from the input.
 
 ## Setup
 

@@ -53,12 +53,13 @@ SuperGhidra/
 3. **EvidenceLedger Gate:** No neural or automated symbol/struct commit may bypass `ReconstructionObligationLedger` verification (`VTableSlotVerifier`, `FieldDisplacementVerifier`, `AllocationSizeVerifier`).
 4. **Android Emulator Fleet Guard:** `EmulatorFleetGuard` strictly blocks protected farm devices (`emulator-5564` / `127.0.0.1:5565`, `MEmu_0` / `127.0.0.1:21503`) and denies unknown serials by default.
 5. **SMT Soundness:** Unhandled instructions, floating-point operations, and loops exceeding the unroll bound must return `UNKNOWN` (`equivalent=False`), never false `UNSAT`.
+6. **No placeholder results.** When a tool cannot produce a result from its input, it raises or exits non-zero. It never returns output that looks real but was not derived from the input. Enforced by the stub canary and the lifter provenance check.
 ---
 
 ## 5. Writing Style: Sound Like a Maintainer, Not a Brochure
 Applies to everything a person will read: `README.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md`, domain READMEs, `docs/`, docstrings, code comments, commit messages and PR text. The root `README.md` is the reference for tone. The routing tables in this file are lookup material and may stay terse.
 1. **Plain and specific.** Write the way a maintainer would explain the code to a colleague: short sentences, concrete nouns, say what the code does and what it does not do.
-2. **Numbers carry their context.** Give the figure, what it was measured on, and the caveat (`synthetic pages, not real projects`; `one Windows dev machine`). Never state a result that was not measured.
+2. **Numbers carry their context.** Give the figure, what it was measured on, and the caveat (`synthetic pages, not real projects`; `one Windows dev machine`). Never state a result that was not measured, and ensure published numbers come from a committed summary file through a render script.
 3. **No hype or codenames in prose.** Avoid `seamless`, `robust`, `cutting-edge`, `state-of-the-art`, `blazing`, `game-changing`, `Next-Gen`, `Kill-Shot`, `zero-overhead`. Say what the thing does. Internal codenames may appear in identifiers, never as the way a feature is introduced.
 4. **No filler.** No emoji headings, no bold on every noun, no "Thank you for your interest", no closing paragraph that restates the section, no reflexive three-item lists or "not just X, but Y".
 5. **Commit messages:** conventional prefix (`feat(core):`), imperative mood, the *why* in the body when it is not obvious. Skip "This commit...".
