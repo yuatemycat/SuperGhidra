@@ -1,0 +1,37 @@
+0000000140001760 <flattened_score>:
+   140001760:	55                   	push   %rbp
+   140001761:	48 89 e5             	mov    %rsp,%rbp
+   140001764:	48 83 ec 10          	sub    $0x10,%rsp
+   140001768:	89 4d 10             	mov    %ecx,0x10(%rbp)
+   14000176b:	89 55 18             	mov    %edx,0x18(%rbp)
+   14000176e:	c7 45 fc 00 00 00 00 	movl   $0x0,-0x4(%rbp)
+   140001775:	c7 45 f8 00 00 00 00 	movl   $0x0,-0x8(%rbp)
+   14000177c:	8b 45 fc             	mov    -0x4(%rbp),%eax
+   14000177f:	83 f8 02             	cmp    $0x2,%eax
+   140001782:	74 33                	je     1400017b7 <flattened_score+0x57>
+   140001784:	83 f8 02             	cmp    $0x2,%eax
+   140001787:	7f 33                	jg     1400017bc <flattened_score+0x5c>
+   140001789:	85 c0                	test   %eax,%eax
+   14000178b:	74 07                	je     140001794 <flattened_score+0x34>
+   14000178d:	83 f8 01             	cmp    $0x1,%eax
+   140001790:	74 11                	je     1400017a3 <flattened_score+0x43>
+   140001792:	eb 28                	jmp    1400017bc <flattened_score+0x5c>
+   140001794:	8b 45 10             	mov    0x10(%rbp),%eax
+   140001797:	89 45 f8             	mov    %eax,-0x8(%rbp)
+   14000179a:	c7 45 fc 01 00 00 00 	movl   $0x1,-0x4(%rbp)
+   1400017a1:	eb 20                	jmp    1400017c3 <flattened_score+0x63>
+   1400017a3:	8b 55 f8             	mov    -0x8(%rbp),%edx
+   1400017a6:	8b 45 18             	mov    0x18(%rbp),%eax
+   1400017a9:	01 d0                	add    %edx,%eax
+   1400017ab:	89 45 f8             	mov    %eax,-0x8(%rbp)
+   1400017ae:	c7 45 fc 02 00 00 00 	movl   $0x2,-0x4(%rbp)
+   1400017b5:	eb 0c                	jmp    1400017c3 <flattened_score+0x63>
+   1400017b7:	8b 45 f8             	mov    -0x8(%rbp),%eax
+   1400017ba:	eb 09                	jmp    1400017c5 <flattened_score+0x65>
+   1400017bc:	b8 ff ff ff ff       	mov    $0xffffffff,%eax
+   1400017c1:	eb 02                	jmp    1400017c5 <flattened_score+0x65>
+   1400017c3:	eb b7                	jmp    14000177c <flattened_score+0x1c>
+   1400017c5:	48 83 c4 10          	add    $0x10,%rsp
+   1400017c9:	5d                   	pop    %rbp
+   1400017ca:	c3                   	ret
+
