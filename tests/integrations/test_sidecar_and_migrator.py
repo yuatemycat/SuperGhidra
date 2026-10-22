@@ -128,6 +128,23 @@ class TestEmulatorFleetSafety(unittest.TestCase):
         with self.assertRaises(ValueError):
             EmulatorFleetGuard.validate_process("emulator-5580", "")
 
+    def test_verify_process_ownership_os_level(self):
+        """Verifies OS-level process ownership checks and unauthorized fleet guard enforcement."""
+        # Non-existent or non-emulator process validation
+        current_pid = os.getpid()
+        # Validation with authorized emulator serial succeeds for self test
+        self.assertTrue(
+            EmulatorFleetGuard.verify_process_ownership(pid=current_pid, serial="emulator-5580")
+        )
+
+        # Protected serial rejection
+        with self.assertRaises(FleetSafetyViolationError):
+            EmulatorFleetGuard.verify_process_ownership(pid=current_pid, serial="MEmu_0")
+
+        # Unknown device serial rejection
+        with self.assertRaises(FleetSafetyViolationError):
+            EmulatorFleetGuard.verify_process_ownership(pid=current_pid, serial="unknown-device-999")
+
 
 class TestDynamicMemoryReaders(unittest.TestCase):
     """Tests memory reading primitives and backend behaviors."""
