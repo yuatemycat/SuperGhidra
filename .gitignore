@@ -30,3 +30,7 @@ ghidra_oracle_daemon.log
 ghidra_oracle_cache.db
 ghidra_overlay.json
 benchmarks/humaneval_decompile/gcc_compare_out/
+
+# Telemetry & Live Monitor Artifacts
+scripts/telemetry_monitor.py
+scripts/telemetry_state.json

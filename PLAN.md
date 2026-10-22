@@ -163,11 +163,11 @@
 
 ---
 
-## 9. Multi-Agent MCP Integration (SuperghidraMCP)
+## 9. Multi-Agent MCP Integration ([SuperghidraMCP](https://github.com/yuatemycat/SuperghidraMCP))
 *Goal: Native exposure of SuperGhidra across all LLM agent platforms.*
 
 - [x] ~~**SuperghidraMCP Server Core**~~
-  - *Location:* `pyghidra-mcp` fork (separate repository)
+  - *Location:* [`yuatemycat/SuperghidraMCP`](https://github.com/yuatemycat/SuperghidraMCP) (separate repository)
   - *Accomplished:* L2 cache, Resource Governor, 38 registered tools; 235 unit tests passing.
 - [x] ~~**6 New Native SuperGhidra MCP Tools**~~
   - `rva_translate`: Instant zero-JVM address translation (<0.003 ms).

@@ -6,7 +6,7 @@ SuperGhidra is one Python package, `superghidra`, split into seven domains. This
 
 ```mermaid
 flowchart TD
-    MCP["External consumers and pyghidra-mcp (38+4 MCP tools)"] --> Shims["Root compatibility shims (*.py)"]
+    MCP["External consumers and SuperghidraMCP / pyghidra-mcp (38+4 MCP tools)"] --> Shims["Root compatibility shims (*.py)"]
     MCP --> Canonical["Canonical package (superghidra.*)"]
     Shims --> Canonical
 
