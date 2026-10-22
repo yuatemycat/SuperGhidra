@@ -569,7 +569,7 @@ Ordered by expected impact on the measured gap.
 ### Tier 2: Verified Neural Refinement
 | ID | Upgrade | Done When | Status |
 | :--- | :--- | :--- | :---: |
-| U4 | ~~Wire `d_lift_verifier` into `neural_decompile_skin`. Gate 1 = existing compile gate. Replace Gate 2's constant-set check with **differential execution** (original object vs. candidate on generated inputs and unit tests). Gate 3 = readability.~~ | Skin path rejects `0x16`→`16` and accepts an equivalent candidate by differential execution. HumanEval refined-pass count is 249 with 0 regressions (Section 8). Wired through `skin_refine`. | ✅ **Shipped** |
+| U4 | ~~Wire `d_lift_verifier` into `neural_decompile_skin`. Gate 1 = existing compile gate. Replace Gate 2's constant-set check with **differential execution** (original object vs. candidate on generated inputs and unit tests). Gate 3 = readability.~~ | Skin path rejects `0x16`→`16` and accepts an equivalent candidate by differential execution. HumanEval refined-pass count is 249 (unverified historical baseline; see Section 8 and docs/benchmarks/humaneval/gcc_score_summary.json). Wired through `skin_refine`. | ✅ **Shipped** |
 | U5 | ~~Consolidate the duplicate gates (`DLiFTVerificationGate` in `diff/`, `DLiftRewardEngine` in `integrations/`) into one implementation.~~ | Single canonical gate in `superghidra/integrations/d_lift_verifier.py`; `DLiFTVerificationGate` delegates to it with full backward compatibility. | ✅ **Shipped** |
 
 ### Tier 3: Promote Phase 1 Prototypes to Real Engine Primitives

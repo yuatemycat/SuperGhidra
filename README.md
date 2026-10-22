@@ -61,7 +61,14 @@ Addresses the dataset contamination problem in neural decompiler benchmarks (suc
 ### Reference Puzzle Baseline: HumanEval-Decompile (1,296 Evaluated Functions)
 
 <!-- humaneval:begin -->
-*HumanEval numbers are currently being regenerated with symmetric IDA filtering, pinned dataset revision, and verified counts; see issue #5.*
+| Metric | IDA raw | IDA + filter | Ghidra raw | Ghidra + filter |
+| :--- | :---: | :---: | :---: | :---: |
+| **Pass Rate** | 243/1300 (18.69%) | 247/1300 (19.0%) | 107/1300 (8.23%) | 294/1300 (22.62%) |
+| **Filter Gains** | — | +4 | — | +187 |
+| **Filter Regressions** | — | -0 | — | -0 |
+
+- **Dataset:** `LLM4Binary/decompile-eval@b9271fae3c556e46948559f4176ffa6f8b4f9491` (1300 evaluable functions from binaries compiled at `O0`–`O3`).
+- **Compiler:** Evaluated by recompiling recovered C/C++ with `gcc.EXE (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0` under `gcc -O0 -lm`.
 <!-- humaneval:end -->
 
 ### Dual-OS Test Matrix (GitHub Actions CI)

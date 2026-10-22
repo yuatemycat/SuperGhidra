@@ -101,21 +101,20 @@ To eliminate dataset contamination and measure genuine binary reverse engineerin
 
 ---
 
-### C. Reference Puzzle Benchmark: HumanEval-Decompile (1,296 Evaluated Functions)
+### C. Reference Puzzle Benchmark: HumanEval-Decompile
 
-For continuity with prior literature, the historical HumanEval-Decompile corpus (1,296 C/C++ functions across optimization levels `O0` through `O3`, evaluated with `GCC 16.2.0 -O0 -lm`) remains recorded below as a baseline for compiler syntax filters:
+For continuity with prior literature, the HumanEval-Decompile corpus (binaries built at optimization levels `O0` through `O3`, with recovered C/C++ recompiled with `gcc -O0 -lm`) is recorded below under symmetric filter scoring:
 
-| Engine / Pipeline | Functions Passing Compilation & Tests | Pass Rate (%) | Delta vs Raw Ghidra | Delta vs Commercial IDA Pro |
+<!-- humaneval:begin -->
+| Metric | IDA raw | IDA + filter | Ghidra raw | Ghidra + filter |
 | :--- | :---: | :---: | :---: | :---: |
-| **Stock NSA Ghidra** | 107 / 1,296 | 8.26% | Baseline | -8.64% |
-| **Commercial IDA Pro** | 219 / 1,296 | 16.90% | +8.64% | Baseline |
-| **SuperGhidra Compilable Filter** | **294 / 1,296** | **22.69%** | **+14.43%** | **+5.79%** |
+| **Pass Rate** | 243/1300 (18.69%) | 247/1300 (19.0%) | 107/1300 (8.23%) | 294/1300 (22.62%) |
+| **Filter Gains** | — | +4 | — | +187 |
+| **Filter Regressions** | — | -0 | — | -0 |
 
-#### Head-to-Head Overlap Analysis:
-- **170 functions** pass in both Commercial IDA Pro and SuperGhidra.
-- **124 functions** pass in SuperGhidra where Commercial IDA Pro failed to compile or run cleanly.
-- **49 functions** pass in Commercial IDA Pro where SuperGhidra failed.
-- Refined regression count: **0 regressions** (no sample passing in raw Ghidra was broken by SuperGhidra filters).
+- **Dataset:** `LLM4Binary/decompile-eval@b9271fae3c556e46948559f4176ffa6f8b4f9491` (1300 evaluable functions from binaries compiled at `O0`–`O3`).
+- **Compiler:** Evaluated by recompiling recovered C/C++ with `gcc.EXE (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0` under `gcc -O0 -lm`.
+<!-- humaneval:end -->
 
 ---
 

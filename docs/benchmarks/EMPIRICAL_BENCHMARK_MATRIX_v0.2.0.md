@@ -59,13 +59,15 @@ Addresses the dataset contamination vulnerability of textbook puzzle suites (suc
 
 Measured under official-style conditions using `GCC 16.2.0` (`-O0 -lm`) without artificial typedef injection or custom allocator shims:
 
-| Metric | Raw Ghidra Output | Commercial IDA Pro (Published) | SuperGhidra Filtered Pipeline | Absolute Advantage / Delta |
+*Note: Historical v0.2.0 comparison table below was evaluated under unpinned dataset rows and raw IDA comparison. For the verified symmetric benchmark grid on pinned commit `b9271fae`, see `docs/benchmarks/humaneval/gcc_score_summary.json` and `docs/benchmarks/EMPIRICAL_TEST_BENCHMARK_MATRIX.md`.*
+
+| Metric | Raw Ghidra Output | Commercial IDA Pro (Published) | SuperGhidra Filtered Pipeline | Delta vs Raw Ghidra |
 | :--- | :---: | :---: | :---: | :---: |
-| **Compilation Pass Rate** | **8.26%** (107 / 1,296) | **16.90%** (219 / 1,296) | **22.69%** (294 / 1,296) | **+5.79% over IDA** (+14.43% over raw Ghidra) |
-| **Strict Behavioral Pass** | 8.4% | — | **8.4%** | Unbroken semantics on all evaluable rows |
+| **Compilation Pass Rate** | **8.26%** (107 / 1,296) | **16.90%** (219 / 1,296) | **22.69%** (294 / 1,296) | +14.43% over raw Ghidra |
+| **Strict Behavioral Pass** | 8.4% | — | **8.4%** | Measured behavior on evaluable rows |
 | **Lenient Functional Pass** | — | — | **18.8%** | Preserves core computational invariants |
-| **Overall Compilable Rate**| 8.26% | 16.90% | **25.40%** (254 refined passes) | **0 regressions** across 1,000 evaluable rows |
-| **Pass Overlap (Both Pass)**| — | 170 functions | 170 functions | Concurrently verified |
+| **Overall Compilable Rate**| 8.26% | 16.90% | **25.40%** (254 refined passes) | Measured against baseline |
+| **Pass Overlap (Both Pass)**| — | 170 functions | 170 functions | Concurrently passing |
 | **Unique Passes (Filter-Only)**| — | — | **124 functions** | Pass in SuperGhidra where IDA failed |
 | **Unique Passes (IDA-Only)**| — | **49 functions** | — | Where IDA succeeded and filter did not |
 

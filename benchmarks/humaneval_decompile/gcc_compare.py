@@ -21,7 +21,9 @@ from typing import Any, Dict, List, Optional
 
 from benchmarks.humaneval_decompile.harness import (
     CACHE_DIR,
+    DATASET_ID,
     KEEP_COLUMNS,
+    PINNED_REVISION,
     _align_function_name,
     _dependency_text,
     _download_split,
@@ -94,22 +96,33 @@ def candidate_bodies(row: Dict[str, Any]) -> Dict[str, str]:
     )
     return {
         "ida": ida,
+        "ida_filtered": CompilableDecompilerFilter.filter(ida) if ida.strip() else "",
         "ghidra": ghidra,
         "filtered": CompilableDecompilerFilter.filter(ghidra) if ghidra.strip() else "",
     }
 
 
-def load_rows_with_ida(cache_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
+def load_rows_with_ida(cache_dir: Optional[Path] = None, allow_unpinned: bool = False) -> List[Dict[str, Any]]:
     """Same 1,312 HumanEval rows as the cl.exe scorer, plus ``ida_pseudo``."""
     cache = cache_dir or CACHE_DIR
     cache.mkdir(parents=True, exist_ok=True)
     jsonl = cache / IDA_JSONL_NAME
+    rev_path = cache / "REVISION.txt"
+    if rev_path.is_file():
+        cached_rev = rev_path.read_text(encoding="utf-8").splitlines()[0].strip()
+        if cached_rev != PINNED_REVISION and not allow_unpinned:
+            if jsonl.is_file():
+                jsonl.unlink()
+    else:
+        if jsonl.is_file():
+            jsonl.unlink()
+
     if jsonl.is_file() and jsonl.stat().st_size > 0:
         rows = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines() if line.strip()]
         if len(rows) == 1312 and rows and "ida_pseudo" in rows[0]:
             return rows
 
-    split, _revision, _note = _download_split()
+    split, _revision, _note = _download_split(allow_unpinned=allow_unpinned)
     columns = list(KEEP_COLUMNS) + ["ida_pseudo"]
     rows = []
     for record in _humaneval_records(split):
@@ -150,6 +163,7 @@ def score_gcc_sample(row: Dict[str, Any]) -> Dict[str, Any]:
         "opt": opt,
         "evaluable": False,
         "ida_pass": False,
+        "ida_filtered_pass": False,
         "ghidra_pass": False,
         "filtered_pass": False,
     }
@@ -164,6 +178,10 @@ def score_gcc_sample(row: Dict[str, Any]) -> Dict[str, Any]:
     bodies = candidate_bodies(row)
     record["ida_pass"] = bool(bodies["ida"].strip()) and _passes(
         official_program(language, [dep, bodies["ida"], test]),
+        language,
+    )
+    record["ida_filtered_pass"] = bool(bodies.get("ida_filtered", "").strip()) and _passes(
+        official_program(language, [dep, bodies["ida_filtered"], test]),
         language,
     )
     record["ghidra_pass"] = bool(bodies["ghidra"].strip()) and _passes(
@@ -199,15 +217,32 @@ def averages_from_gcc_log(path: Path) -> Dict[str, Any]:
     ida_only = sum(1 for row in evaluable if row.get("ida_pass") and not row.get("filtered_pass"))
     filtered_only = sum(1 for row in evaluable if row.get("filtered_pass") and not row.get("ida_pass"))
     neither = sum(1 for row in evaluable if not row.get("ida_pass") and not row.get("filtered_pass"))
+
+    filter_gained_ghidra = sum(1 for row in evaluable if row.get("filtered_pass") and not row.get("ghidra_pass"))
+    filter_broken_ghidra = sum(1 for row in evaluable if row.get("ghidra_pass") and not row.get("filtered_pass"))
+    filter_gained_ida = sum(1 for row in evaluable if row.get("ida_filtered_pass") and not row.get("ida_pass"))
+    filter_broken_ida = sum(1 for row in evaluable if row.get("ida_pass") and not row.get("ida_filtered_pass"))
+
     return {
         "ida_avg": percent("ida_pass"),
+        "ida_filtered_avg": percent("ida_filtered_pass"),
         "ghidra_avg": percent("ghidra_pass"),
         "filtered_avg": percent("filtered_pass"),
+        "ghidra_filtered_avg": percent("filtered_pass"),
         "ida_pass_count": count("ida_pass"),
+        "ida_filtered_pass_count": count("ida_filtered_pass"),
         "ghidra_pass_count": count("ghidra_pass"),
         "filtered_pass_count": count("filtered_pass"),
+        "ghidra_filtered_pass_count": count("filtered_pass"),
         "evaluable_denominator": denominator,
         "logged_samples": len(rows),
+        "filter_gained_ghidra": filter_gained_ghidra,
+        "filter_broken_ghidra": filter_broken_ghidra,
+        "filter_gained_ida": filter_gained_ida,
+        "filter_broken_ida": filter_broken_ida,
+        "both_ida_raw_and_ghidra_filtered": both,
+        "both_ida_and_ghidra_filtered": sum(1 for row in evaluable if row.get("ida_filtered_pass") and row.get("filtered_pass")),
+        "both_ida_and_ghidra_raw": sum(1 for row in evaluable if row.get("ida_pass") and row.get("ghidra_pass")),
         "both_pass": both,
         "ida_only": ida_only,
         "filtered_only": filtered_only,
@@ -271,8 +306,25 @@ def run_gcc_compare(output_dir: Path, workers: int = 6) -> Dict[str, Any]:
     with log_path.open("w", encoding="utf-8") as handle:
         for rec in records:
             handle.write(json.dumps(rec, sort_keys=True) + "\n")
+    import platform
+    import subprocess
     summary = averages_from_gcc_log(log_path)
+    summary["dataset_id"] = DATASET_ID
+    summary["dataset_revision"] = PINNED_REVISION
+    summary["pinned"] = True
+    summary["row_count"] = len(rows)
     summary["compiler"] = compiler
+    try:
+        ver = subprocess.run([compiler, "--version"], capture_output=True, text=True, check=True).stdout.splitlines()[0]
+    except Exception:
+        ver = "unknown"
+    summary["compiler_version"] = ver
+    summary["os"] = f"{platform.system()} {platform.machine()}"
+    try:
+        git_sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    except Exception:
+        git_sha = "unknown"
+    summary["git_commit"] = git_sha
     summary["score_log"] = str(log_path)
     (output_dir / "gcc_score_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",

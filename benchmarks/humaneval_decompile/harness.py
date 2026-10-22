@@ -17,7 +17,7 @@ BASELINE_PATH = Path(__file__).parent / "results_baseline.json"
 CACHE_DIR = Path(__file__).parent / "cache"
 JSONL_NAME = "humaneval.jsonl"
 DATASET_ID = "LLM4Binary/decompile-eval"
-PINNED_REVISION = "c07e883dfa3bf604b3da59f33857cb484c6e1aa2"
+PINNED_REVISION = "b9271fae3c556e46948559f4176ffa6f8b4f9491"
 KEEP_COLUMNS = (
     "index",
     "func_name",
@@ -177,7 +177,7 @@ def _humaneval_records(split: Any) -> List[Dict[str, Any]]:
     return selected
 
 
-def _download_split():
+def _download_split(allow_unpinned: bool = False):
     """Return (split, revision, note). The baseline sha is tried first."""
     try:
         from datasets import load_dataset
@@ -190,9 +190,11 @@ def _download_split():
         loaded = load_dataset(DATASET_ID, revision=revision)
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
-        missing_rev = "Revision" in type(exc).__name__ or "revision" in message.lower() or "404" in message
-        if not missing_rev:
-            _fail_download(f"Failed to download {DATASET_ID} revision {PINNED_REVISION}: {message}")
+        if not allow_unpinned:
+            _fail_download(
+                f"Failed to download {DATASET_ID} revision {PINNED_REVISION}: {message}. "
+                "Pass --allow-unpinned to fall back to the live revision."
+            )
         try:
             from huggingface_hub import HfApi
 
@@ -203,7 +205,7 @@ def _download_split():
                 f"revision could not be resolved: {info_exc}"
             )
         note = (
-            f"Pinned revision {PINNED_REVISION} is not a commit of {DATASET_ID}. "
+            f"Pinned revision {PINNED_REVISION} could not be loaded from {DATASET_ID}. "
             f"Scored dataset commit {revision}."
         )
         try:
@@ -220,11 +222,21 @@ def _download_split():
     return split, revision, note
 
 
-def load_humaneval_rows(cache_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
+def load_humaneval_rows(cache_dir: Optional[Path] = None, allow_unpinned: bool = False) -> List[Dict[str, Any]]:
     """Load the humaneval split, downloading it into the cache once."""
     cache = cache_dir or CACHE_DIR
     cache.mkdir(parents=True, exist_ok=True)
     jsonl = cache / JSONL_NAME
+    rev_path = cache / "REVISION.txt"
+    if rev_path.is_file():
+        cached_rev = rev_path.read_text(encoding="utf-8").splitlines()[0].strip()
+        if cached_rev != PINNED_REVISION and not allow_unpinned:
+            if jsonl.is_file():
+                jsonl.unlink()
+    else:
+        if jsonl.is_file():
+            jsonl.unlink()
+
     if jsonl.is_file() and jsonl.stat().st_size > 0:
         rows = []
         for line in jsonl.read_text(encoding="utf-8").splitlines():
@@ -233,7 +245,7 @@ def load_humaneval_rows(cache_dir: Optional[Path] = None) -> List[Dict[str, Any]
         if rows:
             return rows
 
-    split, revision, note = _download_split()
+    split, revision, note = _download_split(allow_unpinned=allow_unpinned)
 
     missing = [name for name in KEEP_COLUMNS if name not in split.column_names]
     if missing:

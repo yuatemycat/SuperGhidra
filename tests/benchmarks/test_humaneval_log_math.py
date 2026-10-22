@@ -10,8 +10,16 @@ import pytest
 from benchmarks.humaneval_decompile.harness import averages_from_log, score_sample
 from superghidra.core.native_compiler import c_compiler
 
+def _working_c_compiler() -> bool:
+    if c_compiler() is None:
+        return False
+    from superghidra.core.native_compiler import compile_and_run
+    ok, _, _ = compile_and_run("int main(void) { return 0; }")
+    return bool(ok)
+
 needs_cc = pytest.mark.skipif(
-    c_compiler() is None, reason="no C compiler (gcc/clang, or MSVC via SUPERGHIDRA_MSVC_ROOT)"
+    not _working_c_compiler(),
+    reason="no working C toolchain found (missing compiler or system headers)",
 )
 
 
