@@ -312,6 +312,26 @@ def _is_cmp_imm8(insn: X86Insn) -> bool:
     )
 
 
+def _is_cmp_reg_imm(insn: X86Insn, reg: int) -> bool:
+    return (
+        insn.map == 0
+        and insn.opcode in (0x83, 0x81, 0x3D)
+        and insn.mem is None
+        and (insn.rm == reg or insn.reg == reg)
+        and insn.imm is not None
+    )
+
+
+def _is_test_reg_self(insn: X86Insn, reg: int) -> bool:
+    return (
+        insn.map == 0
+        and insn.opcode in (0x85, 0x84)
+        and insn.mem is None
+        and insn.reg == reg
+        and insn.rm == reg
+    )
+
+
 def _is_mov_imm(insn: X86Insn) -> bool:
     return insn.map == 0 and insn.opcode == 0xC7 and insn.imm is not None and insn.mem is not None
 
@@ -319,9 +339,9 @@ def _is_mov_imm(insn: X86Insn) -> bool:
 def deflatten_control_flow(binary_path: str) -> Dict[str, Any]:
     """Lift a compiled switch dispatcher from `binary_path` and rewire it.
 
-    Looks for a run of three or more ``cmp mem, imm; jcc`` instructions, which
-    is what MSVC ``/Od`` emits for a state-machine switch. Hand-built block
-    JSON is not accepted on this path.
+    Looks for a run of three or more ``cmp mem, imm; jcc`` or register compare
+    instructions (MSVC ``/Od`` and GCC ``-O0`` state-machine switches).
+    Hand-built block JSON is not accepted on this path.
     """
     img = load_binary(binary_path)
     if img.arch not in ("x86_64", "x86"):
@@ -340,8 +360,8 @@ def deflatten_control_flow(binary_path: str) -> Dict[str, Any]:
         insns.append(insn)
         if idx > 60_000:
             break
-    chain = _find_cmp_chain(insns)
-    if chain is None:
+    chains = _find_cmp_chains(insns)
+    if not chains:
         return {
             "deflattened": False,
             "dispatcher_block_id": -1,
@@ -350,15 +370,30 @@ def deflatten_control_flow(binary_path: str) -> Dict[str, Any]:
             "binary_path": str(img.path or binary_path),
             "reason": "no cmp/jcc state dispatcher in executable bytes",
         }
-    report = _deflatten_chain(insns, chain)
-    report["binary_path"] = str(img.path or binary_path)
-    return report
+    first_report: Optional[Dict[str, Any]] = None
+    for chain in chains:
+        report = _deflatten_chain(insns, chain)
+        report["binary_path"] = str(img.path or binary_path)
+        if report.get("deflattened"):
+            return report
+        if first_report is None:
+            first_report = report
+    return first_report or {
+        "deflattened": False,
+        "dispatcher_block_id": -1,
+        "gotos_eliminated": 0,
+        "back_edges_removed": 0,
+        "binary_path": str(img.path or binary_path),
+        "reason": "no deflattenable switch dispatcher found",
+    }
 
 
-def _find_cmp_chain(insns: Sequence[X86Insn]) -> Optional[List[X86Insn]]:
-    """Return the cmp instructions of the first 3-long same-slot chain."""
+def _find_cmp_chains(insns: Sequence[X86Insn]) -> List[List[X86Insn]]:
+    """Return all candidate 3-long state dispatcher chains (MSVC and GCC)."""
+    chains: List[List[X86Insn]] = []
+
+    # 1. MSVC /Od direct memory compare chain: cmp [slot], imm8
     cmps = [insn for insn in insns if _is_cmp_imm8(insn)]
-    best: List[X86Insn] = []
     run: List[X86Insn] = []
     for insn in cmps:
         slot = (insn.mem.base, insn.mem.disp) if insn.mem else None
@@ -366,15 +401,49 @@ def _find_cmp_chain(insns: Sequence[X86Insn]) -> Optional[List[X86Insn]]:
             prev = run[-1]
             prev_slot = (prev.mem.base, prev.mem.disp) if prev.mem else None
             if slot != prev_slot or insn.address - prev.address > 16:
-                if len(run) > len(best):
-                    best = run
+                if len(run) >= 3:
+                    chains.append(run)
                 run = []
         run.append(insn)
-    if len(run) > len(best):
-        best = run
-    if len(best) < 3:
-        return None
-    return best
+    if len(run) >= 3:
+        chains.append(run)
+
+    # 2. GCC -O0 register compare chain: state loaded into reg from a stack slot
+    for idx, insn in enumerate(insns):
+        if insn.map == 0 and insn.opcode == 0x8B and insn.mem is not None:
+            reg = insn.reg
+            slot = (insn.mem.base, insn.mem.disp)
+            chain: List[X86Insn] = []
+            j = idx + 1
+            while j < len(insns):
+                cur = insns[j]
+                if _is_cmp_reg_imm(cur, reg):
+                    chain.append(cur)
+                elif _is_test_reg_self(cur, reg):
+                    chain.append(cur)
+                elif cur.flow == "jcc":
+                    pass
+                elif (
+                    cur.map == 0
+                    and cur.opcode == 0x8B
+                    and cur.mem is not None
+                    and (cur.mem.base, cur.mem.disp) == slot
+                    and cur.reg == reg
+                ):
+                    pass
+                else:
+                    break
+                j += 1
+            if len(chain) >= 3:
+                chains.append(chain)
+
+    return chains
+
+
+def _find_cmp_chain(insns: Sequence[X86Insn]) -> Optional[List[X86Insn]]:
+    """Return the first candidate 3-long state dispatcher chain."""
+    chains = _find_cmp_chains(insns)
+    return chains[0] if chains else None
 
 
 def _direct_jmp_target(insn: X86Insn) -> Optional[int]:
@@ -418,11 +487,20 @@ def _block_until_branch(insns: Sequence[X86Insn], start: int) -> List[X86Insn]:
 def _deflatten_chain(insns: Sequence[X86Insn], cmps: Sequence[X86Insn]) -> Dict[str, Any]:
     by_addr = {insn.address: insn for insn in insns}
     cases: List[Tuple[int, int]] = []
+    seen_states = set()
     for cmp_insn in cmps:
         nxt = by_addr.get(cmp_insn.address + cmp_insn.length)
         if nxt is None or nxt.flow != "jcc" or nxt.target is None:
             continue
-        cases.append((int(cmp_insn.imm) & 0xFFFFFFFF, nxt.target))
+        # Only equality jumps (je/jz) define case blocks
+        is_je = (nxt.map == 0 and nxt.opcode == 0x74) or (nxt.map == 1 and nxt.opcode == 0x84)
+        if not is_je:
+            continue
+        state_val = 0 if cmp_insn.imm is None else (int(cmp_insn.imm) & 0xFFFFFFFF)
+        if state_val in seen_states:
+            continue
+        seen_states.add(state_val)
+        cases.append((state_val, nxt.target))
     if len(cases) < 3:
         return {
             "deflattened": False,

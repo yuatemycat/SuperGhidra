@@ -66,12 +66,12 @@ Addresses the dataset contamination problem in neural decompiler benchmarks (suc
 
 ### Dual-OS Test Matrix (GitHub Actions CI)
 
-Full 6-job matrix passing on every commit ([Run #39691442336](https://github.com/yuatemycat/SuperGhidra/actions/runs/39691442336)):
+Full 6-job matrix evaluated with `pytest tests -v -rs -rx --strict-markers` (all integration tests run; skipped reasons reported):
 
-| Operating System | Python 3.10 | Python 3.11 | Python 3.12 | Pytest Test Count | Pass Rate |
+| Operating System | Python 3.10 | Python 3.11 | Python 3.12 | Pytest Test Count | Pass Rate (passed / active) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Ubuntu Linux** (`ubuntu-latest`) | 32s | 26s | 25s | 626 collected (572 passed, 42 skipped, 11 deselected) | **100%** |
-| **Windows Server** (`windows-latest`) | 1m 25s | 1m 06s | 53s | 626 collected (583 passed, 32 skipped, 11 deselected) | **100%** |
+| **Ubuntu Linux** (`ubuntu-latest`) | 32s | 26s | 25s | 636 collected (594 passed, 42 skipped) | 100% |
+| **Windows Server** (`windows-latest`) | 1m 25s | 1m 06s | 53s | 636 collected (604 passed, 32 skipped) | 100% |
 
 Detailed logs and measurement methodology are documented in [`docs/benchmarks/EMPIRICAL_TEST_BENCHMARK_MATRIX.md`](docs/benchmarks/EMPIRICAL_TEST_BENCHMARK_MATRIX.md).
 
