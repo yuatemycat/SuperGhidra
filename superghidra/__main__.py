@@ -12,6 +12,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Optional, Tuple
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -31,7 +32,9 @@ def create_parser() -> argparse.ArgumentParser:
     # Subcommand: decompile
     decomp_parser = subparsers.add_parser("decompile", help="Run multi-stage P-Code decompiler")
     decomp_parser.add_argument("binary", type=Path, help="Path to binary file")
-    decomp_parser.add_argument("--rva", type=lambda x: int(x, 0), default=0x1000, help="Function RVA (hex or dec)")
+    decomp_addr_group = decomp_parser.add_mutually_exclusive_group()
+    decomp_addr_group.add_argument("--rva", type=lambda x: int(x, 0), help="Function RVA (hex or dec)")
+    decomp_addr_group.add_argument("--va", type=lambda x: int(x, 0), help="Function VA (hex or dec)")
     decomp_parser.add_argument("--arch", choices=["x86_64", "arm64", "x86"], default="x86_64", help="Architecture")
     decomp_parser.add_argument("--len", type=int, default=128, help="Max instruction bytes to lift")
     decomp_parser.add_argument("-o", "--output", type=Path, help="Output file for decompiled C")
@@ -45,7 +48,9 @@ def create_parser() -> argparse.ArgumentParser:
     flirt_parser = subparsers.add_parser("flirt-match", help="Match binary bytes against FLIRT .sig database")
     flirt_parser.add_argument("sig_file", type=Path, help="Path to .sig signature file")
     flirt_parser.add_argument("binary", type=Path, help="Path to target binary")
-    flirt_parser.add_argument("--rva", type=lambda x: int(x, 0), default=0x1000, help="Target function RVA")
+    flirt_addr_group = flirt_parser.add_mutually_exclusive_group()
+    flirt_addr_group.add_argument("--rva", type=lambda x: int(x, 0), help="Target function RVA")
+    flirt_addr_group.add_argument("--va", type=lambda x: int(x, 0), help="Target function VA")
 
     # Subcommand: rtti-recover
     rtti_parser = subparsers.add_parser("rtti-recover", help="Recover MSVC C++ classes, vtables, and catchable types")
@@ -97,18 +102,71 @@ def cmd_version() -> int:
     return 0
 
 
+def _function_bytes(
+    path: Path | str,
+    arch: Optional[str] = None,
+    rva: Optional[int] = None,
+    va: Optional[int] = None,
+    length: int = 128,
+) -> Tuple[bytes, int]:
+    from superghidra.formats.binary_loader import load_binary
+
+    p = Path(path)
+    if not p.is_file():
+        print(f"Error: binary file not found: {p}", file=sys.stderr)
+        sys.exit(1)
+
+    img = load_binary(str(p), raw_arch=arch or "unknown")
+
+    if arch is not None and img.format in ("elf", "pe", "macho") and img.arch != arch:
+        print(
+            f"Error: binary architecture '{img.arch}' does not match requested architecture '{arch}'",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if va is not None:
+        target_va = va
+        target_rva = img.va_to_rva(va)
+    else:
+        target_rva = 0x1000 if rva is None else rva
+        target_va = img.rva_to_va(target_rva)
+
+    offset = img.va_to_offset(target_va)
+    if offset is None:
+        print(f"Error: address {hex(target_va)} is not backed by file bytes", file=sys.stderr)
+        sys.exit(2)
+
+    sec = img.section_for_va(target_va)
+    if sec is not None and not sec.executable:
+        print(f"Error: section containing address {hex(target_va)} is not executable", file=sys.stderr)
+        sys.exit(2)
+
+    chunk = img.read_va(target_va, length)
+    return chunk, target_rva
+
+
 def cmd_decompile(args: argparse.Namespace) -> int:
-    from superghidra.core.live_binary_tools import staged_decompile_function
+    from superghidra.core.live_binary_tools import LiftError, staged_decompile_function
 
-    if not args.binary.is_file():
-        print(f"Error: binary file not found: {args.binary}", file=sys.stderr)
-        return 1
+    chunk, target_rva = _function_bytes(
+        args.binary,
+        arch=args.arch,
+        rva=args.rva,
+        va=args.va,
+        length=args.len,
+    )
 
-    data = args.binary.read_bytes()
-    offset = min(args.rva, len(data))
-    chunk = data[offset : offset + args.len]
+    try:
+        result = staged_decompile_function(chunk, func_rva=target_rva, arch=args.arch)
+    except LiftError as exc:
+        print(f"Error: {exc.message}", file=sys.stderr)
+        if exc.unhandled:
+            print("Unhandled instructions:", file=sys.stderr)
+            for addr, hex_bytes in exc.unhandled:
+                print(f"  {hex(addr)}: {hex_bytes}", file=sys.stderr)
+        return 3
 
-    result = staged_decompile_function(chunk, func_rva=args.rva, arch=args.arch)
     c_code = result.get("c_code", "")
 
     if args.output:
@@ -137,15 +195,19 @@ def cmd_til_import(args: argparse.Namespace) -> int:
 def cmd_flirt_match(args: argparse.Namespace) -> int:
     from superghidra.core.live_binary_tools import match_flirt_signatures
 
-    if not args.sig_file.is_file() or not args.binary.is_file():
-        print("Error: signature or binary file not found", file=sys.stderr)
+    if not args.sig_file.is_file():
+        print(f"Error: signature file not found: {args.sig_file}", file=sys.stderr)
         return 1
 
-    data = args.binary.read_bytes()
-    offset = min(args.rva, len(data))
-    chunk = data[offset : offset + 64]
+    chunk, target_rva = _function_bytes(
+        args.binary,
+        arch=None,
+        rva=args.rva,
+        va=args.va,
+        length=64,
+    )
 
-    matches = match_flirt_signatures(str(args.sig_file), chunk, candidate_rva=args.rva)
+    matches = match_flirt_signatures(str(args.sig_file), chunk, candidate_rva=target_rva)
     if matches:
         print(f"Found {len(matches)} signature match(es):")
         for m in matches:

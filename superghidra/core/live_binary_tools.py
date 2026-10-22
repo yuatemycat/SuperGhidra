@@ -43,6 +43,7 @@ from superghidra.formats.msvc_class_recovery import recover_classes
 from superghidra.lifters.x86_decode import X86Insn, iter_decode
 
 __all__ = [
+    "LiftError",
     "extract_dataflow_edges",
     "query_binary_dataflow",
     "extract_type_constraints",
@@ -57,6 +58,15 @@ __all__ = [
     "STRUCT_CATALOG",
     "staged_decompile_function",
 ]
+
+
+class LiftError(ValueError):
+    """Raised when the staged P-Code lifter cannot lift binary machine code."""
+
+    def __init__(self, message: str, unhandled: Optional[List[Tuple[int, str]]] = None):
+        super().__init__(message)
+        self.message = message
+        self.unhandled: List[Tuple[int, str]] = unhandled or []
 
 
 def _exec_bytes(img: BinaryImage, limit: int) -> Tuple[int, bytes]:
@@ -881,6 +891,12 @@ def staged_decompile_function(
       Dictionary with function_name, c_code, is_goto_free, mba_simplified, dispatchers_removed,
       stages_executed, and performance telemetry.
     """
+    if not code_bytes:
+        raise LiftError("code_bytes is empty")
+
+    if arch != "x86_64":
+        raise LiftError(f"architecture '{arch}' is not supported by this lifter")
+
     from superghidra.lifters.egraph_mlir_pipeline import (
         StagedPCodePassManager,
         PCodeFunction,
@@ -891,40 +907,73 @@ def staged_decompile_function(
         AddressSpace,
     )
 
-    # Disassemble code_bytes or build function IR blocks
+    gpr_names = (
+        "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+        "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+    )
+    gpr_vns = [
+        Varnode(AddressSpace.REGISTER, i * 8, 8, symbol=name)
+        for i, name in enumerate(gpr_names)
+    ]
+
     ops: List[PCodeOp] = []
-    rax = Varnode(AddressSpace.REGISTER, 0x00, 8, symbol="rax")
-    rbx = Varnode(AddressSpace.REGISTER, 0x08, 8, symbol="rbx")
-    rcx = Varnode(AddressSpace.REGISTER, 0x10, 8, symbol="rcx")
-    rdx = Varnode(AddressSpace.REGISTER, 0x18, 8, symbol="rdx")
+    unhandled: List[Tuple[int, str]] = []
+    has_ret = False
 
-    if code_bytes:
-        pc = func_rva
-        for insn in iter_decode(code_bytes, address=func_rva, mode=64 if arch == "x86_64" else 32):
-            if insn.invalid:
-                continue
-            if insn.opcode == 0x89 or insn.opcode == 0x8B:  # mov reg, reg
-                src_vn = rbx if insn.rm == 3 else rcx
-                dst_vn = rax
-                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.COPY, dst_vn, [src_vn], insn.address))
-            elif insn.opcode in (0x01, 0x03):  # add reg, reg
-                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_ADD, rax, [rax, rbx], insn.address))
-            elif insn.opcode in (0x31, 0x33):  # xor reg, reg
-                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_XOR, rax, [rax, rax], insn.address))
-            elif insn.opcode == 0xC3:  # ret
-                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.RETURN, None, [rax], insn.address))
-                break
+    for insn in iter_decode(code_bytes, address=func_rva, mode=64):
+        offset = insn.address - func_rva
+        insn_raw = code_bytes[offset : offset + insn.length].hex() if insn.length > 0 else ""
 
-    if not ops:
-        # Default straight-line return block if no recognised instructions
-        ops.append(PCodeOp(1, PCodeOpCode.COPY, rax, [Varnode(AddressSpace.CONST, 0x42, 8)], func_rva))
-        ops.append(PCodeOp(2, PCodeOpCode.RETURN, None, [rax], func_rva + 5))
+        if insn.invalid:
+            unhandled.append((insn.address, insn_raw))
+            continue
+
+        if insn.map == 0 and insn.opcode == 0xC3:
+            ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.RETURN, None, [gpr_vns[0]], insn.address))
+            has_ret = True
+            break
+
+        # Check for supported register-register 64-bit forms
+        if not (insn.map == 0 and insn.rex_w and insn.mem is None and insn.modrm is not None and (insn.modrm >> 6) == 3):
+            unhandled.append((insn.address, insn_raw))
+            continue
+
+        if insn.opcode in (0x89, 0x01, 0x31):
+            dst = gpr_vns[insn.rm]
+            src = gpr_vns[insn.reg]
+            if insn.opcode == 0x89:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.COPY, dst, [src], insn.address))
+            elif insn.opcode == 0x01:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_ADD, dst, [dst, src], insn.address))
+            elif insn.opcode == 0x31:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_XOR, dst, [dst, src], insn.address))
+        elif insn.opcode in (0x8B, 0x03, 0x33):
+            dst = gpr_vns[insn.reg]
+            src = gpr_vns[insn.rm]
+            if insn.opcode == 0x8B:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.COPY, dst, [src], insn.address))
+            elif insn.opcode == 0x03:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_ADD, dst, [dst, src], insn.address))
+            elif insn.opcode == 0x33:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_XOR, dst, [dst, src], insn.address))
+        else:
+            unhandled.append((insn.address, insn_raw))
+            continue
+
+    if unhandled:
+        raise LiftError(
+            f"unhandled instruction(s) in function at {unhandled[0][0]:#x}",
+            unhandled=unhandled,
+        )
+
+    if not has_ret:
+        raise LiftError("buffer ends before a ret instruction", unhandled=unhandled)
 
     blk = PCodeBasicBlock(1, func_rva, ops, succs=[], preds=[])
     func = PCodeFunction(
         name=func_name,
         entry_rva=func_rva,
-        params=[rcx, rdx] if arch == "x86_64" else [rax],
+        params=[gpr_vns[1], gpr_vns[2]],
         blocks={1: blk},
     )
 

@@ -22,7 +22,7 @@ from superghidra.lifters.egraph_mlir_pipeline import (
     AddressSpace,
     build_obfuscated_test_function,
 )
-from superghidra.core.live_binary_tools import staged_decompile_function
+from superghidra.core.live_binary_tools import LiftError, staged_decompile_function
 
 
 class TestStagedPCodePipeline(unittest.TestCase):
@@ -64,6 +64,64 @@ class TestStagedPCodePipeline(unittest.TestCase):
         self.assertIn("add_regs", res["c_code"])
         self.assertIn("stages_executed", res)
         self.assertGreater(len(res["telemetry"]), 0)
+
+        # Exact output checks (issue #3)
+        body = res["c_code"].split("{", 1)[1].rsplit("}", 1)[0]
+        self.assertIn("rax = rbx;", body)
+        self.assertIn("rax = rax + rbx;", body)
+        self.assertNotIn("rcx", body)
+
+    def test_decompile_mov_rbx_rax(self):
+        # 48 89 c3 c3 (mov rbx, rax ; ret)
+        res = staged_decompile_function(bytes.fromhex("4889C3C3"), func_rva=0x1000)
+        body = res["c_code"].split("{", 1)[1].rsplit("}", 1)[0]
+        self.assertIn("rbx = rax;", body)
+
+    def test_decompile_mov_rax_rbx_8b(self):
+        # 48 8b c3 c3 (mov rax, rbx, 8B form ; ret)
+        res = staged_decompile_function(bytes.fromhex("488BC3C3"), func_rva=0x1000)
+        body = res["c_code"].split("{", 1)[1].rsplit("}", 1)[0]
+        self.assertIn("rax = rbx;", body)
+
+    def test_decompile_mov_rax_r8(self):
+        # 4c 89 c0 c3 (mov rax, r8 ; ret)
+        res = staged_decompile_function(bytes.fromhex("4C89C0C3"), func_rva=0x1000)
+        body = res["c_code"].split("{", 1)[1].rsplit("}", 1)[0]
+        self.assertIn("rax = r8;", body)
+
+    def test_decompile_xor_rax_rax(self):
+        # 48 31 c0 c3 (xor rax, rax ; ret -> rax = 0;)
+        res = staged_decompile_function(bytes.fromhex("4831C0C3"), func_rva=0x1000)
+        body = res["c_code"].split("{", 1)[1].rsplit("}", 1)[0]
+        self.assertTrue("rax = 0;" in body or "rax = rax ^ rax;" in body)
+
+    def test_decompile_unhandled_lea_raises(self):
+        # 48 8d 0d 00 00 00 00 c3 (lea rcx, [rip+0] ; ret)
+        code = bytes.fromhex("488D0D00000000C3")
+        with self.assertRaises(LiftError) as ctx:
+            staged_decompile_function(code, func_rva=0x2000)
+        self.assertTrue(len(ctx.exception.unhandled) > 0)
+        self.assertEqual(ctx.exception.unhandled[0][0], 0x2000)
+
+    def test_decompile_32bit_mov_raises(self):
+        # b8 01 00 00 00 c3 (mov eax, 1 ; ret)
+        code = bytes.fromhex("B801000000C3")
+        with self.assertRaises(LiftError):
+            staged_decompile_function(code, func_rva=0x1000)
+
+    def test_decompile_missing_ret_raises(self):
+        # 48 89 d8 (mov rax, rbx without ret)
+        code = bytes.fromhex("4889D8")
+        with self.assertRaises(LiftError):
+            staged_decompile_function(code, func_rva=0x1000)
+
+    def test_decompile_empty_bytes_raises(self):
+        with self.assertRaises(LiftError):
+            staged_decompile_function(b"", func_rva=0x1000)
+
+    def test_decompile_arm64_unsupported_raises(self):
+        with self.assertRaises(LiftError):
+            staged_decompile_function(bytes.fromhex("4889D8C3"), func_rva=0x1000, arch="arm64")
 
 
 if __name__ == "__main__":
