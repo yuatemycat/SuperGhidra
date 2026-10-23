@@ -23,7 +23,7 @@ GHIDRA_TYPE_MAP = [
     (r"\bulonglong\b", "uint64_t"),
     (r"\bundefined4\b", "uint32_t"),
     (r"\buint\b", "uint32_t"),
-    (r"\bulong\b", "uint32_t"),
+    (r"\bulong\b", "unsigned long"),
     (r"\bundefined2\b", "uint16_t"),
     (r"\bushort\b", "uint16_t"),
     (r"\bundefined1\b", "uint8_t"),
@@ -203,6 +203,7 @@ class CompilableDecompilerFilter:
         if not (want_b or want_lower or want_upper):
             return code
         parts = [
+            "#if defined(_WIN32) || defined(__MINGW32__)",
             "static unsigned short sg_b_table[384];",
             "static unsigned short *sg_b_mid;",
             "static int sg_tol_table[384];",
@@ -253,6 +254,7 @@ class CompilableDecompilerFilter:
             parts.append(
                 "static int **__ctype_toupper_loc(void) { sg_ctype_init(); return &sg_tou_mid; }"
             )
+        parts.append("#endif /* _WIN32 || __MINGW32__ */")
         shim = "\n".join(parts) + "\n"
         return shim + code
 

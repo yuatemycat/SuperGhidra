@@ -79,8 +79,8 @@ Measured on 1,048,576 ARM64 instructions (4.0 MB contiguous binary block):
 
 | Subsystem & Engine | Measured Latency | Sustained Throughput | Physical Match Count | Soundness Guarantee |
 | :--- | :---: | :---: | :---: | :--- |
-| **ARM64 ADRP+LDR/ADD Sweep** (NumPy/SIMD) | **7.28 ms** | **143.95 M insn/s** | 1,049 verified pairs | Zero false positives (exact bitmask `0x9F000000`) |
-| **ARM64 Function Seeder** (NumPy/SIMD) | **8.31 ms** | **126.19 M insn/s** | 1,049 prologues seeded | Exact prologue opcode classification |
+| **ARM64 ADRP+LDR/ADD Sweep** (NumPy/SIMD) | **7.28 ms** | **143.95 M insn/s** | 754 verified pairs | Exact bitmask `0x9F000000` (314 synthetic + 440 random matches) |
+| **ARM64 Function Seeder** (NumPy/SIMD) | **8.31 ms** | **126.19 M insn/s** | 16,382 candidate hits | 277 deduplicated function seeds |
 | **GPU Function Seeder** (WGPU Compute) | ~80 ms | ~12.5 M insn/s | Exact parity with SIMD | WGPU dispatch overhead on small blocks |
 
 ---

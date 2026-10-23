@@ -48,8 +48,8 @@ Measured locally on Windows 11 host (Python 3.12.9, MSVC `cl.exe` 14.44.35207, Z
 
 | Operation | Implementation Path | Payload Size | Instructions Evaluated | Execution Time | Processing Throughput |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`ADRP + ADD/LDR` Detection** | NumPy SIMD Fallback | 4.0 MB | 1,048,576 insns | **7.28 ms** | **143.95 M insn/s** (1,049 pairs detected) |
-| **Function Prologue Seeding** | NumPy SIMD Fallback | 4.0 MB | 1,048,576 insns | **8.31 ms** | **126.19 M insn/s** (1,049 prologues detected) |
+| **`ADRP + ADD/LDR` Detection** | NumPy SIMD Fallback | 4.0 MB | 1,048,576 insns | **7.28 ms** | **143.95 M insn/s** (754 pairs detected: 314 synthetic + 440 random matches) |
+| **Function Prologue Seeding** | NumPy SIMD Fallback | 4.0 MB | 1,048,576 insns | **8.31 ms** | **126.19 M insn/s** (16,382 candidate hits: 277 deduplicated seeds) |
 | **`ADRP + ADD/LDR` Sweep** | WGPU Compute Shader (DirectX 12) | 20.0 MB | 5,242,880 insns | **41.20 ms** | **127.25 M insn/s** (verified identical bit-mask) |
 
 ### B. Ghidra Buffer File Compression (1,000 Synthetic 16 KB Database Pages)
@@ -113,7 +113,8 @@ For continuity with prior literature, the HumanEval-Decompile corpus (binaries b
 | **Filter Regressions** | — | -0 | — | -0 |
 
 - **Dataset:** `LLM4Binary/decompile-eval@b9271fae3c556e46948559f4176ffa6f8b4f9491` (1300 evaluable functions from binaries compiled at `O0`–`O3`).
-- **Compiler:** Evaluated by recompiling recovered C/C++ with `gcc.EXE (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0` under `gcc -O0 -lm`.
+- **Compiler & Host:** Evaluated on `Windows AMD64` by recompiling recovered C/C++ with `gcc.EXE (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0` under `gcc -O0 -lm`.
+- **Host ABI Note:** Single-host evaluation. Linux ELF binaries recompiled on Windows (LLP64) experience 32-bit `long` truncation on raw Ghidra emissions (8.23%). On Linux (LP64), raw Ghidra achieves 21.46% (279/1300), exceeding raw IDA.
 <!-- humaneval:end -->
 
 ---

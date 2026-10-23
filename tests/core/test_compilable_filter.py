@@ -119,13 +119,21 @@ class TestCompilableDecompilerFilter(unittest.TestCase):
             "}\n"
         )
         res = CompilableDecompilerFilter.filter(ghidra_code)
+        self.assertIn("#if defined(_WIN32) || defined(__MINGW32__)", res)
         self.assertIn("static unsigned short **__ctype_b_loc(void)", res)
         self.assertIn("static int **__ctype_tolower_loc(void)", res)
         self.assertNotIn("__ctype_toupper_loc", res)
         self.assertNotIn("__int32_t", res)
         self.assertIn("int32_t **lower", res)
+        self.assertIn("#endif /* _WIN32 || __MINGW32__ */", res)
         plain = CompilableDecompilerFilter.filter("int func0(int x) { return x; }\n")
         self.assertNotIn("__ctype_b_loc", plain)
+
+    def test_ulong_mapping(self):
+        ghidra_code = "ulong get_size(ulong x) { return x + 1; }"
+        res = CompilableDecompilerFilter.filter(ghidra_code)
+        self.assertIn("unsigned long get_size(unsigned long x)", res)
+        self.assertNotIn("uint32_t get_size", res)
 
 
 if __name__ == "__main__":

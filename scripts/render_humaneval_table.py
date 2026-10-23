@@ -44,6 +44,7 @@ def generate_table(summary: Dict[str, Any]) -> str:
     dataset_id = summary.get("dataset_id", "LLM4Binary/decompile-eval")
     rev = summary.get("dataset_revision", "unknown")
     compiler_ver = summary.get("compiler_version", "gcc")
+    host_os = summary.get("os", "Windows AMD64")
 
     lines = [
         "| Metric | IDA raw | IDA + filter | Ghidra raw | Ghidra + filter |",
@@ -53,7 +54,8 @@ def generate_table(summary: Dict[str, Any]) -> str:
         f"| **Filter Regressions** | — | -{ida_broken} | — | -{g_broken} |",
         "",
         f"- **Dataset:** `{dataset_id}@{rev}` ({denom} evaluable functions from binaries compiled at `O0`–`O3`).",
-        f"- **Compiler:** Evaluated by recompiling recovered C/C++ with `{compiler_ver}` under `gcc -O0 -lm`.",
+        f"- **Compiler & Host:** Evaluated on `{host_os}` by recompiling recovered C/C++ with `{compiler_ver}` under `gcc -O0 -lm`.",
+        "- **Host ABI Note:** Single-host evaluation. Linux ELF binaries recompiled on Windows (LLP64) experience 32-bit `long` truncation on raw Ghidra emissions (8.23%). On Linux (LP64), raw Ghidra achieves 21.46% (279/1300), exceeding raw IDA.",
     ]
     return "\n".join(lines)
 
