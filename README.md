@@ -65,49 +65,35 @@ Ghidra locks `.rep` projects exclusively, meaning standard headless scripts fail
 ```mermaid
 flowchart TD
     subgraph READ["1. READ PATH (Zero Lock Contention)"]
-        direction TB
-        REP["Ghidra .rep Fork / Read-Only Session<br/><i>Opens with readOnly=True (Zero lock contention)</i>"]
-        DAEMON["SuperGhidra Daemon (127.0.0.1:5073)<br/><i>Persistent warm JVM instance</i>"]
-        L1["L1 Shared-Memory Ring Buffer<br/><code>64 KB SHM · ~5.12 µs IPC</code>"]
-        L2["L2 SQLite Query Cache<br/><code>&gt;100,000 req/s (&lt;0.01 ms)</code>"]
+        direction LR
+        REP["Ghidra .rep Session<br/><code>readOnly=True · zero lock collisions</code>"]
+        DAEMON["SuperGhidra Daemon (127.0.0.1:5073)<br/><code>warm JVM instance</code>"]
+        CACHE["L1 SHM &amp; L2 SQLite Cache<br/><code>64 KB SHM (5.12 µs) · &gt;100k req/s</code>"]
 
-        REP --> DAEMON
-        DAEMON --> L1
-        DAEMON --> L2
+        REP -->|"READ-ONLY"| DAEMON
+        DAEMON -->|"L1/L2 IPC"| CACHE
     end
 
-    CLIENTS["AI Coding Agents & External Callers<br/>Claude Desktop · Cursor · Antigravity · PyGhidra MCP · CLI"]
+    subgraph WRITE["2. INTERACTIVE QUERIES &amp; VALIDATION GATE"]
+        direction LR
+        CLIENTS["AI Agents &amp; CLI Callers<br/><code>Claude · Cursor · Antigravity · MCP</code>"]
+        GATE["Obligation Ledger Gate<br/><code>vtables · displacements · sizes</code>"]
+        OVERLAY["JSON Write Overlay<br/><code>ghidra_overlay.json · delta log</code>"]
 
-    subgraph WRITE["2. VALIDATION GATE & WRITE OVERLAY (Non-Destructive)"]
-        direction TB
-        GATE["Naming & Struct Pipeline Gate<br/><code>ReconstructionObligationLedger</code><br/>Verifies vtable slots, field displacements & allocation sizes"]
-        OVERLAY["JSON Write Overlay & Transaction Journal<br/><code>ghidra_overlay.json</code> & <code>.ghidra-delta.jsonl</code><br/>Stores renames, comments & types outside main .rep"]
-        
-        GATE -->|"Safe Mutations Only"| OVERLAY
+        CLIENTS -->|"PROPOSED"| GATE
+        GATE -->|"VERIFIED"| OVERLAY
     end
 
-    DAEMON -->|"1. Cached Decompilations & Xrefs"| CLIENTS
-    CLIENTS -->|"2. Propose Renames, Types & Comments"| GATE
+    DAEMON -.->|"CACHED XREFS"| CLIENTS
 
     subgraph SYNC["3. SYNCHRONIZATION BACK TO MAIN PROJECT"]
         direction LR
-        subgraph OPT_A["Option 3A: LIVE GHIDRA GUI SYNC"]
-            direction TB
-            SCRIPT["Ghidra Script Manager<br/><code>ghidra_gui_overlay_sync.py</code><br/>Atomic GUI session transaction"]
-            WATCHER["Continuous Background Watcher<br/><code>superghidra overlay-sync --watch</code><br/>Polls overlay every 1000 ms"]
-            SCRIPT --- WATCHER
-        end
-
-        subgraph OPT_B["Option 3B: HEADLESS JOURNAL REPLAY"]
-            direction TB
-            REPLAY["Journal Replay & Merge<br/><code>merge_fork(fork_id, auto_discard=True)</code><br/>Replays into .rep when GUI releases lock"]
-            CLEAN["Automated Disk Reclaim<br/>Deletes private fork directory on zero conflicts"]
-            REPLAY --- CLEAN
-        end
+        OPT_A["Option 3A · Live Ghidra GUI Sync<br/><code>superghidra overlay-sync --watch</code>"]
+        OPT_B["Option 3B · Headless Replay &amp; Discard<br/><code>merge_fork(auto_discard=True) · disk cleanup</code>"]
     end
 
-    OVERLAY -->|"Atomic GUI Script"| OPT_A
-    OVERLAY -->|"Batch Merge & Discard"| OPT_B
+    OVERLAY -->|"LIVE GUI SYNC"| OPT_A
+    OVERLAY -->|"BATCH MERGE"| OPT_B
 ```
 
 </details>

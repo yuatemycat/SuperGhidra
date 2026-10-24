@@ -1,216 +1,334 @@
 #!/usr/bin/env python3
-"""Generates the SuperGhidra architecture vector graph (docs/assets/architecture.svg).
+"""Generates the SuperGhidra architecture diagram using the cathrynlavery/diagram-design specification.
 
-Pixel-perfect SVG generator tailored for GitHub dark & light themes.
+Builds docs/assets/architecture.html (full editorial page) and exports
+docs/assets/architecture.svg (standalone, inline-safe SVG with embedded styles).
 """
 
 from pathlib import Path
+import re
+import xml.etree.ElementTree as ET
 
-def generate_svg() -> str:
-    width = 1040
-    height = 690
+HTML_CONTENT = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SuperGhidra · Architecture &amp; Zero Lock Contention</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2d3142;
+      --color-ink:     #f5f5f5;
+      --color-muted:   #bfc0c0;
+      --color-accent:  #f08a59;
+      --font-sans:     'Geist', system-ui, -apple-system, sans-serif;
+      --font-serif:    'Instrument Serif', Georgia, serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
 
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="100%" height="100%" style="background-color: #0d1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-  <defs>
-    <!-- Gradients -->
-    <linearGradient id="readGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0f172a" />
-      <stop offset="100%" stop-color="#1e293b" />
-    </linearGradient>
-    <linearGradient id="gateGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1e1b4b" />
-      <stop offset="100%" stop-color="#2e1065" />
-    </linearGradient>
-    <linearGradient id="syncAGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#064e3b" />
-      <stop offset="100%" stop-color="#065f46" />
-    </linearGradient>
-    <linearGradient id="syncBGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#451a03" />
-      <stop offset="100%" stop-color="#7c2d12" />
-    </linearGradient>
-    
-    <!-- Arrow Markers -->
-    <marker id="arrow-cyan" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1 L 8 5 L 0 9 z" fill="#38bdf8" />
-    </marker>
-    <marker id="arrow-slate" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1 L 8 5 L 0 9 z" fill="#94a3b8" />
-    </marker>
-    <marker id="arrow-purple" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1 L 8 5 L 0 9 z" fill="#a78bfa" />
-    </marker>
-    <marker id="arrow-amber" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1 L 8 5 L 0 9 z" fill="#fbbf24" />
-    </marker>
-    <marker id="arrow-emerald" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1 L 8 5 L 0 9 z" fill="#34d399" />
-    </marker>
-    <marker id="arrow-orange" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 1 L 8 5 L 0 9 z" fill="#fb923c" />
-    </marker>
-    
-    <!-- Filter Shadow -->
-    <filter id="cardShadow" x="-5%" y="-5%" width="110%" height="115%" filterUnits="userSpaceOnUse">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.4" />
-    </filter>
-  </defs>
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2.5rem 1.5rem;
+    }
 
-  <!-- ==================== HEADER ==================== -->
-  <text x="520" y="38" text-anchor="middle" fill="#f0f6fc" font-size="19" font-weight="700" letter-spacing="0.5">SuperGhidra Architecture &amp; Zero Lock Contention</text>
-  <text x="520" y="58" text-anchor="middle" fill="#8b949e" font-size="13">Read/Write Separation · Shared-Memory IPC · SQLite L2 Cache · Non-Destructive Overlays</text>
+    .frame { max-width: 1100px; width: 100%; }
 
-  <!-- ==================== TIER 1: READ PATH ==================== -->
-  <!-- Container Box -->
-  <rect x="30" y="80" width="980" height="150" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.5" filter="url(#cardShadow)" />
-  <rect x="30" y="80" width="980" height="32" rx="10" fill="#1f2937" />
-  <rect x="30" y="102" width="980" height="10" fill="#1f2937" />
-  <circle cx="48" cy="96" r="4.5" fill="#38bdf8" />
-  <text x="60" y="101" fill="#38bdf8" font-size="13" font-weight="700" letter-spacing="0.5">1. READ PATH (Zero Lock Contention)</text>
-  <text x="990" y="100" text-anchor="end" fill="#8b949e" font-size="11">Concurrent with active Ghidra GUI CodeBrowser</text>
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.4rem;
+    }
 
-  <!-- Box 1A: Ghidra .rep Fork -->
-  <g transform="translate(50, 122)">
-    <rect width="250" height="92" rx="8" fill="url(#readGrad)" stroke="#38bdf8" stroke-width="1.5" />
-    <text x="15" y="24" fill="#f0f6fc" font-size="13" font-weight="600">Ghidra .rep Fork / Session</text>
-    <text x="15" y="44" fill="#94a3b8" font-size="11.5">• Opens target with readOnly=True</text>
-    <text x="15" y="62" fill="#94a3b8" font-size="11.5">• Immune to GUI .lock collisions</text>
-    <text x="15" y="80" fill="#38bdf8" font-size="11" font-weight="500">Zero project lock contention</text>
-  </g>
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.6rem, 2.4vw + 0.8rem, 2.2rem);
+      font-weight: 400;
+      letter-spacing: -0.01em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.25rem;
+    }
 
-  <!-- Arrow: 1A -> Daemon -->
-  <path d="M 300 168 L 348 168" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow-cyan)" />
+    svg { width: 100%; min-width: 900px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · Diagram Design</p>
+    <h1>SuperGhidra: Zero Lock Contention &amp; Non-Destructive Mutations</h1>
 
-  <!-- Box 1B: SuperGhidra Daemon -->
-  <g transform="translate(355, 122)">
-    <rect width="635" height="92" rx="8" fill="#0f172a" stroke="#0284c7" stroke-width="1.5" />
-    <text x="18" y="24" fill="#f0f6fc" font-size="13" font-weight="600">SuperGhidra Background Daemon</text>
-    <rect x="238" y="11" width="105" height="18" rx="4" fill="#0369a1" />
-    <text x="290" y="24" text-anchor="middle" fill="#e0f2fe" font-size="10.5" font-family="ui-monospace, monospace" font-weight="600">127.0.0.1:5073</text>
-    <text x="18" y="44" fill="#94a3b8" font-size="11.5">Single JVM warm instance · JSON-RPC · Headless worker bridge</text>
+    <svg viewBox="0 0 1000 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="sg-arch-title sg-arch-desc">
+      <title id="sg-arch-title">SuperGhidra Architecture &amp; Zero Lock Contention</title>
+      <desc id="sg-arch-desc">Read/write separation via warm Ghidra background daemon, SQLite L2 query cache, shared-memory IPC, and non-destructive JSON write overlays.</desc>
 
-    <!-- Sub-badge 1: L1 SHM -->
-    <g transform="translate(18, 52)">
-      <rect width="285" height="30" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1" />
-      <text x="10" y="20" fill="#38bdf8" font-size="11" font-weight="600">L1 SHM Ring Buffer:</text>
-      <text x="135" y="20" fill="#f0f6fc" font-size="11" font-family="ui-monospace, monospace">64 KB · ~5.12 µs IPC</text>
-    </g>
+      <defs>
+        <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+          <circle cx="1" cy="1" r="0.9" fill="rgba(245,245,245,0.08)"/>
+        </pattern>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#739fdf"/></marker>
+      </defs>
 
-    <!-- Sub-badge 2: L2 SQLite Cache -->
-    <g transform="translate(320, 52)">
-      <rect width="298" height="30" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1" />
-      <text x="10" y="20" fill="#38bdf8" font-size="11" font-weight="600">L2 SQLite Query Cache:</text>
-      <text x="155" y="20" fill="#f0f6fc" font-size="11" font-family="ui-monospace, monospace">&gt;100k req/s (&lt;0.01ms)</text>
-    </g>
-  </g>
+      <!-- Background with subtle editorial dotted grid -->
+      <rect width="100%" height="100%" fill="#2d3142"/>
+      <rect width="100%" height="100%" fill="url(#dots)" opacity="0.65"/>
 
-  <!-- ==================== TIER 2: VALIDATION & OVERLAY ==================== -->
-  <!-- Container Box -->
-  <rect x="30" y="250" width="980" height="190" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.5" filter="url(#cardShadow)" />
-  <rect x="30" y="250" width="980" height="32" rx="10" fill="#1f2937" />
-  <rect x="30" y="272" width="980" height="10" fill="#1f2937" />
-  <circle cx="48" cy="266" r="4.5" fill="#a78bfa" />
-  <text x="60" y="271" fill="#a78bfa" font-size="13" font-weight="700" letter-spacing="0.5">2. INTERACTIVE QUERIES, VALIDATION GATE &amp; WRITE OVERLAY</text>
-  <text x="990" y="270" text-anchor="end" fill="#8b949e" font-size="11">Non-destructive mutations · Automated structural gates</text>
+      <!-- ==================== ZONES (Drawn before arrows and nodes) ==================== -->
+      <!-- Zone 1: Read Path -->
+      <rect x="40" y="68" width="920" height="96" rx="8"
+            fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.08)" stroke-width="0.8"/>
+      <rect x="64" y="62" width="232" height="12" rx="2" fill="#2d3142"/>
+      <text x="180" y="71" fill="#949eb2" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.14em">1 · READ PATH (ZERO LOCK CONTENTION)</text>
 
-  <!-- Box 2A: Coding Agents & Callers -->
-  <g transform="translate(50, 292)">
-    <rect width="250" height="132" rx="8" fill="#1e293b" stroke="#64748b" stroke-width="1.5" />
-    <text x="15" y="24" fill="#f0f6fc" font-size="13" font-weight="600">AI Agents &amp; CLI Callers</text>
-    <text x="15" y="46" fill="#cbd5e1" font-size="11.5">• Claude Desktop / Claude Code</text>
-    <text x="15" y="65" fill="#cbd5e1" font-size="11.5">• Cursor / Antigravity IDE</text>
-    <text x="15" y="84" fill="#cbd5e1" font-size="11.5">• SuperGhidra MCP (38 Tools)</text>
-    <text x="15" y="103" fill="#cbd5e1" font-size="11.5">• Unified CLI / Python Scripts</text>
-    <text x="15" y="121" fill="#38bdf8" font-size="10.5" font-family="ui-monospace, monospace">read: cached / write: gated</text>
-  </g>
+      <!-- Zone 2: Validation & Write Overlay -->
+      <rect x="40" y="196" width="920" height="96" rx="8"
+            fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.08)" stroke-width="0.8"/>
+      <rect x="64" y="190" width="272" height="12" rx="2" fill="#2d3142"/>
+      <text x="200" y="199" fill="#949eb2" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.14em">2 · INTERACTIVE QUERIES &amp; VALIDATION GATE</text>
 
-  <!-- Bi-directional Flow: Daemon <-> Agents -->
-  <path d="M 430 214 L 430 236 L 175 236 L 175 284" stroke="#38bdf8" stroke-width="1.8" stroke-dasharray="4,3" fill="none" marker-end="url(#arrow-cyan)" />
-  <rect x="230" y="226" width="160" height="18" rx="4" fill="#0b0f19" stroke="#38bdf8" stroke-width="0.8" />
-  <text x="310" y="239" text-anchor="middle" fill="#38bdf8" font-size="10.5" font-weight="500">Cached Decompilations &amp; Xrefs</text>
+      <!-- Zone 3: Synchronization -->
+      <rect x="40" y="324" width="920" height="96" rx="8"
+            fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.08)" stroke-width="0.8"/>
+      <rect x="64" y="318" width="272" height="12" rx="2" fill="#2d3142"/>
+      <text x="200" y="327" fill="#949eb2" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.14em">3 · SYNCHRONIZATION BACK TO MAIN PROJECT</text>
 
-  <!-- Arrow: Agents -> Gate -->
-  <path d="M 300 358 L 348 358" stroke="#a78bfa" stroke-width="2" marker-end="url(#arrow-purple)" />
-  <text x="325" y="348" text-anchor="middle" fill="#a78bfa" font-size="9.5" font-weight="600">Mutations</text>
+      <!-- ==================== ARROWS (Drawn before node boxes) ==================== -->
+      <!-- Conn 1: Fork -> Daemon (H) -->
+      <line x1="288" y1="116" x2="368" y2="116" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
 
-  <!-- Box 2B: Validation Gate -->
-  <g transform="translate(355, 292)">
-    <rect width="285" height="132" rx="8" fill="url(#gateGrad)" stroke="#818cf8" stroke-width="1.5" />
-    <text x="15" y="24" fill="#f0f6fc" font-size="13" font-weight="600">Naming &amp; Struct Pipeline Gate</text>
-    <rect x="15" y="33" width="170" height="16" rx="3" fill="#312e81" />
-    <text x="100" y="45" text-anchor="middle" fill="#c7d2fe" font-size="9.5" font-family="ui-monospace, monospace">EvidenceLedger Obligation Gate</text>
-    
-    <text x="15" y="66" fill="#e0e7ff" font-size="11.5">✓ VTableSlotVerifier</text>
-    <text x="15" y="84" fill="#e0e7ff" font-size="11.5">✓ FieldDisplacementVerifier</text>
-    <text x="15" y="102" fill="#e0e7ff" font-size="11.5">✓ AllocationSizeVerifier</text>
-    <text x="15" y="121" fill="#f43f5e" font-size="10.5" font-weight="500">Rejects hallucinated structs &amp; slots</text>
-  </g>
+      <!-- Conn 2: Daemon -> Cache (H) -->
+      <line x1="632" y1="116" x2="712" y2="116" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
 
-  <!-- Arrow: Gate -> Overlay -->
-  <path d="M 640 358 L 688 358" stroke="#a78bfa" stroke-width="2" marker-end="url(#arrow-purple)" />
-  <text x="664" y="348" text-anchor="middle" fill="#a78bfa" font-size="9.5" font-weight="600">Verified</text>
+      <!-- Conn 3: Daemon -> Agents (Cached Xrefs) L-path with r=8 -->
+      <path d="M 436,148 V 168 Q 436,176 428,176 H 184 Q 176,176 176,184 V 212"
+            fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#arrow-link)"/>
 
-  <!-- Box 2C: JSON Write Overlay -->
-  <g transform="translate(695, 292)">
-    <rect width="295" height="132" rx="8" fill="#1e1b4b" stroke="#fbbf24" stroke-width="1.5" />
-    <text x="15" y="24" fill="#f0f6fc" font-size="13" font-weight="600">JSON Write Overlay &amp; Delta Log</text>
-    <text x="15" y="44" fill="#fcd34d" font-size="11" font-family="ui-monospace, monospace">ghidra_overlay.json &amp; .ghidra-delta.jsonl</text>
-    <text x="15" y="65" fill="#cbd5e1" font-size="11.5">• Renames, comments &amp; struct types</text>
-    <text x="15" y="84" fill="#cbd5e1" font-size="11.5">• Zero writes touch the main .rep</text>
-    <text x="15" y="103" fill="#cbd5e1" font-size="11.5">• Conflict-aware transaction journal</text>
-    <text x="15" y="121" fill="#34d399" font-size="10.5" font-weight="500">Safe, non-destructive persistence</text>
-  </g>
+      <!-- Conn 4: Agents -> Gate (H) -->
+      <line x1="288" y1="244" x2="368" y2="244" stroke="#f08a59" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
 
-  <!-- ==================== TIER 3: SYNCHRONIZATION ==================== -->
-  <!-- Container Box -->
-  <rect x="30" y="460" width="980" height="205" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.5" filter="url(#cardShadow)" />
-  <rect x="30" y="460" width="980" height="32" rx="10" fill="#1f2937" />
-  <rect x="30" y="482" width="980" height="10" fill="#1f2937" />
-  <circle cx="48" cy="476" r="4.5" fill="#34d399" />
-  <text x="60" y="481" fill="#34d399" font-size="13" font-weight="700" letter-spacing="0.5">3. SYNCHRONIZATION BACK TO MAIN PROJECT (TWO OPTIONS)</text>
-  <text x="990" y="480" text-anchor="end" fill="#8b949e" font-size="11">Atomic GUI sync or automated headless merge</text>
+      <!-- Conn 5: Gate -> Overlay (H) -->
+      <line x1="632" y1="244" x2="712" y2="244" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
 
-  <!-- Forking Arrows: Overlay -> Sync Options -->
-  <path d="M 842 424 L 842 445 L 285 445 L 285 502" stroke="#fbbf24" stroke-width="1.8" fill="none" marker-end="url(#arrow-amber)" />
-  <path d="M 842 424 L 842 445 L 755 445 L 755 502" stroke="#fbbf24" stroke-width="1.8" fill="none" marker-end="url(#arrow-amber)" />
+      <!-- Conn 6: Overlay -> Live GUI Sync L-path with r=8 -->
+      <path d="M 770,276 V 296 Q 770,304 762,304 H 338 Q 330,304 330,312 V 340"
+            fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
 
-  <!-- Box 3A: Live Ghidra GUI Sync -->
-  <g transform="translate(50, 510)">
-    <rect width="445" height="138" rx="8" fill="url(#syncAGrad)" stroke="#34d399" stroke-width="1.5" />
-    <text x="16" y="24" fill="#f0f6fc" font-size="13" font-weight="600">Option 3A: Live Ghidra GUI Sync</text>
-    <rect x="235" y="11" width="195" height="18" rx="4" fill="#047857" />
-    <text x="332" y="24" text-anchor="middle" fill="#d1fae5" font-size="10.5" font-family="ui-monospace, monospace" font-weight="600">superghidra overlay-sync</text>
-    
-    <text x="16" y="48" fill="#e2e8f0" font-size="11.5">• <tspan font-weight="600" fill="#34d399">Ghidra Script Manager:</tspan> Run <tspan font-family="ui-monospace, monospace">ghidra_gui_overlay_sync.py</tspan></text>
-    <text x="16" y="68" fill="#e2e8f0" font-size="11.5">• <tspan font-weight="600" fill="#34d399">Live Watcher:</tspan> Pass <tspan font-family="ui-monospace, monospace">--watch</tspan> to continuously poll (default 1000 ms)</text>
-    <text x="16" y="88" fill="#e2e8f0" font-size="11.5">• Applies renames, comments &amp; struct types atomically</text>
-    <text x="16" y="108" fill="#e2e8f0" font-size="11.5">• Refreshes active CodeBrowser / Listing view without restart</text>
-    <text x="16" y="127" fill="#6ee7b7" font-size="11" font-weight="500">Perfect while interactively reverse engineering in the GUI</text>
-  </g>
+      <!-- Conn 7: Overlay -> Headless Replay L-path with r=8 (offset 12px lower to prevent overlap) -->
+      <path d="M 822,276 V 308 Q 822,316 814,316 H 678 Q 670,316 670,324 V 340"
+            fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
 
-  <!-- Box 3B: Headless Journal Replay -->
-  <g transform="translate(525, 510)">
-    <rect width="465" height="138" rx="8" fill="url(#syncBGrad)" stroke="#fb923c" stroke-width="1.5" />
-    <text x="16" y="24" fill="#f0f6fc" font-size="13" font-weight="600">Option 3B: Headless Journal Replay &amp; Auto-Discard</text>
-    <rect x="335" y="11" width="115" height="18" rx="4" fill="#9a3412" />
-    <text x="392" y="24" text-anchor="middle" fill="#ffedd5" font-size="10.5" font-family="ui-monospace, monospace" font-weight="600">merge_fork</text>
-    
-    <text x="16" y="48" fill="#e2e8f0" font-size="11.5">• Close GUI to release project lock, then replay journal into <tspan font-family="ui-monospace, monospace">.rep</tspan></text>
-    <text x="16" y="68" fill="#e2e8f0" font-size="11.5">• <tspan font-weight="600" fill="#fb923c">Auto-Discard:</tspan> With <tspan font-family="ui-monospace, monospace">auto_discard=True</tspan>, cleans up fork on 0 conflicts</text>
-    <text x="16" y="88" fill="#e2e8f0" font-size="11.5">• Deletes private fork directory &amp; journal to reclaim disk space</text>
-    <text x="16" y="108" fill="#e2e8f0" font-size="11.5">• Stale or unneeded forks can also be pruned via <tspan font-family="ui-monospace, monospace">discard_fork</tspan></text>
-    <text x="16" y="127" fill="#fdba74" font-size="11" font-weight="500">Ideal for batch processing, automated pipelines &amp; CI/CD</text>
-  </g>
-</svg>
+      <!-- ==================== ARROW LABELS (Masked on paper rects) ==================== -->
+      <!-- Label 1: SYNC READ -->
+      <rect x="296" y="106" width="64" height="12" rx="2" fill="#2d3142"/>
+      <text x="328" y="115" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">READ-ONLY</text>
+
+      <!-- Label 2: L1/L2 LOOKUP -->
+      <rect x="640" y="106" width="64" height="12" rx="2" fill="#2d3142"/>
+      <text x="672" y="115" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">L1 / L2 IPC</text>
+
+      <!-- Label 3: CACHED XREFS -->
+      <rect x="246" y="170" width="88" height="12" rx="2" fill="#2d3142"/>
+      <text x="290" y="179" fill="#739fdf" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CACHED XREFS</text>
+
+      <!-- Label 4: MUTATIONS -->
+      <rect x="296" y="234" width="64" height="12" rx="2" fill="#2d3142"/>
+      <text x="328" y="243" fill="#f08a59" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PROPOSED</text>
+
+      <!-- Label 5: VERIFIED -->
+      <rect x="644" y="234" width="56" height="12" rx="2" fill="#2d3142"/>
+      <text x="672" y="243" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">VERIFIED</text>
+
+      <!-- Label 6: ATOMIC GUI SYNC -->
+      <rect x="472" y="298" width="104" height="12" rx="2" fill="#2d3142"/>
+      <text x="524" y="307" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LIVE GUI SYNC</text>
+
+      <!-- Label 7: BATCH MERGE -->
+      <rect x="716" y="310" width="84" height="12" rx="2" fill="#2d3142"/>
+      <text x="758" y="319" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">BATCH MERGE</text>
+
+      <!-- ==================== NODES (Opaque mask + styled box) ==================== -->
+      <!-- Node 1: Ghidra .rep Session -->
+      <g>
+        <rect x="64" y="84" width="224" height="64" rx="6" fill="#2d3142"/>
+        <rect x="64" y="84" width="224" height="64" rx="6" fill="rgba(191,192,192,0.08)" stroke="#949eb2" stroke-width="1"/>
+        <rect x="72" y="92" width="28" height="12" rx="2" fill="transparent" stroke="rgba(148,158,178,0.4)" stroke-width="0.8"/>
+        <text x="86" y="101" fill="#949eb2" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">REP</text>
+        <text x="276" y="142" fill="rgba(245,245,245,0.06)" font-size="28" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="end">01</text>
+        <text x="176" y="118" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Ghidra .rep Session</text>
+        <text x="176" y="134" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">readOnly=True · zero lock collisions</text>
+      </g>
+
+      <!-- Node 2: SuperGhidra Daemon (Focal coral #f08a59) -->
+      <g>
+        <rect x="368" y="84" width="264" height="64" rx="6" fill="#2d3142"/>
+        <rect x="368" y="84" width="264" height="64" rx="6" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+        <rect x="376" y="92" width="44" height="12" rx="2" fill="transparent" stroke="rgba(240,138,89,0.5)" stroke-width="0.8"/>
+        <text x="398" y="101" fill="#f08a59" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">DAEMON</text>
+        <text x="620" y="142" fill="rgba(240,138,89,0.10)" font-size="28" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="end">02</text>
+        <text x="500" y="118" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">SuperGhidra Background Daemon</text>
+        <text x="500" y="134" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">127.0.0.1:5073 · warm JVM instance</text>
+      </g>
+
+      <!-- Node 3: L1 SHM & L2 Cache -->
+      <g>
+        <rect x="712" y="84" width="224" height="64" rx="6" fill="#2d3142"/>
+        <rect x="712" y="84" width="224" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+        <rect x="720" y="92" width="36" height="12" rx="2" fill="transparent" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/>
+        <text x="738" y="101" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CACHE</text>
+        <text x="924" y="142" fill="rgba(245,245,245,0.06)" font-size="28" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="end">03</text>
+        <text x="824" y="118" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">L1 SHM &amp; L2 SQLite Cache</text>
+        <text x="824" y="134" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">64 KB SHM (5.12 µs) · &gt;100k req/s</text>
+      </g>
+
+      <!-- Node 4: Agents & CLI -->
+      <g>
+        <rect x="64" y="212" width="224" height="64" rx="6" fill="#2d3142"/>
+        <rect x="64" y="212" width="224" height="64" rx="6" fill="rgba(191,192,192,0.08)" stroke="#949eb2" stroke-width="1"/>
+        <rect x="72" y="220" width="40" height="12" rx="2" fill="transparent" stroke="rgba(148,158,178,0.4)" stroke-width="0.8"/>
+        <text x="92" y="229" fill="#949eb2" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CLIENT</text>
+        <text x="276" y="270" fill="rgba(245,245,245,0.06)" font-size="28" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="end">04</text>
+        <text x="176" y="246" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">AI Agents &amp; CLI Callers</text>
+        <text x="176" y="262" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Claude · Cursor · Antigravity · MCP</text>
+      </g>
+
+      <!-- Node 5: Pipeline Gate (Focal coral #f08a59) -->
+      <g>
+        <rect x="368" y="212" width="264" height="64" rx="6" fill="#2d3142"/>
+        <rect x="368" y="212" width="264" height="64" rx="6" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+        <rect x="376" y="220" width="32" height="12" rx="2" fill="transparent" stroke="rgba(240,138,89,0.5)" stroke-width="0.8"/>
+        <text x="392" y="229" fill="#f08a59" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GATE</text>
+        <text x="620" y="270" fill="rgba(240,138,89,0.10)" font-size="28" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="end">05</text>
+        <text x="500" y="246" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Obligation Ledger Gate</text>
+        <text x="500" y="262" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">vtables · displacements · sizes</text>
+      </g>
+
+      <!-- Node 6: JSON Write Overlay -->
+      <g>
+        <rect x="712" y="212" width="224" height="64" rx="6" fill="#2d3142"/>
+        <rect x="712" y="212" width="224" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+        <rect x="720" y="220" width="48" height="12" rx="2" fill="transparent" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/>
+        <text x="744" y="229" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">OVERLAY</text>
+        <text x="924" y="270" fill="rgba(245,245,245,0.06)" font-size="28" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="end">06</text>
+        <text x="824" y="246" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">JSON Write Overlay</text>
+        <text x="824" y="262" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ghidra_overlay.json · delta log</text>
+      </g>
+
+      <!-- Node 7: Live GUI Sync -->
+      <g>
+        <rect x="180" y="340" width="300" height="64" rx="6" fill="#2d3142"/>
+        <rect x="180" y="340" width="300" height="64" rx="6" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+        <rect x="188" y="348" width="32" height="12" rx="2" fill="transparent" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/>
+        <text x="204" y="357" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SYNC</text>
+        <text x="468" y="398" fill="rgba(245,245,245,0.06)" font-size="28" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="end">3A</text>
+        <text x="330" y="374" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Option 3A · Live Ghidra GUI Sync</text>
+        <text x="330" y="390" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">superghidra overlay-sync --watch</text>
+      </g>
+
+      <!-- Node 8: Headless Replay & Discard -->
+      <g>
+        <rect x="520" y="340" width="300" height="64" rx="6" fill="#2d3142"/>
+        <rect x="520" y="340" width="300" height="64" rx="6" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+        <rect x="528" y="348" width="36" height="12" rx="2" fill="transparent" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/>
+        <text x="546" y="357" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">MERGE</text>
+        <text x="808" y="398" fill="rgba(245,245,245,0.06)" font-size="28" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="end">3B</text>
+        <text x="670" y="374" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Option 3B · Headless Replay &amp; Discard</text>
+        <text x="670" y="390" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">merge_fork(auto_discard=True) · disk cleanup</text>
+      </g>
+
+      <!-- ==================== LEGEND STRIP ==================== -->
+      <line x1="40" y1="448" x2="960" y2="448" stroke="rgba(245,245,245,0.10)" stroke-width="0.8"/>
+      <text x="40" y="472" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+
+      <rect x="100" y="464" width="14" height="10" rx="2" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+      <text x="120" y="472" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Focal / daemon &amp; gate</text>
+
+      <rect x="290" y="464" width="14" height="10" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="310" y="472" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">In-memory / overlay store</text>
+
+      <rect x="500" y="464" width="14" height="10" rx="2" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+      <text x="520" y="472" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Sync target (GUI or headless)</text>
+
+      <line x1="720" y1="469" x2="742" y2="469" stroke="#739fdf" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+      <text x="750" y="472" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Cached query</text>
+    </svg>
+  </div>
+</body>
+</html>
 """
-    return svg
+
+def export_standalone_svg(html_str: str) -> str:
+    # Extract svg element
+    match = re.search(r"(<svg\b[^>]*>.*?</svg>)", html_str, re.DOTALL)
+    if not match:
+        raise ValueError("No <svg> block found in HTML")
+    raw_svg = match.group(1)
+
+    # Prefix IDs to avoid collisions
+    slug = "architecture"
+    id_re = re.compile(r'\bid=["\']([^"\']+)["\']')
+    found_ids = set(id_re.findall(raw_svg))
+    renames = {old: f"{slug}-{old}" for old in found_ids if old not in {"sg-arch-title", "sg-arch-desc"}}
+
+    out_svg = raw_svg
+    for old, new in renames.items():
+        out_svg = re.sub(rf'\bid=["\']{re.escape(old)}["\']', f'id="{new}"', out_svg)
+        out_svg = re.sub(rf'url\(#{re.escape(old)}\)', f'url(#{new})', out_svg)
+        out_svg = re.sub(rf'href=["\']#{re.escape(old)}["\']', f'href="#{new}"', out_svg)
+
+    # Embed typography and CSS variables inside <defs><style>
+    font_import = (
+        "@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1"
+        "&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');"
+    )
+    style_block = f"""
+      <style>
+        {font_import}
+        #{slug}-root {{
+          --color-paper:   #2d3142;
+          --color-ink:     #f5f5f5;
+          --color-muted:   #bfc0c0;
+          --color-accent:  #f08a59;
+          --font-sans:     'Geist', system-ui, -apple-system, sans-serif;
+          --font-serif:    'Instrument Serif', Georgia, serif;
+          --font-mono:     'Geist Mono', ui-monospace, monospace;
+          font-family: var(--font-sans);
+          color: var(--color-ink);
+        }}
+      </style>
+    """
+    out_svg = out_svg.replace("<svg ", f'<svg id="{slug}-root" ', 1)
+    out_svg = out_svg.replace("<defs>", f"<defs>{style_block}", 1)
+
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n{out_svg}\n'
 
 def main():
-    target = Path("docs/assets/architecture.svg")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    svg_content = generate_svg()
-    target.write_text(svg_content, encoding="utf-8")
-    print(f"Generated {len(svg_content)} bytes to {target}")
+    assets_dir = Path("docs/assets")
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    html_path = assets_dir / "architecture.html"
+    html_path.write_text(HTML_CONTENT, encoding="utf-8")
+    print(f"Generated {html_path}")
+
+    svg_content = export_standalone_svg(HTML_CONTENT)
+    svg_path = assets_dir / "architecture.svg"
+    svg_path.write_text(svg_content, encoding="utf-8")
+    print(f"Generated {svg_path}")
 
 if __name__ == "__main__":
     main()
