@@ -55,40 +55,62 @@ SuperGhidra spans four distinct execution paths. Pick the entry point that match
 
 Ghidra locks `.rep` projects exclusively, meaning standard headless scripts fail whenever the project is open in the Ghidra GUI. SuperGhidra avoids lock contention by separating **reads** (served from a warm daemon or read-only session) from **writes** (recorded in a JSON overlay and transaction journal):
 
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="SuperGhidra Architecture &amp; Zero Lock Contention" width="100%">
+</p>
+
+<details>
+<summary><b>Mermaid Diagram Source</b></summary>
+
+```mermaid
+flowchart TD
+    subgraph READ["1. READ PATH (Zero Lock Contention)"]
+        direction TB
+        REP["Ghidra .rep Fork / Read-Only Session<br/><i>Opens with readOnly=True (Zero lock contention)</i>"]
+        DAEMON["SuperGhidra Daemon (127.0.0.1:5073)<br/><i>Persistent warm JVM instance</i>"]
+        L1["L1 Shared-Memory Ring Buffer<br/><code>64 KB SHM · ~5.12 µs IPC</code>"]
+        L2["L2 SQLite Query Cache<br/><code>&gt;100,000 req/s (&lt;0.01 ms)</code>"]
+
+        REP --> DAEMON
+        DAEMON --> L1
+        DAEMON --> L2
+    end
+
+    CLIENTS["AI Coding Agents & External Callers<br/>Claude Desktop · Cursor · Antigravity · PyGhidra MCP · CLI"]
+
+    subgraph WRITE["2. VALIDATION GATE & WRITE OVERLAY (Non-Destructive)"]
+        direction TB
+        GATE["Naming & Struct Pipeline Gate<br/><code>ReconstructionObligationLedger</code><br/>Verifies vtable slots, field displacements & allocation sizes"]
+        OVERLAY["JSON Write Overlay & Transaction Journal<br/><code>ghidra_overlay.json</code> & <code>.ghidra-delta.jsonl</code><br/>Stores renames, comments & types outside main .rep"]
+        
+        GATE -->|"Safe Mutations Only"| OVERLAY
+    end
+
+    DAEMON -->|"1. Cached Decompilations & Xrefs"| CLIENTS
+    CLIENTS -->|"2. Propose Renames, Types & Comments"| GATE
+
+    subgraph SYNC["3. SYNCHRONIZATION BACK TO MAIN PROJECT"]
+        direction LR
+        subgraph OPT_A["Option 3A: LIVE GHIDRA GUI SYNC"]
+            direction TB
+            SCRIPT["Ghidra Script Manager<br/><code>ghidra_gui_overlay_sync.py</code><br/>Atomic GUI session transaction"]
+            WATCHER["Continuous Background Watcher<br/><code>superghidra overlay-sync --watch</code><br/>Polls overlay every 1000 ms"]
+            SCRIPT --- WATCHER
+        end
+
+        subgraph OPT_B["Option 3B: HEADLESS JOURNAL REPLAY"]
+            direction TB
+            REPLAY["Journal Replay & Merge<br/><code>merge_fork(fork_id, auto_discard=True)</code><br/>Replays into .rep when GUI releases lock"]
+            CLEAN["Automated Disk Reclaim<br/>Deletes private fork directory on zero conflicts"]
+            REPLAY --- CLEAN
+        end
+    end
+
+    OVERLAY -->|"Atomic GUI Script"| OPT_A
+    OVERLAY -->|"Batch Merge & Discard"| OPT_B
 ```
-+-------------------------------------------------------------------+
-| 1. READ PATH (Zero Lock Contention)                               |
-|    [Ghidra .rep Fork / Read-Only Session]                         |
-|           │                                                       |
-|           ▼                                                       |
-|    [SuperGhidra Daemon (127.0.0.1:5073)]                          |
-|      ├── L1 Shared-Memory Ring Buffer (64 KB SHM, ~5.12 µs IPC)   |
-|      └── L2 SQLite Query Cache (>100k req/s cached lookups)       |
-+-------------------------------------------------------------------+
-                              │
-        Agent / Oracle Queries & Proposed Mutations
-                              ▼
-+-------------------------------------------------------------------+
-| 2. VALIDATION & WRITE OVERLAY (Non-Destructive)                   |
-|    [Naming & Struct Pipeline Gate]                                |
-|      └── Verifies vtable slots, field offsets & allocation sizes  |
-|           │                                                       |
-|           ▼                                                       |
-|    [JSON Write Overlay + Fork Journal]                            |
-|      └── Stores renames, comments & types outside the main .rep   |
-+-------------------------------------------------------------------+
-                              │
-             Sync Back to Main Project (Two Options)
-              ┌────────────────┴────────────────┐
-              ▼                                 ▼
-+---------------------------+     +---------------------------------+
-| 3A. LIVE GHIDRA GUI SYNC  |     | 3B. HEADLESS JOURNAL REPLAY     |
-| Option 1: run script in   |     | Option 2: replay journal into   |
-| Ghidra Script Manager:    |     | main .rep or merge session fork |
-| superghidra overlay-sync  |     | via merge_fork                  |
-| (ghidra_gui_overlay_sync) |     |                                 |
-+---------------------------+     +---------------------------------+
-```
+
+</details>
 
 ## 5-Minute End-to-End Quickstart
 
