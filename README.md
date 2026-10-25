@@ -53,10 +53,6 @@ SuperGhidra spans four distinct execution paths. Pick the entry point that match
 
 ## How SuperGhidra Compares to Stock Headless & Existing Ghidra MCP Bridges
 
-<p align="center">
-  <img src="docs/assets/ecosystem_comparison.svg" alt="SuperGhidra Ecosystem &amp; Performance Comparison" width="100%">
-</p>
-
 Most Ghidra automation scripts and MCP servers either pay a 5–15 second JVM cold-start penalty per invocation or bind directly to a single mutable GUI session where concurrent agent edits can corrupt the `.rep` database or trigger `LockException`. **[SuperGhidra](https://github.com/yuatemycat/SuperGhidra)** separates read-only oracle queries (`127.0.0.1:5073`) from non-destructive overlay writes (`ghidra_overlay.json`), while executing bulk binary sweeps and C++/MFC recovery in pure Python, NumPy SIMD, and WGPU without touching the JVM.
 
 | Capability / Architecture | Stock Ghidra Headless | [LaurieWired/GhidraMCP](https://github.com/lauriewired/ghidramcp) | [bethington/ghidra-mcp](https://github.com/bethington/ghidra-mcp) / [GhydraMCP](https://github.com/starsong-consulting/GhydraMCP) | [SuperGhidra](https://github.com/yuatemycat/SuperGhidra) + [SuperGhidraMCP](https://github.com/yuatemycat/SuperGhidraMCP) |
@@ -76,7 +72,11 @@ Most Ghidra automation scripts and MCP servers either pay a 5–15 second JVM co
 Ghidra locks `.rep` projects exclusively, meaning standard headless scripts fail whenever the project is open in the Ghidra GUI. SuperGhidra avoids lock contention by separating **reads** (served from a warm daemon or read-only session) from **writes** (recorded in a JSON overlay and transaction journal):
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="SuperGhidra Architecture &amp; Zero Lock Contention" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/architecture-light.svg">
+    <img alt="SuperGhidra Architecture &amp; Zero Lock Contention" src="docs/assets/architecture-light.svg" width="100%">
+  </picture>
 </p>
 
 ## 5-Minute End-to-End Quickstart

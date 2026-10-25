@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 500" width="100%" height="100%">
+  <defs>
+    <style>
+      .font-ui {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      .font-mono {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      }
+    </style>
+    <!-- Arrow Markers -->
+    <marker id="arr-std-dark" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+      <polygon points="0 0, 7 2.5, 0 5" fill="#6e7681"/>
+    </marker>
+    <marker id="arr-blue-dark" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+      <polygon points="0 0, 7 2.5, 0 5" fill="#58a6ff"/>
+    </marker>
+    <marker id="arr-green-dark" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+      <polygon points="0 0, 7 2.5, 0 5" fill="#3fb950"/>
+    </marker>
+    <marker id="arr-purple-dark" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+      <polygon points="0 0, 7 2.5, 0 5" fill="#bc8cff"/>
+    </marker>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="960" height="500" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+
+  <!-- ==================== TIER 1: READ PATH ==================== -->
+  <rect x="20" y="16" width="920" height="124" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+  <text x="36" y="38" fill="#8b949e" class="font-mono" font-size="11" font-weight="700" letter-spacing="0.08em">TIER 1 · READ PATH (ZERO LOCK CONTENTION)</text>
+
+  <!-- Card 1.1: Ghidra .rep -->
+  <g transform="translate(36, 52)">
+    <rect width="255" height="74" rx="6" fill="#0d1117" stroke="#0284c7" stroke-width="1.5"/>
+    <rect x="12" y="10" width="70" height="18" rx="3" fill="rgba(56, 189, 248, 0.15)"/>
+    <text x="47" y="23" fill="#38bdf8" class="font-mono" font-size="10" font-weight="700" text-anchor="middle">READ-ONLY</text>
+    <text x="12" y="45" fill="#f0f6fc" class="font-ui" font-size="14" font-weight="600">Ghidra .rep Session</text>
+    <text x="12" y="62" fill="#8b949e" class="font-mono" font-size="11">readOnly=True · no lock collision</text>
+  </g>
+
+  <!-- Card 1.2: SuperGhidra Daemon -->
+  <g transform="translate(352, 52)">
+    <rect width="255" height="74" rx="6" fill="#0d1117" stroke="#0284c7" stroke-width="1.5"/>
+    <rect x="12" y="10" width="76" height="18" rx="3" fill="rgba(56, 189, 248, 0.15)"/>
+    <text x="50" y="23" fill="#38bdf8" class="font-mono" font-size="10" font-weight="700" text-anchor="middle">PERSISTENT</text>
+    <text x="12" y="45" fill="#f0f6fc" class="font-ui" font-size="14" font-weight="600">Oracle Daemon</text>
+    <text x="12" y="62" fill="#8b949e" class="font-mono" font-size="11">127.0.0.1:5073 · warm JVM</text>
+  </g>
+
+  <!-- Card 1.3: L1 SHM & L2 Cache -->
+  <g transform="translate(668, 52)">
+    <rect width="255" height="74" rx="6" fill="#0d1117" stroke="#059669" stroke-width="1.5"/>
+    <rect x="12" y="10" width="72" height="18" rx="3" fill="rgba(52, 211, 153, 0.15)"/>
+    <text x="48" y="23" fill="#34d399" class="font-mono" font-size="10" font-weight="700" text-anchor="middle">L1/L2 CACHE</text>
+    <text x="12" y="45" fill="#f0f6fc" class="font-ui" font-size="14" font-weight="600">64 KB SHM + SQLite</text>
+    <text x="12" y="62" fill="#8b949e" class="font-mono" font-size="11">5.12 µs roundtrip · &gt;195k msg/s</text>
+  </g>
+
+  <!-- Tier 1 Connectors -->
+  <!-- 1.1 -> 1.2 -->
+  <line x1="291" y1="89" x2="350" y2="89" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr-blue-dark)"/>
+  <!-- 1.2 -> 1.3 -->
+  <line x1="607" y1="89" x2="666" y2="89" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr-green-dark)"/>
+
+
+  <!-- ==================== TIER 2: VALIDATION & OVERLAY ==================== -->
+  <rect x="20" y="156" width="920" height="136" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+  <text x="36" y="178" fill="#8b949e" class="font-mono" font-size="11" font-weight="700" letter-spacing="0.08em">TIER 2 · INTERACTIVE QUERIES &amp; OBLIGATION GATE</text>
+
+  <!-- Card 2.1: AI Agents & CLI -->
+  <g transform="translate(36, 190)">
+    <rect width="255" height="88" rx="6" fill="#0d1117" stroke="#9333ea" stroke-width="1.5"/>
+    <rect x="12" y="10" width="76" height="18" rx="3" fill="rgba(167, 139, 250, 0.15)"/>
+    <text x="50" y="23" fill="#c084fc" class="font-mono" font-size="10" font-weight="700" text-anchor="middle">AI AGENTS</text>
+    <text x="12" y="45" fill="#f0f6fc" class="font-ui" font-size="14" font-weight="600">Agents &amp; CLI Callers</text>
+    <text x="12" y="61" fill="#8b949e" class="font-ui" font-size="12">Claude · Cursor · Antigravity</text>
+    <text x="12" y="77" fill="#8b949e" class="font-mono" font-size="11">Isolated multi-agent session forks</text>
+  </g>
+
+  <!-- Card 2.2: Obligation Ledger Gate -->
+  <g transform="translate(352, 190)">
+    <rect width="255" height="88" rx="6" fill="#0d1117" stroke="#d97706" stroke-width="1.5"/>
+    <rect x="12" y="10" width="105" height="18" rx="3" fill="rgba(251, 191, 36, 0.15)"/>
+    <text x="64" y="23" fill="#fbbf24" class="font-mono" font-size="10" font-weight="700" text-anchor="middle">Z3 SMT VERIFIER</text>
+    <text x="12" y="45" fill="#f0f6fc" class="font-ui" font-size="14" font-weight="600">Obligation Ledger Gate</text>
+    <text x="12" y="61" fill="#8b949e" class="font-ui" font-size="12">Vtable slots · Struct displacements</text>
+    <text x="12" y="77" fill="#8b949e" class="font-mono" font-size="11">Formal P-code semantic proofs</text>
+  </g>
+
+  <!-- Card 2.3: JSON Write Overlay -->
+  <g transform="translate(668, 190)">
+    <rect width="255" height="88" rx="6" fill="#0d1117" stroke="#059669" stroke-width="1.5"/>
+    <rect x="12" y="10" width="90" height="18" rx="3" fill="rgba(52, 211, 153, 0.15)"/>
+    <text x="57" y="23" fill="#34d399" class="font-mono" font-size="10" font-weight="700" text-anchor="middle">TRANSACTION</text>
+    <text x="12" y="45" fill="#f0f6fc" class="font-ui" font-size="14" font-weight="600">JSON Write Overlay</text>
+    <text x="12" y="61" fill="#8b949e" class="font-mono" font-size="11">ghidra_overlay.json</text>
+    <text x="12" y="77" fill="#8b949e" class="font-mono" font-size="11">Non-destructive append-only journal</text>
+  </g>
+
+  <!-- Inter-tier Connection: Daemon -> Agents (Xref queries) -->
+  <path d="M 480,126 V 146 H 164 V 188" fill="none" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-blue-dark)"/>
+  <rect x="272" y="138" width="100" height="16" rx="3" fill="#161b22" stroke="#30363d" stroke-width="0.8"/>
+  <text x="322" y="150" fill="#58a6ff" class="font-mono" font-size="9" font-weight="700" text-anchor="middle">CACHED XREFS</text>
+
+  <!-- 2.1 -> 2.2: Proposed -->
+  <line x1="291" y1="234" x2="350" y2="234" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#arr-purple-dark)"/>
+  <rect x="294" y="214" width="54" height="16" rx="3" fill="#161b22" stroke="#30363d" stroke-width="0.8"/>
+  <text x="321" y="226" fill="#bc8cff" class="font-mono" font-size="9" font-weight="700" text-anchor="middle">PROPOSE</text>
+
+  <!-- 2.2 -> 2.3: Verified -->
+  <line x1="607" y1="234" x2="666" y2="234" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr-green-dark)"/>
+  <rect x="610" y="214" width="54" height="16" rx="3" fill="#161b22" stroke="#30363d" stroke-width="0.8"/>
+  <text x="637" y="226" fill="#3fb950" class="font-mono" font-size="9" font-weight="700" text-anchor="middle">VERIFIED</text>
+
+
+  <!-- ==================== TIER 3: SYNCHRONIZATION ==================== -->
+  <rect x="20" y="308" width="920" height="176" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+  <text x="36" y="330" fill="#8b949e" class="font-mono" font-size="11" font-weight="700" letter-spacing="0.08em">TIER 3 · SYNCHRONIZATION BACK TO MAIN PROJECT</text>
+
+  <!-- Card 3.1: Live Ghidra GUI Sync -->
+  <g transform="translate(130, 370)">
+    <rect width="325" height="98" rx="6" fill="#0d1117" stroke="#0284c7" stroke-width="1.5"/>
+    <rect x="12" y="10" width="112" height="18" rx="3" fill="rgba(56, 189, 248, 0.15)"/>
+    <text x="68" y="23" fill="#38bdf8" class="font-mono" font-size="10" font-weight="700" text-anchor="middle">LIVE GUI SYNC</text>
+    <text x="12" y="44" fill="#f0f6fc" class="font-ui" font-size="14" font-weight="600">Option 3A: Live CodeBrowser Sync</text>
+    <text x="12" y="61" fill="#8b949e" class="font-mono" font-size="11">superghidra overlay-sync --watch</text>
+    <text x="12" y="78" fill="#8b949e" class="font-ui" font-size="12">Polls overlay journal and commits renames &amp; types</text>
+    <text x="12" y="93" fill="#8b949e" class="font-ui" font-size="12">Live in open GUI without closing or restarting</text>
+  </g>
+
+  <!-- Card 3.2: Batch Merge Replay -->
+  <g transform="translate(505, 370)">
+    <rect width="325" height="98" rx="6" fill="#0d1117" stroke="#059669" stroke-width="1.5"/>
+    <rect x="12" y="10" width="102" height="18" rx="3" fill="rgba(52, 211, 153, 0.15)"/>
+    <text x="63" y="23" fill="#34d399" class="font-mono" font-size="10" font-weight="700" text-anchor="middle">HEADLESS MERGE</text>
+    <text x="12" y="44" fill="#f0f6fc" class="font-ui" font-size="14" font-weight="600">Option 3B: Headless Merge Replay</text>
+    <text x="12" y="61" fill="#8b949e" class="font-mono" font-size="11">merge_fork(auto_discard=True)</text>
+    <text x="12" y="78" fill="#8b949e" class="font-ui" font-size="12">Atomic batch replay with stale-base conflict check</text>
+    <text x="12" y="93" fill="#8b949e" class="font-ui" font-size="12">Discards scratch projects and cleans disk state</text>
+  </g>
+
+  <!-- Inter-tier Connection: Overlay -> Sync Options -->
+  <!-- Route safely down through the right side and across between title and cards -->
+  <path d="M 795,278 V 348 H 292 V 368" fill="none" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr-blue-dark)"/>
+  <path d="M 667,348 V 368" fill="none" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr-green-dark)"/>
+  <rect x="420" y="340" width="120" height="16" rx="3" fill="#161b22" stroke="#30363d" stroke-width="0.8"/>
+  <text x="480" y="352" fill="#8b949e" class="font-mono" font-size="9" font-weight="700" text-anchor="middle">APPLY MUTATIONS</text>
+
+</svg>
