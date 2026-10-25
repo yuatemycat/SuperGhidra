@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en" data-resolution="portrait">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <title>Starter Vertical Motion Project (9:16)</title>
+    <!-- GSAP 3.14+ seekable animation engine -->
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #0A0A0A;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+
+      /* Root composition canvas */
+      #root {
+        position: relative;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+      }
+
+      /* ==========================================================================
+         Safe Zone Overlay Guide (TikTok / Reels / YouTube Shorts)
+         Top Header:      0 -> 168px (Search, Live, Following/For You tabs)
+         Right Margin:    940 -> 1080px (Profile, Like, Comment, Share, Audio disc)
+         Bottom Shelf:    1330 -> 1920px (Username, captions, audio title, CTA buttons)
+         Safe Canvas:     x: 70..940px, y: 168..1330px
+         Activated via query param (?safezone=1) or by adding class 'show-safe-zone'
+         ========================================================================== */
+      #safe-zone-overlay {
+        display: none;
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 9999;
+      }
+
+      body.show-safe-zone #safe-zone-overlay,
+      #safe-zone-overlay.active {
+        display: block;
+      }
+
+      .sz-mask {
+        position: absolute;
+        background: rgba(255, 0, 50, 0.18);
+        border: 2px dashed rgba(255, 0, 50, 0.6);
+        box-sizing: border-box;
+      }
+
+      .sz-top {
+        left: 0;
+        top: 0;
+        width: 1080px;
+        height: 168px;
+      }
+
+      .sz-right {
+        left: 940px;
+        top: 168px;
+        width: 140px;
+        height: 1162px;
+      }
+
+      .sz-bottom {
+        left: 0;
+        top: 1330px;
+        width: 1080px;
+        height: 590px;
+      }
+
+      .sz-label {
+        position: absolute;
+        color: #FFFFFF;
+        background: rgba(255, 0, 50, 0.85);
+        padding: 4px 12px;
+        border-radius: 4px;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 700;
+        font-size: 20px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .sz-box {
+        position: absolute;
+        left: 70px;
+        top: 168px;
+        width: 870px;
+        height: 1162px;
+        border: 3px solid rgba(184, 244, 51, 0.8);
+        box-sizing: border-box;
+      }
+
+      .sz-box-label {
+        position: absolute;
+        left: 12px;
+        top: 12px;
+        color: #0A0A0A;
+        background: #B8F433;
+        padding: 4px 12px;
+        border-radius: 4px;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 700;
+        font-size: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="30"
+      data-width="1080"
+      data-height="1920"
+    >
+      <!-- Scene 1: The Hook (0.0s -> 5.0s) -->
+      <div
+        id="scene-hook"
+        style="z-index: 1"
+        data-composition-id="hook"
+        data-composition-src="compositions/s-hook.html"
+        data-start="0"
+        data-duration="5.0"
+        data-track-index="1"
+        data-track-kind="graphics"
+        data-width="1080"
+        data-height="1920"
+      ></div>
+
+      <!-- Scene 2: Terminal / Code Demo (4.6s -> 25.0s) -->
+      <div
+        id="scene-terminal"
+        style="z-index: 2"
+        data-composition-id="terminal"
+        data-composition-src="compositions/s-terminal.html"
+        data-start="4.6"
+        data-duration="20.8"
+        data-track-index="2"
+        data-track-kind="graphics"
+        data-width="1080"
+        data-height="1920"
+      ></div>
+
+      <!-- Scene 3: End Card Call-To-Action (25.0s -> 30.0s) -->
+      <div
+        id="scene-end"
+        style="z-index: 3"
+        data-composition-id="end"
+        data-composition-src="compositions/s-end.html"
+        data-start="25.0"
+        data-duration="5.0"
+        data-track-index="3"
+        data-track-kind="graphics"
+        data-width="1080"
+        data-height="1920"
+      ></div>
+
+      <!-- Sound Effects: Lead-in aligned with visual impact moments -->
+      <!-- S1 Hook Whoosh: Aligned to visual wipe transition at 0.0s -->
+      <audio id="sfx-whoosh-1" src="assets/sfx/whoosh.mp3" data-start="0.0" data-duration="0.58" data-volume="0.75" data-track-index="10"></audio>
+
+      <!-- S2 Terminal Transition Whoosh: Visual scene morph at 4.6s (whoosh peak lead-in 0.165s -> data-start 4.435s) -->
+      <audio id="sfx-whoosh-2" src="assets/sfx/whoosh.mp3" data-start="4.435" data-duration="0.58" data-volume="0.8" data-track-index="10"></audio>
+
+      <!-- S2 Typing Sound: Typing sequence begins at 7.6s (typing onset lead-in 0.452s -> data-start 7.148s) -->
+      <audio id="sfx-type-1" src="assets/sfx/typing.mp3" data-start="7.148" data-duration="1.50" data-volume="0.5" data-track-index="12"></audio>
+
+      <!-- S2 Marker Swipe Pop: Highlight lands at 8.9s (pop onset lead-in 0.113s -> data-start 8.787s) -->
+      <audio id="sfx-pop-1" src="assets/sfx/pop.mp3" data-start="8.787" data-duration="0.72" data-volume="0.8" data-track-index="13"></audio>
+
+      <!-- S3 End Card Transition Whoosh: Transition at 25.0s (whoosh peak lead-in 0.165s -> data-start 24.835s) -->
+      <audio id="sfx-whoosh-3" src="assets/sfx/whoosh.mp3" data-start="24.835" data-duration="0.58" data-volume="0.7" data-track-index="10"></audio>
+
+      <!-- S3 CTA Impact Strike: CTA pill lands at 25.9s (impact onset lead-in 0.047s -> data-start 25.853s) -->
+      <audio id="sfx-impact" src="assets/sfx/impact.mp3" data-start="25.853" data-duration="2.12" data-volume="0.85" data-track-index="15"></audio>
+
+      <!-- Visual Safe Zone Overlay (Diagnostics & QA) -->
+      <div id="safe-zone-overlay">
+        <div class="sz-mask sz-top">
+          <div class="sz-label" style="top: 8px; left: 16px;">Top UI Header (y: 0..168)</div>
+        </div>
+        <div class="sz-mask sz-right">
+          <div class="sz-label" style="top: 16px; right: 8px; font-size: 14px;">Right Actions (x: 940..1080)</div>
+        </div>
+        <div class="sz-mask sz-bottom">
+          <div class="sz-label" style="top: 8px; left: 16px;">Bottom Captions &amp; Shelf (y: 1330..1920)</div>
+        </div>
+        <div class="sz-box">
+          <div class="sz-box-label">Verified Safe Content Area (70x168 - 940x1330)</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Toggle safe zone overlay via URL parameter ?safezone=1
+      if (new URLSearchParams(window.location.search).get("safezone") === "1") {
+        document.getElementById("safe-zone-overlay").classList.add("active");
+      }
+
+      // Root Timeline registration for HyperFrames engine
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

@@ -51,6 +51,26 @@ SuperGhidra spans four distinct execution paths. Pick the entry point that match
 > python ghidra_oracle.py decompile <addr>
 > ```
 
+## How SuperGhidra Compares to Stock Headless & Existing Ghidra MCP Bridges
+
+<p align="center">
+  <img src="docs/assets/ecosystem_comparison.svg" alt="SuperGhidra Ecosystem &amp; Performance Comparison" width="100%">
+</p>
+
+Most Ghidra automation scripts and MCP servers either pay a 5–15 second JVM cold-start penalty per invocation or bind directly to a single mutable GUI session where concurrent agent edits can corrupt the `.rep` database or trigger `LockException`. **[SuperGhidra](https://github.com/yuatemycat/SuperGhidra)** separates read-only oracle queries (`127.0.0.1:5073`) from non-destructive overlay writes (`ghidra_overlay.json`), while executing bulk binary sweeps and C++/MFC recovery in pure Python, NumPy SIMD, and WGPU without touching the JVM.
+
+| Capability / Architecture | Stock Ghidra Headless | [LaurieWired/GhidraMCP](https://github.com/lauriewired/ghidramcp) | [bethington/ghidra-mcp](https://github.com/bethington/ghidra-mcp) / [GhydraMCP](https://github.com/starsong-consulting/GhydraMCP) | [SuperGhidra](https://github.com/yuatemycat/SuperGhidra) + [SuperGhidraMCP](https://github.com/yuatemycat/SuperGhidraMCP) |
+| :--- | :--- | :--- | :--- | :--- |
+| **JVM Startup Overhead** | 5–15 s per script run | None (requires open GUI) | None (requires open GUI/plugin) | **0 ms** after initial daemon boot (`127.0.0.1:5073`) |
+| **Concurrent GUI + Multi-Agent Access** | Blocked by `.rep` project lock | Single mutable GUI state | Single/HTTP bridged GUI state | **Lock-free `readOnly=True` daemon + isolated session forks** |
+| **Mutation Safety & Conflict Resolution** | Direct `.rep` writes | Direct in-place renames | Direct in-place tool mutations | **Non-destructive `ghidra_overlay.json` + `merge_fork` conflict detection** |
+| **Semantic Verification Gate** | None | None | None | **Z3 P-code equivalence prover + Obligation Ledger Gate** (vtable/offset checks) |
+| **Query & IPC Latency** | Seconds per batch | HTTP / Socket bridge | HTTP / REST bridge | **5.12 µs** L1 SHM ring buffer (`195,300 msg/s`) & **< 0.01 ms** L2 SQLite cache |
+| **Compilable C Post-Processing** | Raw Ghidra pseudo-C (`8.26%` pass) | Raw Ghidra pseudo-C | Raw Ghidra pseudo-C | **`compilable_filter.py` rewriter (`22.69%` pass across 1,296 functions, 0 regressions)** |
+| **Zero-JVM Binary & C++ Recovery** | None (JVM required) | None (JVM required) | None (JVM required) | **Pure-Python PE/ELF/Mach-O loader, MSVC RTTI, MFC `CRuntimeClass` & `Serialize()`** |
+| **Hardware-Accelerated Sweeps** | Single-threaded Java | None | None | **143.95 M insn/s NumPy SIMD & 127.25 M insn/s WGPU ARM64 `ADRP` scanners** |
+| **Database Compression** | Standard `.rep` 16 KB pages | Standard `.rep` | Standard `.rep` | **LZ4 (`442.9 MB/s`, 79.3% savings) & Zstd (`206.5 MB/s`, 86.5% savings) BufferFile codecs** |
+
 ## Architecture & Zero Lock Contention
 
 Ghidra locks `.rep` projects exclusively, meaning standard headless scripts fail whenever the project is open in the Ghidra GUI. SuperGhidra avoids lock contention by separating **reads** (served from a warm daemon or read-only session) from **writes** (recorded in a JSON overlay and transaction journal):
@@ -58,45 +78,6 @@ Ghidra locks `.rep` projects exclusively, meaning standard headless scripts fail
 <p align="center">
   <img src="docs/assets/architecture.svg" alt="SuperGhidra Architecture &amp; Zero Lock Contention" width="100%">
 </p>
-
-<details>
-<summary><b>Mermaid Diagram Source</b></summary>
-
-```mermaid
-flowchart TD
-    subgraph READ["1. READ PATH (Zero Lock Contention)"]
-        direction LR
-        REP["Ghidra .rep Session<br/><code>readOnly=True · zero lock collisions</code>"]
-        DAEMON["SuperGhidra Daemon (127.0.0.1:5073)<br/><code>warm JVM instance</code>"]
-        CACHE["L1 SHM &amp; L2 SQLite Cache<br/><code>64 KB SHM (5.12 µs) · &gt;100k req/s</code>"]
-
-        REP -->|"READ-ONLY"| DAEMON
-        DAEMON -->|"L1/L2 IPC"| CACHE
-    end
-
-    subgraph WRITE["2. INTERACTIVE QUERIES &amp; VALIDATION GATE"]
-        direction LR
-        CLIENTS["AI Agents &amp; CLI Callers<br/><code>Claude · Cursor · Antigravity · MCP</code>"]
-        GATE["Obligation Ledger Gate<br/><code>vtables · displacements · sizes</code>"]
-        OVERLAY["JSON Write Overlay<br/><code>ghidra_overlay.json · delta log</code>"]
-
-        CLIENTS -->|"PROPOSED"| GATE
-        GATE -->|"VERIFIED"| OVERLAY
-    end
-
-    DAEMON -.->|"CACHED XREFS"| CLIENTS
-
-    subgraph SYNC["3. SYNCHRONIZATION BACK TO MAIN PROJECT"]
-        direction LR
-        OPT_A["Option 3A · Live Ghidra GUI Sync<br/><code>superghidra overlay-sync --watch</code>"]
-        OPT_B["Option 3B · Headless Replay &amp; Discard<br/><code>merge_fork(auto_discard=True) · disk cleanup</code>"]
-    end
-
-    OVERLAY -->|"LIVE GUI SYNC"| OPT_A
-    OVERLAY -->|"BATCH MERGE"| OPT_B
-```
-
-</details>
 
 ## 5-Minute End-to-End Quickstart
 

@@ -1,0 +1,15 @@
+{
+  "name": "starter-vertical-motion",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "HyperFrames vertical 9:16 (1080x1920) 30fps starter motion video template",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.8.195 preview",
+    "check": "npx --yes hyperframes@0.8.195 check",
+    "render": "npx --yes hyperframes@0.8.195 render -o out/final.mp4",
+    "snapshot": "npx --yes hyperframes@0.8.195 snapshot --at 0,2,6,12,18,24,28",
+    "sanitize-fonts": "node ../font_longhand_sanitizer.mjs --dir .",
+    "align-audio": "python ../audio_onset_aligner.py"
+  }
+}

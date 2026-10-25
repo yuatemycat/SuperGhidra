@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Build & Release Package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Build Tooling
+        run: |
+          python -m pip install --upgrade pip build wheel
+
+      - name: Build Python Distribution (sdist & wheel)
+        run: |
+          python -m build
+
+      - name: Package Ghidra GUI Sync Extension Zip
+        run: |
+          mkdir -p dist/extension
+          cp -r ghidra_extension_skeleton/* dist/extension/
+          cp ghidra_gui_overlay_sync.py dist/extension/
+          cd dist && zip -r SuperGhidra-GUI-Sync-Extension.zip extension/ && rm -rf extension
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SuperGhidra-GUI-Sync-Extension.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true

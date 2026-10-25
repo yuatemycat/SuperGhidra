@@ -1,0 +1,144 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      width: 1080px;
+      height: 1920px;
+    }
+
+    #hook-ground {
+      position: absolute;
+      inset: 0;
+      background-color: #FF4B1F;
+    }
+
+    #hook-content {
+      position: absolute;
+      inset: 0;
+    }
+
+    .hook-text {
+      position: absolute;
+      left: 70px;
+      color: #0A0A0A;
+      width: 870px;
+    }
+
+    #hook-eyebrow {
+      top: 300px;
+      font-family: 'Inter', sans-serif;
+      font-weight: 700;
+      font-size: 54px;
+      line-height: 1;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    #hook-stat {
+      top: 360px;
+      font-family: 'Archivo Black', sans-serif;
+      font-weight: 400;
+      font-size: 380px;
+      line-height: 0.90;
+      letter-spacing: -0.03em;
+    }
+
+    #hook-desc {
+      top: 760px;
+      font-family: 'Inter', sans-serif;
+      font-weight: 800;
+      font-size: 72px;
+      line-height: 1.05;
+    }
+
+    #hook-bar-bg {
+      position: absolute;
+      left: 70px;
+      top: 1020px;
+      width: 870px;
+      height: 24px;
+      background-color: rgba(10, 10, 10, 0.18);
+      border-radius: 12px;
+    }
+
+    #hook-bar-fill {
+      position: absolute;
+      left: 70px;
+      top: 1020px;
+      width: 870px;
+      height: 24px;
+      background-color: #0A0A0A;
+      border-radius: 12px;
+      transform-origin: left center;
+    }
+
+    .hook-beat {
+      position: absolute;
+      left: 70px;
+      top: 520px;
+      width: 870px;
+      opacity: 0;
+      color: #0A0A0A;
+      font-family: 'Archivo Black', sans-serif;
+      font-weight: 400;
+      font-size: 150px;
+      line-height: 0.95;
+      letter-spacing: -0.02em;
+    }
+
+    .hook-beat .w {
+      display: inline-block;
+    }
+  </style>
+
+  <div id="root" data-composition-id="hook" data-width="1080" data-height="1920">
+    <div id="hook-ground"></div>
+    <div id="hook-content">
+      <div id="hook-eyebrow" class="hook-text">Up to</div>
+      <div id="hook-stat" class="hook-text">15s</div>
+      <div id="hook-desc" class="hook-text">Startup Overhead.<br />Every Single Run.</div>
+      <div id="hook-bar-bg"></div>
+      <div id="hook-bar-fill"></div>
+    </div>
+
+    <!-- Tension Beats -->
+    <div id="beat-1" class="hook-beat"><span class="w">GUI</span> <span class="w">LOCKED?</span></div>
+    <div id="beat-2" class="hook-beat"><span class="w">DATABASE</span> <span class="w">FROZEN.</span></div>
+    <div id="beat-3" class="hook-beat"><span class="w">PIPELINES</span> <span class="w">FAIL.</span></div>
+  </div>
+
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+
+    // S1: Frame 0 is readable immediately. The only motion is the stalled-looking load bar.
+    tl.fromTo("#hook-bar-fill", 
+      { scaleX: 0 }, 
+      { scaleX: 1, duration: 1.8, ease: "none" }, 0.2);
+
+    tl.to("#hook-content", 
+      { opacity: 0, filter: "blur(8px)", duration: 0.167, ease: "power3.in" }, 2.0);
+
+    // S2: Three rapid single-line beats, per-word blur-in, previous beat blurs out first.
+    const addBeat = (id, start, exit) => {
+      tl.set("#" + id, { opacity: 1 }, start);
+      tl.fromTo("#" + id + " .w", 
+        { opacity: 0, filter: "blur(6px)", y: 15 },
+        { opacity: 1, filter: "blur(0px)", y: 0, duration: 0.133, stagger: 0.067, ease: "power2.out" }, 
+        start);
+      if (exit) {
+        tl.to("#" + id, 
+          { opacity: 0, filter: "blur(8px)", duration: 0.15, ease: "power3.in" }, 
+          exit);
+      }
+    };
+
+    addBeat("beat-1", 2.15, 3.0);
+    addBeat("beat-2", 3.15, 4.0);
+    addBeat("beat-3", 4.15, null);
+
+    window.__timelines["hook"] = tl;
+  </script>
+</template>

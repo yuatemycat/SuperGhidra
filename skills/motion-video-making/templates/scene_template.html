@@ -1,0 +1,65 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+    #ground {
+      position: absolute;
+      inset: 0;
+      background: #0A0A0A;
+    }
+    .headline {
+      position: absolute;
+      left: 70px;
+      top: 300px;
+      width: 870px;
+      color: #FFFFFF;
+      font-family: 'Archivo Black', sans-serif;
+      font-weight: 400;
+      font-size: 150px;
+      line-height: 0.92;
+      letter-spacing: -0.02em;
+    }
+    .subtext {
+      position: absolute;
+      left: 70px;
+      top: 700px;
+      width: 870px;
+      color: #E6E6E6;
+      font-family: 'Inter', sans-serif;
+      font-weight: 700;
+      font-size: 56px;
+      line-height: 1.1;
+    }
+    .word {
+      display: inline-block;
+    }
+  </style>
+  <div id="root" data-composition-id="scene-id" data-width="1080" data-height="1920">
+    <div id="ground"></div>
+    <div id="title" class="headline">
+      <span class="word">HERO</span> <span class="word">HEADLINE</span>
+    </div>
+    <div id="desc" class="subtext">
+      Sub-heading or quantified proof metric inside the vertical safe-zone.
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+
+    // Transition In (Wipe & Blur-In)
+    tl.fromTo("#ground", { clipPath: "inset(100% 0% 0% 0%)" },
+      { clipPath: "inset(0% 0% 0% 0%)", duration: 0.4, ease: "power2.inOut" }, 0);
+
+    tl.fromTo("#title .word", { opacity: 0, filter: "blur(6px)" },
+      { opacity: 1, filter: "blur(0px)", duration: 0.15, stagger: 0.08, ease: "power2.out" }, 0.4);
+
+    tl.fromTo("#desc", { opacity: 0, y: 30, filter: "blur(8px)" },
+      { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.4, ease: "expo.out" }, 0.8);
+
+    // Hold still until scene exit
+    window.__timelines["scene-id"] = tl;
+  </script>
+</template>

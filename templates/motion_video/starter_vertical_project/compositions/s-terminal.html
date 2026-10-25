@@ -1,0 +1,259 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      width: 1080px;
+      height: 1920px;
+    }
+
+    #term-ground {
+      position: absolute;
+      inset: 0;
+      background-color: #B8F433;
+    }
+
+    #term-watermark {
+      position: absolute;
+      left: 70px;
+      top: 380px;
+      width: 870px;
+      color: #0A0A0A;
+      font-family: 'Archivo Black', sans-serif;
+      font-weight: 400;
+      font-size: 190px;
+      line-height: 0.92;
+      letter-spacing: -0.02em;
+    }
+
+    #term-watermark .l {
+      display: inline-block;
+    }
+
+    #term-pill {
+      position: absolute;
+      left: 70px;
+      top: 920px;
+      width: 520px;
+      height: 140px;
+      border-radius: 70px;
+      background-color: #0A0A0A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #B8F433;
+      font-family: 'Archivo Black', sans-serif;
+      font-weight: 400;
+      font-size: 80px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    #term-win {
+      position: absolute;
+      left: 70px;
+      top: 200px;
+      width: 940px;
+      height: 1100px;
+      border-radius: 18px;
+      background-color: #16171C;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45);
+      overflow: hidden;
+      opacity: 0;
+      transform: translate3d(0, 0, 0);
+    }
+
+    #term-bar {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 64px;
+      background-color: #23252D;
+      display: flex;
+      align-items: center;
+    }
+
+    .term-dots {
+      position: absolute;
+      left: 24px;
+      display: flex;
+      gap: 10px;
+    }
+
+    .term-dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 9px;
+    }
+
+    .dot-close { background-color: #FF5F57; }
+    .dot-min   { background-color: #FEBC2E; }
+    .dot-max   { background-color: #28C840; }
+
+    .term-title {
+      width: 100%;
+      text-align: center;
+      color: #8B8F98;
+      font-family: 'Inter', sans-serif;
+      font-weight: 500;
+      font-size: 28px;
+      line-height: 1;
+    }
+
+    #term-body {
+      position: absolute;
+      left: 32px;
+      top: 96px;
+      width: calc(100% - 64px);
+      height: calc(100% - 128px);
+      color: #E6E6E6;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+      font-size: 34px;
+      line-height: 1.4;
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0, "calt" 0;
+      overflow: hidden;
+    }
+
+    #term-body .ln {
+      min-height: 1.4em;
+      white-space: pre-wrap;
+    }
+
+    #term-body .c {
+      opacity: 0;
+    }
+
+    #term-body .p {
+      color: #5FD38D;
+      font-weight: 700;
+    }
+
+    #term-body .out {
+      opacity: 0;
+    }
+
+    #term-body .k {
+      color: #7DC4E4;
+    }
+
+    #term-body .cm {
+      color: #6B7280;
+      font-style: italic;
+    }
+
+    #term-body .gap {
+      height: 1.4em;
+    }
+
+    #term-body .hl {
+      display: inline-block;
+      padding: 0 4px;
+      border-radius: 4px;
+      background: linear-gradient(#B8F433, #B8F433) no-repeat left center;
+      background-size: 0% 100%;
+      color: inherit;
+    }
+  </style>
+
+  <div id="root" data-composition-id="terminal" data-width="1080" data-height="1920">
+    <div id="term-ground"></div>
+    <div id="term-watermark" data-layout-ignore="true">
+      <span class="l">S</span><span class="l">U</span><span class="l">P</span><span class="l">E</span><span class="l">R</span><br />
+      <span class="l">G</span><span class="l">H</span><span class="l">I</span><span class="l">D</span><span class="l">R</span><span class="l">A</span>
+    </div>
+
+    <!-- Entrance Hero Pill -->
+    <div id="term-pill">ZERO JVM.</div>
+
+    <!-- Terminal Window Surface -->
+    <div id="term-win" data-hold="true">
+      <div id="term-bar">
+        <div class="term-dots">
+          <span class="term-dot dot-close"></span>
+          <span class="term-dot dot-min"></span>
+          <span class="term-dot dot-max"></span>
+        </div>
+        <div class="term-title">SuperGhidra Engine</div>
+      </div>
+      <div id="term-body">
+        <div class="ln cmd" id="cmd-1">
+          <span class="c p">$ </span><span class="c">s</span><span class="c">u</span><span class="c">p</span><span class="c">e</span><span class="c">r</span><span class="c">g</span><span class="c">h</span><span class="c">i</span><span class="c">d</span><span class="c">r</span><span class="c">a</span><span class="c"> </span><span class="c">r</span><span class="c">t</span><span class="c">t</span><span class="c">i</span><span class="c">-</span><span class="c">r</span><span class="c">e</span><span class="c">c</span><span class="c">o</span><span class="c">v</span><span class="c">e</span><span class="c">r</span><span class="c"> </span><span class="c">b</span><span class="c">i</span><span class="c">n</span><span class="c">a</span><span class="c">r</span><span class="c">y</span><span class="c">.</span><span class="c">d</span><span class="c">l</span><span class="c">l</span>
+        </div>
+        <div class="ln out" id="out-1">
+          Loaded <span class="hl" id="hl-1">755</span> classes, recovered <span class="hl" id="hl-2">391</span> types
+        </div>
+        <div class="gap"></div>
+        <div class="ln cmd" id="cmd-2">
+          <span class="c p">$ </span><span class="c">p</span><span class="c">y</span><span class="c">t</span><span class="c">h</span><span class="c">o</span><span class="c">n</span><span class="c"> </span><span class="c">-</span><span class="c">m</span><span class="c"> </span><span class="c">s</span><span class="c">u</span><span class="c">p</span><span class="c">e</span><span class="c">r</span><span class="c">g</span><span class="c">h</span><span class="c">i</span><span class="c">d</span><span class="c">r</span><span class="c">a</span><span class="c">.</span><span class="c">t</span><span class="c">r</span><span class="c">a</span><span class="c">c</span><span class="c">e</span>
+        </div>
+        <div class="ln out" id="trace-0"><span class="k">load:</span>  0x140023a10 -&gt; vtable CDWordArray</div>
+        <div class="ln out" id="trace-1"><span class="k">store:</span> 0x140023a18 &lt;- type info validated</div>
+        <div class="ln out" id="trace-2"><span class="k">load:</span>  0x140023a20 -&gt; 52 virtual methods</div>
+        <div class="ln cm" id="cm-1">
+          <span class="c">#</span><span class="c"> </span><span class="c">p</span><span class="c">u</span><span class="c">r</span><span class="c">e</span><span class="c"> </span><span class="c">P</span><span class="c">y</span><span class="c">t</span><span class="c">h</span><span class="c">o</span><span class="c">n</span><span class="c">:</span><span class="c"> </span><span class="c">n</span><span class="c">o</span><span class="c"> </span><span class="c">G</span><span class="c">h</span><span class="c">i</span><span class="c">d</span><span class="c">r</span><span class="c">a</span><span class="c">,</span><span class="c"> </span><span class="c">n</span><span class="c">o</span><span class="c"> </span><span class="c">J</span><span class="c">V</span><span class="c">M</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+
+    // 0.0s: Up-wipe flood from the previous scene
+    tl.fromTo("#term-ground", 
+      { clipPath: "inset(100% 0% 0% 0%)" },
+      { clipPath: "inset(0% 0% 0% 0%)", duration: 0.4, ease: "power2.inOut" }, 0);
+
+    // 0.4s: Watermark letters blur in
+    tl.fromTo("#term-watermark .l", 
+      { opacity: 0, filter: "blur(6px)" },
+      { opacity: 1, filter: "blur(0px)", duration: 0.12, stagger: 0.06, ease: "power2.out" }, 0.4);
+
+    // 1.0s: Pill lands with expo bounce
+    tl.fromTo("#term-pill", 
+      { opacity: 0, y: 50, filter: "blur(8px)" },
+      { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.45, ease: "expo.out" }, 1.0);
+
+    // 2.2s: Pill transforms / morphs into the terminal window
+    tl.to("#term-watermark", { opacity: 0, filter: "blur(10px)", duration: 0.25, ease: "power3.in" }, 2.2);
+    tl.to("#term-pill", { opacity: 0, scale: 0.8, duration: 0.25, ease: "power3.in" }, 2.2);
+
+    tl.fromTo("#term-win",
+      { opacity: 0, scale: 0.92, y: 40 },
+      { opacity: 1, scale: 1, y: 0, duration: 0.5, ease: "power3.out" }, 2.3);
+
+    // 3.0s: Type Command 1 (18ms per character)
+    tl.fromTo("#cmd-1 .c", 
+      { opacity: 0 }, 
+      { opacity: 1, duration: 0.001, stagger: 0.018, ease: "none" }, 3.0);
+
+    // 4.0s: Command 1 Output appears as a whole stdout chunk
+    tl.to("#out-1", { opacity: 1, duration: 0.1, ease: "none" }, 4.0);
+
+    // 4.3s: Marker swipe on key quantitative results
+    tl.to("#hl-1", { backgroundSize: "100% 100%", color: "#0A0A0A", duration: 0.35, ease: "power2.inOut" }, 4.3);
+    tl.to("#hl-2", { backgroundSize: "100% 100%", color: "#0A0A0A", duration: 0.35, ease: "power2.inOut" }, 4.5);
+
+    // 5.2s: Type Command 2
+    tl.fromTo("#cmd-2 .c", 
+      { opacity: 0 }, 
+      { opacity: 1, duration: 0.001, stagger: 0.018, ease: "none" }, 5.2);
+
+    // 6.5s: Trace lines stagger in
+    tl.to("#trace-0, #trace-1, #trace-2", 
+      { opacity: 1, duration: 0.08, stagger: 0.15, ease: "none" }, 6.5);
+
+    // 7.4s: Gray comment typed
+    tl.fromTo("#cm-1 .c", 
+      { opacity: 0 }, 
+      { opacity: 1, duration: 0.001, stagger: 0.022, ease: "none" }, 7.4);
+
+    // Holds static for review until scene transition
+    window.__timelines["terminal"] = tl;
+  </script>
+</template>

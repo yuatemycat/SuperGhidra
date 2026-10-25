@@ -1,0 +1,9 @@
+{
+  "$schema": "https://hyperframes.heygen.com/schema/v0.8/hyperframes.json",
+  "resolution": "portrait",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "duration": 30,
+  "skill": "hyperframes"
+}

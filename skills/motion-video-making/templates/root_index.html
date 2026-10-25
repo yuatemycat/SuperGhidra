@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en" data-resolution="portrait">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #0A0A0A;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="30"
+      data-width="1080"
+      data-height="1920"
+    >
+      <!-- Scene 1: Hook & Tension -->
+      <div
+        id="scene-hook"
+        style="z-index: 1"
+        data-composition-id="hook"
+        data-composition-src="compositions/s-hook.html"
+        data-start="0"
+        data-duration="7"
+        data-track-index="1"
+        data-track-kind="graphics"
+        data-width="1080"
+        data-height="1920"
+      ></div>
+
+      <!-- Scene 2: Proof & Authenticated Terminal -->
+      <div
+        id="scene-proof"
+        style="z-index: 2"
+        data-composition-id="proof"
+        data-composition-src="compositions/s-proof.html"
+        data-start="6.5"
+        data-duration="12"
+        data-track-index="2"
+        data-track-kind="graphics"
+        data-width="1080"
+        data-height="1920"
+      ></div>
+
+      <!-- Scene 3: How It Works -->
+      <div
+        id="scene-how"
+        style="z-index: 3"
+        data-composition-id="how"
+        data-composition-src="compositions/s-how.html"
+        data-start="18"
+        data-duration="5.8"
+        data-track-index="3"
+        data-track-kind="graphics"
+        data-width="1080"
+        data-height="1920"
+      ></div>
+
+      <!-- Scene 4: End Card CTA -->
+      <div
+        id="scene-end"
+        style="z-index: 4"
+        data-composition-id="end"
+        data-composition-src="compositions/s-end.html"
+        data-start="23.5"
+        data-duration="6.5"
+        data-track-index="4"
+        data-track-kind="graphics"
+        data-width="1080"
+        data-height="1920"
+      ></div>
+
+      <!-- Sound Design with Lead-in Compensation -->
+      <!-- whoosh at scene transitions (0.0s lead-in) -->
+      <audio id="sfx-whoosh-1" src="assets/sfx/whoosh.mp3" data-start="6.5" data-duration="0.6" data-volume="0.8" data-track-index="10"></audio>
+      <!-- error.mp3 has ~0.60s lead-in: visual beat at 3.83s -> data-start="3.23" -->
+      <audio id="sfx-error" src="assets/sfx/error.mp3" data-start="3.23" data-duration="1.4" data-volume="0.45" data-track-index="11"></audio>
+      <!-- typing sounds during terminal entry -->
+      <audio id="sfx-type-1" src="assets/sfx/typing.mp3" data-start="10.0" data-duration="1.2" data-volume="0.5" data-track-index="12"></audio>
+      <!-- ping.mp3 has ~0.32s lead-in: visual beat at 25.0s -> data-start="24.68" -->
+      <audio id="sfx-ping" src="assets/sfx/ping.mp3" data-start="24.68" data-duration="1.3" data-volume="0.7" data-track-index="13"></audio>
+      <!-- impact slam on end card CTA -->
+      <audio id="sfx-impact" src="assets/sfx/impact.mp3" data-start="27.17" data-duration="2.1" data-volume="0.8" data-track-index="14"></audio>
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

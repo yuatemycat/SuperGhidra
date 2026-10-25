@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="ecosystem-root" viewBox="0 0 1000 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="sg-eco-title sg-eco-desc">
+  <title id="sg-eco-title">SuperGhidra Ecosystem Architecture &amp; Performance Comparison</title>
+  <desc id="sg-eco-desc">Comparison of SuperGhidra's lock-free daemon and zero-JVM pipeline against stock headless and single-session MCP bridges.</desc>
+
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');
+      #ecosystem-root {
+        --bg-panel: #1e2230;
+        --border-panel: rgba(255, 255, 255, 0.08);
+        --text-bright: #ffffff;
+        --text-dim: #949eb2;
+        --accent-orange: #f08a59;
+        --accent-green: #5fd38d;
+        --accent-blue: #739fdf;
+        --accent-red: #ff5f57;
+        font-family: 'Geist', system-ui, -apple-system, sans-serif;
+      }
+      .panel-title { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+      .metric-val { font-size: 20px; font-weight: 700; font-family: 'Geist Mono', monospace; }
+      .metric-lbl { font-size: 11px; fill: #949eb2; }
+      .tag { font-size: 10px; font-weight: 600; font-family: 'Geist Mono', monospace; }
+    </style>
+    <pattern id="eco-grid" width="20" height="20" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.8" fill="rgba(255,255,255,0.06)"/>
+    </pattern>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="100%" height="100%" fill="#161822"/>
+  <rect width="100%" height="100%" fill="url(#eco-grid)"/>
+
+  <!-- Header Banner -->
+  <text x="50" y="42" fill="#ffffff" font-size="16" font-weight="700" letter-spacing="-0.01em">
+    Architecture &amp; Performance Frontier
+  </text>
+  <text x="50" y="60" fill="#949eb2" font-size="12">
+    Comparing stock Ghidra headless scripts, single-session MCP wrappers, and SuperGhidra's lock-free multi-agent stack.
+  </text>
+
+  <!-- Card 1: Stock Headless -->
+  <g transform="translate(50, 85)">
+    <rect width="275" height="300" rx="10" fill="#1e2230" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+    <!-- Top badge -->
+    <rect x="16" y="16" width="120" height="22" rx="4" fill="rgba(255,95,87,0.15)"/>
+    <text x="24" y="31" fill="#ff7b72" class="tag">STOCK HEADLESS</text>
+
+    <text x="16" y="68" fill="#ffffff" font-size="14" font-weight="600">Single Script Pipeline</text>
+    <text x="16" y="86" fill="#949eb2" font-size="11">JVM spin-up per execution</text>
+
+    <!-- Metrics -->
+    <g transform="translate(16, 108)">
+      <text x="0" y="0" fill="#ff5f57" class="metric-val">5–15 s</text>
+      <text x="0" y="16" class="metric-lbl">JVM Cold-Start Overhead</text>
+
+      <text x="0" y="52" fill="#ff5f57" class="metric-val">Exclusive Lock</text>
+      <text x="0" y="68" class="metric-lbl">Blocked by GUI (.rep lock contention)</text>
+
+      <text x="0" y="104" fill="#ff5f57" class="metric-val">8.26% Pass</text>
+      <text x="0" y="120" class="metric-lbl">Compilable C (HumanEval-Decompile)</text>
+
+      <text x="0" y="156" fill="#949eb2" class="metric-val">100% JVM</text>
+      <text x="0" y="172" class="metric-lbl">No fast path for RTTI / MFC</text>
+    </g>
+  </g>
+
+  <!-- Card 2: Single-Session MCP Wrappers -->
+  <g transform="translate(362, 85)">
+    <rect width="275" height="300" rx="10" fill="#1e2230" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+    <!-- Top badge -->
+    <rect x="16" y="16" width="135" height="22" rx="4" fill="rgba(240,138,89,0.15)"/>
+    <text x="24" y="31" fill="#f08a59" class="tag">STANDARD MCP WRAPPER</text>
+
+    <text x="16" y="68" fill="#ffffff" font-size="14" font-weight="600">Live GUI Bridge</text>
+    <text x="16" y="86" fill="#949eb2" font-size="11">Direct in-place GUI mutation</text>
+
+    <!-- Metrics -->
+    <g transform="translate(16, 108)">
+      <text x="0" y="0" fill="#f08a59" class="metric-val">Open GUI Only</text>
+      <text x="0" y="16" class="metric-lbl">Requires active interactive session</text>
+
+      <text x="0" y="52" fill="#ff5f57" class="metric-val">Single-Agent</text>
+      <text x="0" y="68" class="metric-lbl">Concurrent edits overwrite / collide</text>
+
+      <text x="0" y="104" fill="#f08a59" class="metric-val">Ungated Writes</text>
+      <text x="0" y="120" class="metric-lbl">No semantic or vtable verification</text>
+
+      <text x="0" y="156" fill="#f08a59" class="metric-val">Raw Pseudo-C</text>
+      <text x="0" y="172" class="metric-lbl">undefined8/CONCAT syntax uncleaned</text>
+    </g>
+  </g>
+
+  <!-- Card 3: SuperGhidra + SuperGhidraMCP -->
+  <g transform="translate(675, 85)">
+    <rect width="275" height="300" rx="10" fill="#1e2230" stroke="#5fd38d" stroke-width="1.6"/>
+    <!-- Glow -->
+    <rect x="16" y="16" width="145" height="22" rx="4" fill="rgba(95,211,141,0.18)"/>
+    <text x="24" y="31" fill="#5fd38d" class="tag">SUPERGHIDRA SUITE</text>
+
+    <text x="16" y="68" fill="#ffffff" font-size="14" font-weight="600">Lock-Free Multi-Agent Stack</text>
+    <text x="16" y="86" fill="#949eb2" font-size="11">Daemon cache + overlay forks</text>
+
+    <!-- Metrics -->
+    <g transform="translate(16, 108)">
+      <text x="0" y="0" fill="#5fd38d" class="metric-val">5.12 µs L1 / 0 ms</text>
+      <text x="0" y="16" class="metric-lbl">64 KB SHM IPC (195k msg/s)</text>
+
+      <text x="0" y="52" fill="#5fd38d" class="metric-val">Isolated Forks</text>
+      <text x="0" y="68" class="metric-lbl">Non-destructive overlay + conflict gate</text>
+
+      <text x="0" y="104" fill="#5fd38d" class="metric-val">22.69% Pass</text>
+      <text x="0" y="120" class="metric-lbl">Compilable C filter (0 regressions)</text>
+
+      <text x="0" y="156" fill="#5fd38d" class="metric-val">Zero-JVM Engine</text>
+      <text x="0" y="172" class="metric-lbl">WGPU 127M insn/s + MSVC/MFC recovery</text>
+    </g>
+  </g>
+</svg>
