@@ -4,6 +4,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/superghidra.svg)](https://pypi.org/project/superghidra/)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB.svg)](https://www.python.org/)
 [![CI](https://github.com/yuatemycat/SuperGhidra/actions/workflows/ci.yml/badge.svg)](https://github.com/yuatemycat/SuperGhidra/actions/workflows/ci.yml)
+[![Featured on Made with REA](https://madewithrea.com/badges/featured.svg)](https://madewithrea.com/builds/superghidra-warm-ghidra-daemon-mcp-server-and-c-recovery-tools-for-age)
 
 **SuperGhidra: Compilable C Rewriter & Guardrailed Agent MCP Suite.**
 
