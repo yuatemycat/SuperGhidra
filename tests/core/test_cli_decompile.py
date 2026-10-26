@@ -131,6 +131,14 @@ class TestCliDecompile(unittest.TestCase):
         self.assertIn("uint64_t rax = 0;", proc.stdout)
         self.assertIn("*(uint64_t *)(rcx_0x18)", proc.stdout)
 
+    def test_sample_arm64_decompile(self):
+        fixtures_dir = Path(__file__).resolve().parent.parent / "fixtures" / "binaries"
+        sample_arm64 = str(fixtures_dir / "sample_arm64.so")
+        proc = self._run_cli([sample_arm64, "--va", "0x1000", "--arch", "arm64", "--standalone"])
+        self.assertEqual(proc.returncode, 0, f"Stderr: {proc.stderr}")
+        self.assertIn("uint64_t target_func()", proc.stdout)
+        self.assertIn("*(uint64_t *)", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

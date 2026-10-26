@@ -1349,7 +1349,7 @@ class ARM64PcodeLifter:
             rn_node = self._gpr_varnode(rn, 8, allow_sp=True)
             rn_dest = self._gpr_varnode(rn, 8, allow_sp=True, is_dest=True)
 
-            ops: List[PcodeOp] = []
+            ops = []
 
             if mode == 3:  # 11: Pre-index (rn += offset, then access)
                 u_ptr1 = self._unique_varnode(0, 8)
@@ -1547,7 +1547,7 @@ class ARM64PcodeLifter:
             rn_node = self._gpr_varnode(rn, 8, allow_sp=True)
             rn_dest = self._gpr_varnode(rn, 8, allow_sp=True, is_dest=True)
 
-            ops: List[PcodeOp] = []
+            ops = []
 
             if is_pre:
                 u_ptr = self._unique_varnode(0, 8)
@@ -1709,7 +1709,7 @@ class ARM64PcodeLifter:
                 rt = insn & 0x1F          # Destination for loaded old value
                 rn_node = self._gpr_varnode(rn, 8, allow_sp=True)
                 u_old = self._unique_varnode(0, size)
-                ops: List[PcodeOp] = []
+                ops = []
                 ops.append(PcodeOp(
                     opcode=PcodeOpcode.LOAD,
                     inputs=[Varnode(space=AddressSpace.RAM, offset=0, size=size), rn_node],
@@ -1793,7 +1793,7 @@ class ARM64PcodeLifter:
                 size = 1 << size_code
                 shift = size_code
 
-            ops: List[PcodeOp] = []
+            ops = []
 
             # Decode Rm extension
             # 010: UXTW (32-bit zero extended)
@@ -3618,6 +3618,7 @@ class PcodeGraphBuilder:
         for TPU systolic arrays or GNN inference (Section 7).
         """
         num_ops = min(len(ops), max_nodes)
+        adj: Any
         if HAS_NUMPY:
             adj = np.zeros((max_nodes, max_nodes), dtype=np.float32)
         else:

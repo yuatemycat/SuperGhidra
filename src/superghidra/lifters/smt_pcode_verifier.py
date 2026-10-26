@@ -542,7 +542,8 @@ class PcodeSymbolicSimulator:
             v0 = state.get_varnode_value(inputs[0])
             byte_offset = inputs[1].offset if len(inputs) > 1 and inputs[1].space == AddressSpace.CONST else 0
             low_bit = byte_offset * 8
-            high_bit = low_bit + output.size * 8 - 1
+            out_sz = output.size if output is not None else 8
+            high_bit = low_bit + out_sz * 8 - 1
             if high_bit >= v0.size():
                 v0 = z3.ZeroExt(high_bit + 1 - v0.size(), v0)
             res = z3.Extract(high_bit, low_bit, v0)
@@ -1463,7 +1464,7 @@ class CCodeParser:
     def _from_ast(self, node: ast.AST) -> CASTNode:
         """Transforms Python AST expression node to CASTNode."""
         if isinstance(node, ast.Constant):
-            return CConst(val=int(node.value))
+            return CConst(val=int(node.value) if isinstance(node.value, (int, str, float)) else 0)
         elif isinstance(node, ast.Name):
             return CVar(name=node.id)
         elif isinstance(node, ast.Attribute):
@@ -1526,8 +1527,8 @@ class CCodeParser:
                 op_str = f"unsupported_{type(node.ops[0]).__name__}"
             return CBinary(op=op_str, left=self._from_ast(node.left), right=self._from_ast(node.comparators[0]))
         elif isinstance(node, ast.UnaryOp):
-            op_map = {ast.Invert: "~", ast.USub: "-", ast.Not: "!"}
-            op_str = op_map.get(type(node.op), "~")
+            unary_op_map: Dict[Any, str] = {ast.Invert: "~", ast.USub: "-", ast.Not: "!"}
+            op_str = unary_op_map.get(type(node.op), "~")
             return CUnary(op=op_str, operand=self._from_ast(node.operand))
         return CVar(name=ast.unparse(node))
 
@@ -2289,7 +2290,7 @@ class SMTPcodeVerifier:
                 param_map = {name: f"x{i}" for i, name in enumerate(p_names)}
 
             res = self.verify_equivalence(
-                pcode_ops=pcode_ops,
+                pcode_ops=pcode_ops or [],
                 c_code_or_ast=decompiled_c,
                 struct_fields=struct_fields,
                 param_map=param_map,
@@ -2357,7 +2358,7 @@ class SMTPcodeVerifier:
             c_stmt = f"w1 = {c_expr};" if "return" not in c_expr and "=" not in c_expr else c_expr
 
             res = self.verify_equivalence(
-                pcode_ops=pcode_ops,
+                pcode_ops=pcode_ops or [],
                 c_code_or_ast=c_stmt,
                 struct_fields=struct_fields,
                 param_map=param_map,

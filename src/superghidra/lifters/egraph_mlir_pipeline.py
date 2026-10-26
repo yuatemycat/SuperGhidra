@@ -1200,6 +1200,17 @@ class BlockRegion(RegionNode):
         if op.opcode == PCodeOpCode.STORE:
             ins = ", ".join(f"%{v.format_c()}" for v in op.inputs)
             return f"pcode.store {ins} : i64"
+        if op.opcode in (PCodeOpCode.CALL, PCodeOpCode.CALLIND):
+            target_str = (
+                op.inputs[0].symbol
+                if (op.inputs and op.inputs[0].symbol)
+                else (f"sub_{op.inputs[0].offset:x}" if (op.inputs and op.inputs[0].is_const) else (op.inputs[0].format_c() if op.inputs else "sub_func"))
+            )
+            args_str = ", ".join(f"%{inp.format_c()}" for inp in op.inputs[1:])
+            out = f"%{op.output.format_c()} = " if op.output else ""
+            if op.opcode == PCodeOpCode.CALL:
+                return f"{out}vast.hl.call @{target_str}({args_str}) : i64"
+            return f"{out}vast.hl.call_indirect %{target_str}({args_str}) : i64"
         out = f"%{op.output.format_c()}" if op.output else "%_"
         ins = ", ".join(f"%{v.format_c()}" for v in op.inputs)
         return f"{out} = pcode.{op.opcode.name.lower()} {ins} : i64"
@@ -1212,6 +1223,15 @@ class BlockRegion(RegionNode):
         out = op.output.format_c() if op.output else "_"
         if op.opcode == PCodeOpCode.COPY:
             return f"{out} = {op.inputs[0].format_c()};"
+        if op.opcode in (PCodeOpCode.CALL, PCodeOpCode.CALLIND):
+            target_str = (
+                op.inputs[0].symbol
+                if (op.inputs and op.inputs[0].symbol)
+                else (f"sub_{op.inputs[0].offset:x}" if (op.inputs and op.inputs[0].is_const) else (op.inputs[0].format_c() if op.inputs else "sub_func"))
+            )
+            args_str = ", ".join(inp.format_c() for inp in op.inputs[1:])
+            call_expr = f"{target_str}({args_str})" if op.opcode == PCodeOpCode.CALL else f"(*{target_str})({args_str})"
+            return f"{out} = {call_expr};" if op.output else f"{call_expr};"
         if op.opcode == PCodeOpCode.LOAD:
             type_str = "uint64_t" if (op.output and op.output.size == 8) else "uint32_t"
             addr_expr = op.inputs[1].format_c() if len(op.inputs) > 1 else op.inputs[0].format_c()
@@ -1388,7 +1408,7 @@ class MLIRGotoFreeRestructurer:
                     else_region=current_region,
                 )
 
-            seq = [head_region]
+            seq: List[RegionNode] = [head_region]
             if current_region is not None:
                 seq.append(current_region)
             if merge_id is not None:
@@ -1406,10 +1426,10 @@ class MLIRGotoFreeRestructurer:
             else None
         )
         if_region = IfElseRegion(condition_c=cond_str, then_region=then_node, else_region=else_node)
-        seq = [head_region, if_region]
+        seq_branch: List[RegionNode] = [head_region, if_region]
         if merge_id is not None:
-            seq.append(self._build_region(func, merge_id, stop_at=stop_at, visited=visited))
-        return SeqRegion(seq)
+            seq_branch.append(self._build_region(func, merge_id, stop_at=stop_at, visited=visited))
+        return SeqRegion(seq_branch)
 
     @staticmethod
     def _format_switch_case_condition(blk: PCodeBasicBlock, idx: int, target_id: int) -> str:

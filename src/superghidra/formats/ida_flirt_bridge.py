@@ -278,8 +278,8 @@ def match_flirt_signatures(
                 index.load_sig_file(p)
         elif isinstance(sig_path, str) and ("Pattern:" in sig_path or "\t" in sig_path):
             pats = parse_flirt_dump(sig_path, sig_source="synthetic")
-            for p in pats:
-                index.add_pattern(p)
+            for pat in pats:
+                index.add_pattern(pat)
     else:
         arch_sigs = list_available_sigs()
         target_archs = []

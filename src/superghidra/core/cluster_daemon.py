@@ -197,8 +197,8 @@ class RPCDispatcher:
 
         elif method == "PollTask":
             worker_id = params["worker_id"]
-            task = self.coordinator.poll_task_for_worker(worker_id)
-            return {"status": "ok", "task": task.to_dict() if task else None}
+            polled_task = self.coordinator.poll_task_for_worker(worker_id)
+            return {"status": "ok", "task": polled_task.to_dict() if polled_task else None}
 
         elif method == "CompleteTask":
             worker_id = params["worker_id"]
@@ -214,8 +214,8 @@ class RPCDispatcher:
             return {"status": "ok" if success else "error"}
 
         elif method == "GetTaskStatus":
-            task = self.coordinator.get_task(params["task_id"])
-            return {"status": "ok", "task": task.to_dict() if task else None}
+            status_task = self.coordinator.get_task(params["task_id"])
+            return {"status": "ok", "task": status_task.to_dict() if status_task else None}
 
         elif method == "ListWorkers":
             workers = [w.to_dict() for w in self.coordinator.list_workers()]

@@ -71,7 +71,7 @@ To extend benchmark generalizability beyond synthetic puzzles, we want:
 
 ### Acceptance Criteria
 - [ ] Script in `benchmarks/eval_held_out.py` evaluating compilation pass rates on the held-out split.
-- [ ] Documented methodology in `docs/benchmarks/HELD_OUT_EVALUATION.md`.
+- [ ] Documented methodology in `docs/benchmarks/SYNTHETIC_IDIOM_BENCHMARK.md`.
 - [ ] Both raw and filtered pass rates recorded for both Ghidra and IDA.
 ```
 

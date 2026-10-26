@@ -109,8 +109,19 @@ files = [
     "src/superghidra/formats/binary_loader.py",
     "src/superghidra/formats/msvc_class_recovery.py",
     "src/superghidra/formats/synthetic_symbol_exporter.py",
+    "src/superghidra/formats/macho_objc_recovery.py",
+    "src/superghidra/formats/ida_flirt_bridge.py",
     "src/superghidra/core/compilable_filter.py",
+    "src/superghidra/core/live_binary_tools.py",
+    "src/superghidra/core/cluster_daemon.py",
     "src/superghidra/schemas/validator.py",
+    "src/superghidra/lifters",
+    "src/superghidra/acceleration",
+    "src/superghidra/storage",
+    "src/superghidra/compat",
+    "src/superghidra/diff/binary_diff_engine.py",
+    "src/superghidra/diff/evidence_ledger.py",
+    "src/superghidra/diff/semantic_delta_log.py",
 ]
 
 [tool.ruff]

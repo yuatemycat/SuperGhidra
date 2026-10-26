@@ -892,7 +892,7 @@ class DeltaMigrationEngine:
             if evt.event_type == DeltaEventType.DEFINE_STRUCT_FIELD:
                 new_payload = dict(evt.payload)
                 new_evidence = dict(evt.evidence) if evt.evidence else None
-                new_metadata = {"migration_source": evt.event_id}
+                new_metadata: Dict[str, Any] = {"migration_source": evt.event_id}
 
                 # Check if a struct field shift was discovered
                 old_off = new_payload.get("offset")

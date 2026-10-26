@@ -144,6 +144,31 @@ class TestStagedPCodePipeline(unittest.TestCase):
         with self.assertRaises(LiftError):
             staged_decompile_function(bytes.fromhex("4889D8C3"), func_rva=0x1000, arch="arm64")
 
+    def test_decompile_call_rel32(self):
+        # call +0x20 ; ret
+        # E8 20 00 00 00 C3
+        code = bytes.fromhex("E820000000C3")
+        res = staged_decompile_function(code, func_rva=0x1000, arch="x86_64")
+        self.assertTrue(res["is_goto_free"])
+        self.assertIn("sub_1025()", res["c_code"])
+
+    def test_decompile_call_indirect(self):
+        # call rax ; ret
+        # FF D0 C3
+        code = bytes.fromhex("FFD0C3")
+        res = staged_decompile_function(code, func_rva=0x1000, arch="x86_64")
+        self.assertTrue(res["is_goto_free"])
+        self.assertIn("(*rax)()", res["c_code"])
+
+    def test_decompile_arm64_function(self):
+        # add x0, x0, x1 ; ret
+        # 00 00 01 8B ; C0 03 5F D6
+        code = bytes.fromhex("0000018BC0035FD6")
+        res = staged_decompile_function(code, func_rva=0x1000, arch="arm64", func_name="arm64_add")
+        self.assertTrue(res["is_goto_free"])
+        self.assertIn("uint64_t arm64_add(uint64_t x0, uint64_t x1)", res["c_code"])
+        self.assertIn("x0 = x0 + x1;", res["c_code"])
+
 
 if __name__ == "__main__":
     unittest.main()

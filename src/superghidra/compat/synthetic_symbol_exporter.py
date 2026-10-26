@@ -23,6 +23,6 @@ if _mod is None:
         pass
 
 if _mod is not None:
-    _d = {k: getattr(_mod, k) for k in dir(_mod) if not k.startswith("__")}
-    globals().update(_d)
+    _exported = {k: getattr(_mod, k) for k in dir(_mod) if not k.startswith("__")}
+    globals().update(_exported)
     _sys.modules[__name__] = _mod

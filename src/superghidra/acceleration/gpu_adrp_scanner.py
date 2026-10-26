@@ -694,10 +694,10 @@ def benchmark_scanner(size_mb: float = 20.0, iterations: int = 5) -> Dict[str, A
         _ = NumPyAdrpEngine.scan(data[:10000])
         for _ in range(iterations):
             t0 = time.perf_counter()
-            res = NumPyAdrpEngine.scan(data)
+            res_np = NumPyAdrpEngine.scan(data)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             times.append(elapsed_ms)
-            matches_found = len(res)
+            matches_found = len(res_np)
 
     avg_ms = float(np.mean(times))
     min_ms = float(np.min(times))

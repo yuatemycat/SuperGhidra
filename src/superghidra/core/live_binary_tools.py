@@ -9,7 +9,7 @@ it back. None of these functions open a Ghidra ``.rep``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Set, Tuple
 
 from superghidra.core.ghidra_oracle import WriteOverlay
 from superghidra.core.parity_engine import (
@@ -529,7 +529,7 @@ def _deflatten_chain(insns: Sequence[X86Insn], cmps: Sequence[X86Insn]) -> Dict[
         assignment = None
         for insn in body:
             if _is_mov_imm(insn):
-                assignment = int(insn.imm) & 0xFFFFFFFF
+                assignment = int(insn.imm or 0) & 0xFFFFFFFF
             if _jumps_to_loop_head(insn, header, by_addr):
                 back_edges += 1
         succ = [dispatcher_id] if assignment is not None else []
@@ -903,7 +903,7 @@ def match_flirt_signatures(
             target_addrs.append((exp.address, exp.name))
             seen_vas.add(exp.address)
     for sym in img.symbols:
-        if sym.address and sym.type == "function" and sym.address not in seen_vas:
+        if sym.address and getattr(sym, "type", None) == "function" and sym.address not in seen_vas:
             target_addrs.append((sym.address, sym.name))
             seen_vas.add(sym.address)
 
@@ -969,7 +969,7 @@ def staged_decompile_function(
     if not code_bytes:
         raise LiftError("code_bytes is empty")
 
-    if arch != "x86_64":
+    if arch not in ("x86_64", "arm64"):
         raise LiftError(f"architecture '{arch}' is not supported by this lifter")
 
     from superghidra.lifters.egraph_mlir_pipeline import (
@@ -981,6 +981,113 @@ def staged_decompile_function(
         StagedPCodePassManager,
         Varnode,
     )
+
+    if arch == "arm64":
+        from superghidra.lifters.pcode_lifter_bridge import (
+            AddressSpace as BridgeSpace,
+        )
+        from superghidra.lifters.pcode_lifter_bridge import (
+            ARM64PcodeLifter,
+        )
+        from superghidra.lifters.pcode_lifter_bridge import (
+            PcodeOpcode as BridgeOpcode,
+        )
+
+        lifter = ARM64PcodeLifter()
+        try:
+            bridge_ops = lifter.lift_bytes(code_bytes, base_addr=func_rva)
+        except Exception as exc:
+            raise LiftError(f"failed to lift ARM64 bytes: {exc}")
+
+        if not bridge_ops:
+            raise LiftError("no ARM64 instructions lifted from bytes")
+
+        arm_unhandled: List[Tuple[int, str]] = []
+        arm_has_ret = False
+        converted_ops: List[PCodeOp] = []
+
+        def conv_arm_vn(vn: Any) -> Varnode | None:
+            if vn is None:
+                return None
+            if vn.space in (BridgeSpace.CONST, BridgeSpace.CONSTANT):
+                return Varnode(AddressSpace.CONST, int(vn.offset), vn.size)
+            elif vn.space == BridgeSpace.REGISTER:
+                reg_idx = int(vn.offset) // 8
+                sym = f"x{reg_idx}" if reg_idx < 31 else ("sp" if reg_idx == 31 else f"r{reg_idx}")
+                if vn.size == 4 and reg_idx < 31:
+                    sym = f"w{reg_idx}"
+                return Varnode(AddressSpace.REGISTER, int(vn.offset), vn.size, symbol=sym)
+            elif vn.space == BridgeSpace.UNIQUE:
+                return Varnode(AddressSpace.UNIQUE, int(vn.offset), vn.size)
+            elif vn.space == BridgeSpace.RAM:
+                off_val = int(vn.offset) if isinstance(vn.offset, int) else 0
+                return Varnode(AddressSpace.RAM, off_val, vn.size)
+            return Varnode(AddressSpace.RAM, 0, vn.size)
+
+        for seq, b_op in enumerate(bridge_ops, start=1):
+            if b_op.opcode == BridgeOpcode.UNIMPLEMENTED:
+                offset = b_op.pc - func_rva
+                raw_hex = code_bytes[offset : offset + 4].hex() if 0 <= offset <= len(code_bytes) - 4 else ""
+                arm_unhandled.append((b_op.pc, raw_hex))
+                continue
+
+            if b_op.opcode == BridgeOpcode.RETURN:
+                arm_has_ret = True
+                ret_vn = Varnode(AddressSpace.REGISTER, 0, 8, symbol="x0")
+                converted_ops.append(PCodeOp(seq, PCodeOpCode.RETURN, None, [ret_vn], address=b_op.pc))
+                break
+
+            opc = PCodeOpCode[b_op.opcode.name] if b_op.opcode.name in PCodeOpCode.__members__ else PCodeOpCode.COPY
+            out_vn = conv_arm_vn(b_op.output)
+            in_vns = [v for v in (conv_arm_vn(inp) for inp in b_op.inputs) if v is not None]
+            converted_ops.append(PCodeOp(seq, opc, out_vn, in_vns, address=b_op.pc))
+
+        if arm_unhandled:
+            raise LiftError(
+                f"unhandled instruction(s) in function at {arm_unhandled[0][0]:#x}",
+                unhandled=arm_unhandled,
+            )
+
+        if not arm_has_ret:
+            raise LiftError("buffer ends before a ret instruction", unhandled=arm_unhandled)
+
+        written_arm: Set[str] = set()
+        read_before_written_arm: List[Varnode] = []
+        for op in converted_ops:
+            for inp in op.inputs:
+                if inp and not inp.is_const and inp.symbol and inp.symbol not in written_arm:
+                    if inp.symbol not in [v.symbol for v in read_before_written_arm]:
+                        read_before_written_arm.append(inp)
+            if op.output and op.output.symbol:
+                written_arm.add(op.output.symbol)
+
+        arm64_abi_params = [f"x{i}" for i in range(8)]
+        func_params_arm = [v for v in read_before_written_arm if v.symbol in arm64_abi_params]
+        func_params_arm.sort(key=lambda v: arm64_abi_params.index(v.symbol or ""))
+
+        blk_arm = PCodeBasicBlock(1, func_rva, converted_ops, succs=[], preds=[])
+        func_arm = PCodeFunction(
+            name=func_name,
+            entry_rva=func_rva,
+            params=func_params_arm,
+            blocks={1: blk_arm},
+        )
+        manager_arm = StagedPCodePassManager()
+        res_arm = manager_arm.run_all_passes(func_arm)
+
+        return {
+            "function_name": res_arm.function_name,
+            "entry_rva": res_arm.entry_rva,
+            "c_code": res_arm.c_code,
+            "mlir_ir": res_arm.mlir_ir,
+            "is_goto_free": res_arm.is_goto_free,
+            "mba_simplified": res_arm.mba_simplified,
+            "mba_simplifications_count": res_arm.mba_simplifications_count,
+            "dispatchers_removed": res_arm.dispatchers_removed,
+            "pruned_branches_count": res_arm.pruned_branches_count,
+            "stages_executed": res_arm.stages_executed,
+            "telemetry": res_arm.telemetry,
+        }
 
     gpr_names = (
         "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
@@ -1073,6 +1180,51 @@ def staged_decompile_function(
                     ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.STORE, None, [Varnode(AddressSpace.RAM, 0, 8), addr_vn, reg_vn], insn.address))
                 continue
 
+        # 6. Direct CALL rel32: 0xE8
+        if insn.map == 0 and insn.opcode == 0xE8:
+            target_va = insn.target if getattr(insn, "target", None) is not None else ((insn.address + insn.length + (insn.imm or 0)) & 0xFFFFFFFFFFFFFFFF)
+            target_va_int = int(target_va or 0)
+            target_vn = Varnode(AddressSpace.CONST, target_va_int, 8, symbol=f"sub_{target_va_int:x}")
+            ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.CALL, gpr_vns[0], [target_vn], insn.address))
+            continue
+
+        # 7. Indirect CALL r/m64: 0xFF with group_op == 2
+        if insn.map == 0 and insn.opcode == 0xFF and insn.modrm is not None:
+            group_op = (insn.modrm >> 3) & 7
+            if group_op == 2:
+                if (insn.modrm >> 6) == 3:  # Register indirect
+                    target_vn = gpr_vns[insn.rm]
+                    ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.CALLIND, gpr_vns[0], [target_vn], insn.address))
+                    continue
+                elif insn.mem is not None and insn.mem.base in gpr_names:  # Memory indirect
+                    base_vn = gpr_vns[gpr_names.index(insn.mem.base)]
+                    disp = insn.mem.disp
+                    if disp != 0:
+                        addr_vn = Varnode(AddressSpace.UNIQUE, len(ops) + 0x1000, 8, symbol=f"{insn.mem.base}_{hex(disp)}")
+                        disp_vn = Varnode(AddressSpace.CONST, disp, 8)
+                        ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.PTRADD, addr_vn, [base_vn, disp_vn], insn.address))
+                    else:
+                        addr_vn = base_vn
+                    fn_ptr_vn = Varnode(AddressSpace.UNIQUE, len(ops) + 0x2000, 8, symbol=f"fn_ptr_{len(ops)}")
+                    ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.LOAD, fn_ptr_vn, [Varnode(AddressSpace.RAM, 0, 8), addr_vn], insn.address))
+                    ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.CALLIND, gpr_vns[0], [fn_ptr_vn], insn.address))
+                    continue
+
+        # 8. Immediate moves: mov r64, imm64 (0xB8..0xBF with REX_W) / mov r64, imm32 (0xC7 /0 with REX_W)
+        if insn.map == 0 and insn.rex_w and 0xB8 <= insn.opcode <= 0xBF:
+            reg_idx = (insn.opcode & 7) | ((insn.rex & 1) << 3)
+            dst = gpr_vns[reg_idx]
+            imm_vn = Varnode(AddressSpace.CONST, insn.imm or 0, 8)
+            ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.COPY, dst, [imm_vn], insn.address))
+            continue
+
+        if insn.map == 0 and insn.rex_w and insn.opcode == 0xC7 and insn.modrm is not None and (insn.modrm >> 6) == 3:
+            if ((insn.modrm >> 3) & 7) == 0:
+                dst = gpr_vns[insn.rm]
+                imm_vn = Varnode(AddressSpace.CONST, insn.imm or 0, 8)
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.COPY, dst, [imm_vn], insn.address))
+                continue
+
         # Check for supported register-register 64-bit forms
         if not (insn.map == 0 and insn.rex_w and insn.mem is None and insn.modrm is not None and (insn.modrm >> 6) == 3):
             unhandled.append((insn.address, insn_raw))
@@ -1121,11 +1273,26 @@ def staged_decompile_function(
     if not has_ret:
         raise LiftError("buffer ends before a ret instruction", unhandled=unhandled)
 
+    written_x64: Set[str] = set()
+    read_before_written_x64: List[Varnode] = []
+    for op in ops:
+        for inp in op.inputs:
+            if inp and not inp.is_const and inp.symbol and inp.symbol not in written_x64:
+                if inp.symbol not in [v.symbol for v in read_before_written_x64]:
+                    read_before_written_x64.append(inp)
+        if op.output and op.output.symbol:
+            written_x64.add(op.output.symbol)
+
+    uses_sysv = any(v.symbol in ("rdi", "rsi") for v in read_before_written_x64)
+    abi_order_x64 = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"] if uses_sysv else ["rcx", "rdx", "r8", "r9"]
+    func_params_x64 = [v for v in read_before_written_x64 if v.symbol in abi_order_x64]
+    func_params_x64.sort(key=lambda v: abi_order_x64.index(v.symbol or ""))
+
     blk = PCodeBasicBlock(1, func_rva, ops, succs=[], preds=[])
     func = PCodeFunction(
         name=func_name,
         entry_rva=func_rva,
-        params=[gpr_vns[1], gpr_vns[2]],
+        params=func_params_x64,
         blocks={1: blk},
     )
 

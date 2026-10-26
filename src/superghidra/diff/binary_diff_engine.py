@@ -1226,15 +1226,16 @@ def extract_cfgs_from_arm32_bytes(
         insn = arm_thumb_decode.decode(code_bytes, off, cur_va, thumb=thumb_mode)
         length = max(2 if thumb_mode else 4, insn.length)
 
-        cat = insn.category
-        if not isinstance(cat, InsnCategory):
-            cat = InsnCategory(insn.category.value if hasattr(insn.category, "value") else str(insn.category))
+        if isinstance(insn.category, InsnCategory):
+            diff_cat: InsnCategory = insn.category
+        else:
+            diff_cat = InsnCategory(insn.category.value if hasattr(insn.category, "value") else str(insn.category))
 
         info = InstructionInfo(
             address=cur_va,
             mnemonic=insn.mnemonic,
             op_str=insn.op_str,
-            category=cat,
+            category=diff_cat,
         )
         btype = insn.flow or "none"
         target = insn.target

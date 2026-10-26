@@ -268,7 +268,7 @@ These modules target specific scale bottlenecks or standalone verification tasks
 | **`acceleration` (`[gpu]` — 20 MB+ WGPU ARM64 Sweeps)** | Scans large ARM64 binaries for `ADRP + ADD/LDR` pairs and function prologues (`20 MB` / `5.2M` insns in `41.20 ms` = `127.25 M insn/s` on RTX A5500). | **Optional for ≥ 5 MB binaries:** Below ~5–10 MB, PCIe transfer latency exceeds shader execution time, so `gpu_adrp_scanner` automatically routes `< 5 MB` inputs to NumPy CPU SIMD (`143.95 M insn/s` on 4 MB blocks). |
 | **`lifters` (`[smt]` — Zero-JVM P-Code Lifter & Z3 Prover)** | Pure-Python ARM64/x86_64 → P-code lifter (integer, exclusive memory, SIMD vector math, ARMv8.1-A atomics) and Z3 equivalence prover (`SMTPcodeVerifier`). | **Bounded Subset / Sound `UNKNOWN`:** Standalone lifting covers bounded instruction subsets; `SMTPcodeVerifier` intentionally returns `UNKNOWN` (`equivalent=False`) on floating-point ops, unhandled instructions, or loops exceeding the unroll bound. |
 
-Each package has its own README under [`superghidra/`](superghidra/).
+Each package has its own README under [`src/superghidra/`](src/superghidra/).
 
 ## Results So Far
 
@@ -324,7 +324,7 @@ Addresses the dataset contamination problem in neural decompiler benchmarks (suc
 - **70/30 Held-Out Split:** Splitting by unique function body (seed `42`, all `O0`–`O3` variants of a function kept together) confirms out-of-sample generalization on the held-out 30% test split (43/388 -> 98/388, +55 gains) with zero regressions.
 <!-- humaneval:end -->
 
-> **HumanEval-Decompile Caveat (Deterministic C Rewriter, Not Neural Inference):** The `22.62%` (`294/1,300` full corpus, plus `25.26%` on the 30% function-disjoint held-out test split) score measures syntactic recompilability and unit-test execution pass rate produced by [`CompilableDecompilerFilter`](superghidra/core/compilable_filter.py) — a deterministic post-processing rewriter that strips stack-canary boilerplate, normalizes Ghidra pseudo-types (`undefined8`, `CONCAT44`, `SUB84`), and injects symmetric Hex-Rays `defs.h` compatibility macros (`__int64`, `LODWORD`, `HIDWORD`, `BYTEn`) for IDA Pro baselines. No neural model weights or LLM calls are invoked in this benchmark.
+> **HumanEval-Decompile Caveat (Deterministic C Rewriter, Not Neural Inference):** The `22.62%` (`294/1,300` full corpus, plus `25.26%` on the 30% function-disjoint held-out test split) score measures syntactic recompilability and unit-test execution pass rate produced by [`CompilableDecompilerFilter`](src/superghidra/core/compilable_filter.py) — a deterministic post-processing rewriter that strips stack-canary boilerplate, normalizes Ghidra pseudo-types (`undefined8`, `CONCAT44`, `SUB84`), and injects symmetric Hex-Rays `defs.h` compatibility macros (`__int64`, `LODWORD`, `HIDWORD`, `BYTEn`) for IDA Pro baselines. No neural model weights or LLM calls are invoked in this benchmark.
 
 ### Dual-OS Test Matrix (GitHub Actions CI)
 
@@ -442,27 +442,29 @@ print(sg.SMTPcodeVerifier().verify_equivalence(ops, ops).equivalent)
 * **Proposed struct or symbol from the LLM naming pipeline was rejected:**
   The naming pipeline enforces structural invariants before writing to the overlay. Check the daemon log for `VtableSlotMismatch`, `FieldOffsetOutOfBounds`, or `AllocationSizeConflict`.
 
-## Known Limitations
+## Known Limitations & 1.0 vs 1.x Scope Boundaries
 
-- The Java codec doesn't compress Ghidra projects transparently. Ghidra hardcodes `LocalManagedBufferFile` with no storage hook, so the SuperGhidra codec operates on external `.sgdb` files or requires patching Ghidra's core jar.
-- PDB export is experimental: it emits MSF 7.0 structures with prototype DBI and public symbol records, but lacks MSVC-compatible hash streams, symbol record streams, and CodeView type (TPI) streams. DWARF 5 export is the supported path for external tooling.
-- The SMT checker is sound but incomplete. Floats, calls, unhandled ops and long loops return `UNKNOWN` by design to prevent false equivalence.
-- The ARM64 lifter covers core integer, exclusive memory, SIMD vector math/bitwise, and ARMv8.1-A atomics. Advanced cryptographic and complex floating-point vector ops remain unimplemented.
-- The LLM naming stage needs a real endpoint. Without one, it falls back to neutral names such as `sub_<addr>`, labelled `heuristic-fallback`.
-- Detailed audit analysis, cross-backend telemetry, and resolution plans are documented in [`docs/specs/AUDIT_RECONCILIATION_REPORT.md`](docs/specs/AUDIT_RECONCILIATION_REPORT.md).
+- **Objective-C Runtime Recovery:** Currently recovers classes, methods, and ivars from traditional 64-bit Mach-O binaries with direct pointers (`__objc_classlist`, `__objc_const`). Binaries using modern macOS / iOS dyld chained fixups (`LC_DYLD_CHAINED_FIXUPS`) are not yet dereferenced and are planned for 1.x.
+- **C++ RTTI Formats:** Class recovery targets MSVC RTTI (`CompleteObjectLocator`, `TypeDescriptor`, `ClassHierarchyDescriptor`) and MFC `CRuntimeClass`. GNU Itanium ABI C++ RTTI (`type_info`, `_vptr` prefix structures) is planned for 1.x.
+- **MFC Class Recovery Testing:** Precision and recall (100% precision, 0 false positives on non-MFC binaries such as `libcrypto-3.dll`) are verified in automated CI using synthetic redistributable PE fixtures (`sample_mfc_x64.dll`). Real commercial applications (such as WinMerge with 713 RTTI and 160 MFC classes) are evaluated manually.
+- **MCP Server Package:** The Model Context Protocol server is distributed as `superghidra-mcp` on PyPI (source in [`SuperghidraMCP`](https://github.com/yuatemycat/SuperGhidraMCP)), depending on `superghidra>=0.4.0` and connecting AI coding agents directly to the local daemon and standalone recovery tools.
+- **PDB Export:** PDB export is experimental: it emits MSF 7.0 structures with prototype DBI and public symbol records, but lacks MSVC-compatible hash streams, symbol record streams, and CodeView type (TPI) streams. DWARF 5 export is the supported path for external tooling.
+- **SMT Verification Incompleteness:** The SMT checker is sound but incomplete. Floats, calls, unhandled ops and long loops return `UNKNOWN` by design to prevent false equivalence.
+- **ARM64 Lifter Instruction Surface:** The ARM64 lifter covers core integer, exclusive memory, SIMD vector math/bitwise, bitfield moves, conditional selection, and ARMv8.1-A atomics. Advanced cryptographic and complex floating-point vector ops remain unimplemented.
+- **Java Codec Buffer Hook:** The Java codec operates on external `.sgdb` files or requires patching Ghidra's core jar because Ghidra hardcodes `LocalManagedBufferFile` with no storage plugin hook.
 
 More detail is in [PLAN.md](PLAN.md).
 
 ## Repository Layout
 
 ```
-superghidra/                 the canonical package, split into 7 domain subsystems
+src/superghidra/             canonical package, split into 7 domain subsystems
+src/superghidra/compat/      backward-compatibility namespace shims
 tests/                       domain-isolated pytest suites (790+ tests)
 benchmarks/                  reproducible benchmark harnesses and measurement scripts
 docs/                        benchmark specifications, walkthroughs, and architecture docs
 ghidra_extension_skeleton/   Java BufferFile compression extension
 templates/                   scaffolds for modules, MCP tools, and test suites
-*.py                         zero-overhead backward-compatibility shims for external callers
 ```
 
 If you're an AI agent, start with [AGENTS.md](AGENTS.md).

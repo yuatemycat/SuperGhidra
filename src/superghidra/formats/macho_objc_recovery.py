@@ -151,6 +151,8 @@ def recover_objc_classes(binary_or_path: str | Path | bytes | BinaryImage) -> Ob
     """
     if isinstance(binary_or_path, BinaryImage):
         img = binary_or_path
+    elif isinstance(binary_or_path, Path):
+        img = load_binary(str(binary_or_path))
     else:
         img = load_binary(binary_or_path)
 

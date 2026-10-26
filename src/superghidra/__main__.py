@@ -35,7 +35,7 @@ def create_parser() -> argparse.ArgumentParser:
     decomp_addr_group = decomp_parser.add_mutually_exclusive_group()
     decomp_addr_group.add_argument("--rva", type=lambda x: int(x, 0), help="Function RVA (hex or dec)")
     decomp_addr_group.add_argument("--va", type=lambda x: int(x, 0), help="Function VA (hex or dec)")
-    decomp_parser.add_argument("--arch", choices=["x86_64", "arm64", "x86"], default="x86_64", help="Architecture")
+    decomp_parser.add_argument("--arch", choices=["x86_64", "arm64", "x86"], default=None, help="Architecture (auto-detected if omitted)")
     decomp_parser.add_argument("--len", type=int, default=128, help="Max instruction bytes to lift")
     decomp_parser.add_argument("-o", "--output", type=Path, help="Output file for decompiled C")
     decomp_parser.add_argument("--host", default="127.0.0.1", help="Ghidra daemon host (default: 127.0.0.1)")
@@ -155,7 +155,7 @@ def _function_bytes(
     rva: int | None = None,
     va: int | None = None,
     length: int = 128,
-) -> Tuple[bytes, int]:
+) -> Tuple[bytes, int, str]:
     from superghidra.formats.binary_loader import load_binary
 
     p = Path(path)
@@ -171,6 +171,8 @@ def _function_bytes(
             file=sys.stderr,
         )
         sys.exit(2)
+
+    resolved_arch = arch or (img.arch if img.arch in ("x86_64", "arm64") else "x86_64")
 
     if va is not None:
         target_va = va
@@ -190,7 +192,7 @@ def _function_bytes(
         sys.exit(2)
 
     chunk = img.read_va(target_va, length)
-    return chunk, target_rva
+    return chunk, target_rva, resolved_arch
 
 
 def cmd_decompile(args: argparse.Namespace) -> int:
@@ -257,7 +259,7 @@ def cmd_decompile(args: argparse.Namespace) -> int:
     # Standalone local fallback lifter
     from superghidra.core.live_binary_tools import LiftError, staged_decompile_function
 
-    chunk, target_rva = _function_bytes(
+    chunk, target_rva, target_arch = _function_bytes(
         args.binary,
         arch=args.arch,
         rva=args.rva,
@@ -266,7 +268,7 @@ def cmd_decompile(args: argparse.Namespace) -> int:
     )
 
     try:
-        result = staged_decompile_function(chunk, func_rva=target_rva, arch=args.arch)
+        result = staged_decompile_function(chunk, func_rva=target_rva, arch=target_arch)
     except LiftError as exc:
         print(f"Error: {exc.message}", file=sys.stderr)
         if exc.unhandled:
@@ -310,7 +312,7 @@ def cmd_flirt_match(args: argparse.Namespace) -> int:
         print(f"Error: signature file not found: {args.sig_file}", file=sys.stderr)
         return 1
 
-    chunk, target_rva = _function_bytes(
+    chunk, target_rva, _ = _function_bytes(
         args.binary,
         arch=None,
         rva=args.rva,

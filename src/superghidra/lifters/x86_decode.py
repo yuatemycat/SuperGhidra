@@ -213,7 +213,7 @@ class X86Insn:
 
 
 def _set(*ranges) -> frozenset:
-    out = set()
+    out: set[int] = set()
     for r in ranges:
         if isinstance(r, tuple):
             out.update(range(r[0], r[1] + 1))

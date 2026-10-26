@@ -25,12 +25,12 @@ from typing import Dict, List, Tuple
 try:
     import lz4.block
 except ImportError:
-    lz4 = None
+    lz4 = None  # type: ignore[assignment,no-redef]
 
 try:
     import zstandard as zstd
 except ImportError:
-    zstd = None
+    zstd = None  # type: ignore[assignment,no-redef]
 
 
 # Ghidra Buffer Constants

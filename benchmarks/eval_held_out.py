@@ -3,13 +3,12 @@ benchmarks/eval_held_out.py
 ===========================
 
 Evaluation harness for measuring decompiler pseudo-C compilability across
-a held-out corpus of 200 real-world open-source C functions from SQLite,
-zlib, and GNU Coreutils.
+a synthetic regression suite of 200 variations across 17 systems C idiom templates.
 
 Evaluates 5 comparison tracks:
-  1. Ghidra Raw: Stock Ghidra decompiler output with standard C headers.
+  1. Ghidra Raw: Synthetic Ghidra output with standard C headers.
   2. Ghidra Filtered (SuperGhidra): CompilableDecompilerFilter applied to Ghidra output.
-  3. IDA Raw: Stock Hex-Rays pseudo-C without definitions.
+  3. IDA Raw: Synthetic Hex-Rays pseudo-C without definitions.
   4. IDA with defs.h: Fair Hex-Rays baseline using IDA_COMPAT_DEFS_H.
   5. IDA Filtered: CompilableDecompilerFilter applied to Hex-Rays output.
 """
@@ -163,7 +162,7 @@ def format_text_table(summary: Dict[str, Any]) -> str:
     by_lib = summary["by_library"]
     lines = [
         "================================================================================",
-        "             SUPERGHIDRA HELD-OUT CORPUS EVALUATION (200 FUNCTIONS)            ",
+        "             SUPERGHIDRA SYNTHETIC IDIOM EVALUATION (200 VARIATIONS)           ",
         "================================================================================",
         f"Total Evaluated: {summary['total_evaluated']}",
         "",

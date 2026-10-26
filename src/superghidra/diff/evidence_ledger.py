@@ -745,10 +745,10 @@ class ReconstructionObligationLedger:
                     obligation_id=obligation.obligation_id,
                 )
                 if smt_res.equivalent:
-                    results.append(CheckResult("SMTEquivalenceCheck", True, "SMT equivalence verified", details=smt_res.details, proven=True))
+                    results.append(CheckResult("SMTEquivalenceCheck", True, "SMT equivalence verified", details={"details": smt_res.details}, proven=True))
                 else:
                     is_safe = False
-                    results.append(CheckResult("SMTEquivalenceCheck", False, f"SMT equivalence check divergent: {smt_res.details}", details=smt_res.details, proven=False))
+                    results.append(CheckResult("SMTEquivalenceCheck", False, f"SMT equivalence check divergent: {smt_res.details}", details={"details": smt_res.details}, proven=False))
 
         except Exception as e:
             is_safe = False

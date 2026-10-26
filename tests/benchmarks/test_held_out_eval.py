@@ -71,7 +71,7 @@ class TestHeldOutEvaluation(unittest.TestCase):
         self.assertEqual(summary["overall"]["count"], 6)
 
         table = format_text_table(summary)
-        self.assertIn("SUPERGHIDRA HELD-OUT CORPUS EVALUATION", table)
+        self.assertIn("SUPERGHIDRA SYNTHETIC IDIOM EVALUATION", table)
         self.assertIn("Ghidra Filtered (SG)", table)
         self.assertIn("IDA with defs.h (Fair)", table)
 

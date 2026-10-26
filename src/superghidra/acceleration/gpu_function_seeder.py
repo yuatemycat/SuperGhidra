@@ -277,7 +277,7 @@ class WGPUFunctionSeederEngine:
                 f"[WGPUFunctionSeederEngine] GPU match count ({match_count}) exceeded max_matches ({self.max_matches}). "
                 f"Falling back to NumPy engine to prevent dropped hits."
             )
-            return NumPyFunctionSeederEngine.classify_instructions(instructions)
+            return NumPyFunctionSeederEngine.scan(instructions)
 
         encoder = self.device.create_command_encoder()
         encoder.copy_buffer_to_buffer(self.b_out, 0, self.b_readback_data, 0, match_count * 4)
@@ -334,7 +334,7 @@ class TorchFunctionSeederEngine:
         ]:
             idx = torch.nonzero(mask).squeeze(1).to(torch.int64)
             if idx.numel() > 0:
-                packed = (((kind & 0x7) << 29) | (idx & 0x1FFFFFFF)).to(torch.uint32 if hasattr(torch, "uint32") else torch.int64)
+                packed = (((kind & 0x7) << 29) | (idx & 0x1FFFFFFF)).to(torch.uint32 if hasattr(torch, "uint32") else torch.int64)  # type: ignore[operator]
                 results.append(packed)
 
         if not results:
