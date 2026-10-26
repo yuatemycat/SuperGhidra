@@ -120,6 +120,26 @@ class TestStagedPCodePipeline(unittest.TestCase):
         with self.assertRaises(LiftError):
             staged_decompile_function(b"", func_rva=0x1000)
 
+    def test_decompile_prologue_and_epilogue(self):
+        # push rbp ; mov rbp, rsp ; sub rsp, 0x20 ; add rsp, 0x20 ; pop rbp ; ret
+        # 55 4889E5 4883EC20 4883C420 5D C3
+        code = bytes.fromhex("554889E54883EC204883C4205DC3")
+        res = staged_decompile_function(code, func_rva=0x1000)
+        self.assertTrue(res["is_goto_free"])
+        self.assertIn("uint64_t rbp = 0;", res["c_code"])
+        self.assertIn("uint64_t rsp = 0;", res["c_code"])
+        self.assertIn("rbp = *(uint64_t *)(rsp);", res["c_code"])
+
+    def test_decompile_memory_displacement_and_declared_registers(self):
+        # mov rax, [rcx + 0x18] ; mov [rcx + 0x20], rax ; mov edx, [rcx + 0x08] ; ret
+        # 488B4118 48894120 8B5108 C3
+        code = bytes.fromhex("488B4118488941208B5108C3")
+        res = staged_decompile_function(code, func_rva=0x1000)
+        self.assertTrue(res["is_goto_free"])
+        self.assertIn("uint64_t rax = 0;", res["c_code"])
+        self.assertIn("*(uint64_t *)(rcx_0x18)", res["c_code"])
+        self.assertIn("*(uint64_t *)(rcx_0x20) = rax;", res["c_code"])
+
     def test_decompile_arm64_unsupported_raises(self):
         with self.assertRaises(LiftError):
             staged_decompile_function(bytes.fromhex("4889D8C3"), func_rva=0x1000, arch="arm64")

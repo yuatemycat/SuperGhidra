@@ -63,6 +63,11 @@ def create_parser() -> argparse.ArgumentParser:
     rtti_parser.add_argument("binary", type=Path, help="Path to PE/COFF binary")
     rtti_parser.add_argument("-o", "--output", type=Path, help="Output JSON file")
 
+    # Subcommand: objc-recover
+    objc_parser = subparsers.add_parser("objc-recover", help="Recover Objective-C classes, selectors, and ivars from Mach-O")
+    objc_parser.add_argument("binary", type=Path, help="Path to Mach-O binary")
+    objc_parser.add_argument("-o", "--output", type=Path, help="Output JSON file")
+
     # Subcommand: filter
     filter_parser = subparsers.add_parser("filter", help="Transform raw decompiler output into compilable C")
     filter_parser.add_argument("source", type=Path, help="Path to raw C file")
@@ -345,6 +350,33 @@ def cmd_rtti_recover(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_objc_recover(args: argparse.Namespace) -> int:
+    from superghidra.formats.macho_objc_recovery import recover_objc_classes
+
+    if not args.binary.is_file():
+        print(f"Error: binary not found: {args.binary}", file=sys.stderr)
+        return 1
+
+    try:
+        report: dict[str, Any] = recover_objc_classes(str(args.binary)).to_dict()
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    counts: dict[str, Any] = report.get("counts", {})
+    print(
+        f"Recovered {counts.get('classes', 0)} Objective-C classes, "
+        f"{counts.get('instance_methods', 0)} instance methods, "
+        f"{counts.get('class_methods', 0)} class methods, "
+        f"{counts.get('ivars', 0)} ivars."
+    )
+
+    if args.output:
+        args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"Saved Objective-C class hierarchy to {args.output}")
+    return 0
+
+
 def cmd_filter(args: argparse.Namespace) -> int:
     from superghidra.core.compilable_filter import CompilableDecompilerFilter
 
@@ -507,6 +539,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_flirt_match(args)
     elif args.command == "rtti-recover":
         return cmd_rtti_recover(args)
+    elif args.command == "objc-recover":
+        return cmd_objc_recover(args)
     elif args.command == "filter":
         return cmd_filter(args)
     elif args.command in ("overlay-sync", "gui-sync"):

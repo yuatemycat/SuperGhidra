@@ -563,6 +563,76 @@ class CompilableDecompilerFilter:
             return protos_block + code
         return code
 
+    _CPU_REGISTERS = {
+        "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp",
+        "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+        "eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp",
+        "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
+        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
+        "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+        "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
+        "x24", "x25", "x26", "x27", "x28", "x29", "x30",
+        "w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7",
+        "w8", "w9", "w10", "w11", "w12", "w13", "w14", "w15",
+        "w16", "w17", "w18", "w19", "w20", "w21", "w22", "w23",
+        "w24", "w25", "w26", "w27", "w28", "w29", "w30",
+    }
+
+    @classmethod
+    def declare_undeclared_registers(cls, code: str) -> str:
+        """
+        Scans C functions for references to CPU hardware registers that lack local
+        or parameter declarations, injecting typed zero-initialized local declarations.
+        """
+        fn_pattern = re.compile(
+            r"^(?P<lead>\s*(?:static\s+|inline\s+|extern\s+)*[a-zA-Z0-9_*]+\s+[a-zA-Z0-9_]+\s*\((?P<params>[^)]*)\)\s*\{)",
+            re.MULTILINE,
+        )
+        matches = list(fn_pattern.finditer(code))
+        if not matches:
+            return code
+
+        result = code
+        for m in reversed(matches):
+            start_idx = m.start()
+            brace_start = result.find("{", start_idx)
+            if brace_start == -1:
+                continue
+            depth = 1
+            idx = brace_start + 1
+            while idx < len(result) and depth > 0:
+                if result[idx] == "{":
+                    depth += 1
+                elif result[idx] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                idx += 1
+            body = result[brace_start + 1 : idx]
+            params_str = m.group("params")
+            param_tokens = set(re.findall(r"\b[a-zA-Z0-9_]+\b", params_str))
+
+            used_tokens = set(re.findall(r"\b[a-zA-Z0-9_]+\b", body))
+            used_regs = used_tokens & cls._CPU_REGISTERS
+            undeclared = used_regs - param_tokens
+
+            decl_pattern = re.compile(
+                r"\b(?:int|uint[0-9]+_t|int[0-9]+_t|long|char|short|unsigned|void\s*\*|_QWORD|_DWORD|_WORD|_BYTE)\s+(?P<name>[a-zA-Z0-9_]+)\b"
+            )
+            already_declared = set(dm.group("name") for dm in decl_pattern.finditer(body))
+            undeclared = undeclared - already_declared
+
+            if undeclared:
+                decls = []
+                for reg in sorted(undeclared):
+                    is_32 = reg.startswith("e") or reg.endswith("d") or reg.startswith("w")
+                    type_name = "uint32_t" if is_32 else "uint64_t"
+                    decls.append(f"    {type_name} {reg} = 0;")
+                decl_block = "\n" + "\n".join(decls)
+                result = result[: brace_start + 1] + decl_block + result[brace_start + 1 :]
+
+        return result
+
     @classmethod
     def filter(
         cls,
@@ -593,6 +663,7 @@ class CompilableDecompilerFilter:
 
         result = cls.resolve_callee_types(result, struct_catalog=struct_catalog)
         result = cls.glibc_ctype_support(result)
+        result = cls.declare_undeclared_registers(result)
 
         if include_ida_defs and (has_ida_tokens or bool(_IDA_TOKEN_RE.search(result))):
             if "SUPERGHIDRA_IDA_COMPAT_DEFS_H" not in result:

@@ -3,6 +3,7 @@
 import os
 import struct
 import unittest
+from pathlib import Path
 
 from superghidra.formats import msvc_class_recovery as R
 
@@ -216,7 +217,65 @@ class TestRttiRecoverCli(unittest.TestCase):
             self.assertIn("Error:", proc.stderr)
 
 
-MFC64 =r"C:\Windows\System32\mfc140u.dll"
+class TestMFCPrecisionRecall(unittest.TestCase):
+    """
+    Unconditional CI test verifying precision and recall on redistributable sample binaries.
+    Guarantees no false positives on non-MFC binaries, and 100% precision & recall on MFC hierarchies.
+    """
+
+    def setUp(self):
+        self.fixtures_dir = Path(__file__).resolve().parent.parent / "fixtures" / "binaries"
+        self.sample_mfc = self.fixtures_dir / "sample_mfc_x64.dll"
+        self.sample_non_mfc = self.fixtures_dir / "sample_x64.dll"
+
+    def test_mfc_sample_precision_and_recall(self):
+        self.assertTrue(self.sample_mfc.exists(), f"MFC sample fixture missing: {self.sample_mfc}")
+        rep = R.recover_classes(str(self.sample_mfc))
+
+        # Ground truth manifest: 6 MFC classes in sample_mfc_x64.dll
+        ground_truth = {
+            "CObject": {"size": 8, "base": None, "serializable": False},
+            "CCmdTarget": {"size": 0x28, "base": "CObject", "serializable": False},
+            "CWnd": {"size": 0x80, "base": "CCmdTarget", "serializable": False},
+            "CDialog": {"size": 0xA0, "base": "CWnd", "serializable": False},
+            "CMyDocument": {"size": 0x60, "base": "CCmdTarget", "serializable": True},
+            "CFeature": {"size": 0x40, "base": "CObject", "serializable": True},
+        }
+
+        mfc_by_name = rep.mfc_by_name()
+        recovered_names = set(mfc_by_name.keys())
+        expected_names = set(ground_truth.keys())
+
+        tp = len(recovered_names & expected_names)
+        fp = len(recovered_names - expected_names)
+        fn = len(expected_names - recovered_names)
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+
+        self.assertEqual(precision, 1.0, f"Precision was {precision}, FP: {recovered_names - expected_names}")
+        self.assertEqual(recall, 1.0, f"Recall was {recall}, FN: {expected_names - recovered_names}")
+
+        for name, truth in ground_truth.items():
+            cls = mfc_by_name[name]
+            self.assertEqual(cls.object_size, truth["size"], f"Size mismatch for {name}")
+            self.assertEqual(cls.base_name, truth["base"], f"Base mismatch for {name}")
+            self.assertEqual(cls.serializable, truth["serializable"], f"Serialization mismatch for {name}")
+            self.assertIsNotNone(cls.vtable, f"Missing vtable link for {name}")
+
+        rtti_names = set(rep.rtti_by_name().keys())
+        self.assertTrue(expected_names.issubset(rtti_names))
+
+    def test_non_mfc_zero_false_positives(self):
+        """Pure C / non-MFC binary must yield exactly 0 MFC classes (precision on negative set)."""
+        self.assertTrue(self.sample_non_mfc.exists(), f"Non-MFC fixture missing: {self.sample_non_mfc}")
+        rep = R.recover_classes(str(self.sample_non_mfc))
+        self.assertEqual(
+            len(rep.mfc_classes), 0, f"False positive MFC classes found: {[c.name for c in rep.mfc_classes]}"
+        )
+
+
+MFC64 = r"C:\Windows\System32\mfc140u.dll"
 MFC32 = r"C:\Windows\SysWOW64\mfc140u.dll"
 
 

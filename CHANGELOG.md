@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI Quality Gates (Ruff & Mypy)**: Added dedicated `lint-and-typecheck` job to GitHub Actions running `ruff check src tests` and `mypy` against the public core API surface.
 - **Push-Level DCO Verification**: Extended DCO sign-off validation in CI to verify commits on push as well as pull requests.
 - **SHA-256 Binary Hash Validation**: Extended daemon server binary mismatch protection to compare file SHA-256 hashes against Ghidra project metadata.
+- **ARM64 Bitfield & CSEL Verification (#26)**: Added ARM64 bitfield moves (`UBFM`, `SBFM`, `LSL`, `LSR`, `ASR`, `UXTB`, `UXTH`, `UBFX`, `UBFIZ`) and conditional selection (`CSEL`, `CSINC`, `CSINV`, `CSNEG`) lowering with Z3 SMT equivalence verification in `tests/lifters/test_arm64_bitfield_csel.py`.
+- **Mach-O Objective-C Metadata Recovery (#28)**: Added pure-Python 64-bit Mach-O Objective-C runtime recovery engine (`superghidra.formats.macho_objc_recovery`) extracting classes, superclasses, instance methods, class methods, and ivar displacements, with CLI subcommand `superghidra objc-recover`, synthetic fixture `sample_objc_arm64.dylib`, and unit test suite `tests/formats/test_macho_objc_recovery.py`.
+- **Standalone Decompiler Memory Lowering & Register Declarations**: Added function prologue/epilogue decoding, memory displacement operand support, and automatic hardware register typing (`uint64_t <reg> = 0;`) in decompiled C output.
+- **MFC Public Sample & CI Precision/Recall Suite**: Added synthetic redistributable binary `sample_mfc_x64.dll` and test suite `TestMFCPrecisionRecall` verifying precision=1.0 and recall=1.0 on MFC class hierarchies and 0 false positives on non-MFC binaries.
 
 ### Fixed
 - **Undefined Name Elimination**: Resolved 5 `F821` runtime name errors across `compilable_filter.py`, `cross_platform_headless_harness.py`, `parity_engine.py`, `arm_thumb_decode.py`, and `egraph_mlir_pipeline.py`.

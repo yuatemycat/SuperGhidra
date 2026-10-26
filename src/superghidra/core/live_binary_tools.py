@@ -1012,6 +1012,67 @@ def staged_decompile_function(
             has_ret = True
             break
 
+        # 1. Push r64: 0x50 .. 0x57 (callee-saved prologue or stack parameter save)
+        if insn.map == 0 and 0x50 <= insn.opcode <= 0x57:
+            reg_idx = (insn.opcode & 7) | ((insn.rex & 1) << 3)
+            src = gpr_vns[reg_idx]
+            sp = gpr_vns[4]  # rsp
+            ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_SUB, sp, [sp, Varnode(AddressSpace.CONST, 8, 8)], insn.address))
+            ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.STORE, None, [Varnode(AddressSpace.RAM, 0, 8), sp, src], insn.address))
+            continue
+
+        # 2. Pop r64: 0x58 .. 0x5F (callee-saved epilogue restoration)
+        if insn.map == 0 and 0x58 <= insn.opcode <= 0x5F:
+            reg_idx = (insn.opcode & 7) | ((insn.rex & 1) << 3)
+            dst = gpr_vns[reg_idx]
+            sp = gpr_vns[4]  # rsp
+            ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.LOAD, dst, [Varnode(AddressSpace.RAM, 0, 8), sp], insn.address))
+            ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_ADD, sp, [sp, Varnode(AddressSpace.CONST, 8, 8)], insn.address))
+            continue
+
+        # 3. Leave: 0xC9 (mov rsp, rbp; pop rbp)
+        if insn.map == 0 and insn.opcode == 0xC9:
+            sp = gpr_vns[4]  # rsp
+            bp = gpr_vns[5]  # rbp
+            ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.COPY, sp, [bp], insn.address))
+            ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.LOAD, bp, [Varnode(AddressSpace.RAM, 0, 8), sp], insn.address))
+            ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_ADD, sp, [sp, Varnode(AddressSpace.CONST, 8, 8)], insn.address))
+            continue
+
+        # 4. Immediate arithmetic on registers (sub rsp, imm / add rsp, imm): 0x81 / 0x83
+        if insn.map == 0 and insn.opcode in (0x81, 0x83) and insn.modrm is not None and (insn.modrm >> 6) == 3:
+            group_op = (insn.modrm >> 3) & 7
+            dst = gpr_vns[insn.rm]
+            imm_val = insn.imm or 0
+            imm_vn = Varnode(AddressSpace.CONST, imm_val, 8)
+            if group_op == 0:  # ADD
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_ADD, dst, [dst, imm_vn], insn.address))
+                continue
+            elif group_op == 5:  # SUB
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_SUB, dst, [dst, imm_vn], insn.address))
+                continue
+
+        # 5. Memory operations with displacement: mov reg, [base + disp] (0x8B) / mov [base + disp], reg (0x89)
+        if insn.map == 0 and insn.mem is not None and insn.opcode in (0x89, 0x8B):
+            base_reg_name = insn.mem.base
+            if base_reg_name and base_reg_name in gpr_names:
+                base_idx = gpr_names.index(base_reg_name)
+                base_vn = gpr_vns[base_idx]
+                disp = insn.mem.disp
+                if disp != 0:
+                    addr_vn = Varnode(AddressSpace.UNIQUE, len(ops) + 0x1000, 8, symbol=f"{base_reg_name}_{hex(disp)}")
+                    disp_vn = Varnode(AddressSpace.CONST, disp, 8)
+                    ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.PTRADD, addr_vn, [base_vn, disp_vn], insn.address))
+                else:
+                    addr_vn = base_vn
+
+                reg_vn = gpr_vns[insn.reg]
+                if insn.opcode == 0x8B:  # LOAD reg from mem
+                    ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.LOAD, reg_vn, [Varnode(AddressSpace.RAM, 0, 8), addr_vn], insn.address))
+                else:  # STORE reg to mem (0x89)
+                    ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.STORE, None, [Varnode(AddressSpace.RAM, 0, 8), addr_vn, reg_vn], insn.address))
+                continue
+
         # Check for supported register-register 64-bit forms
         if not (insn.map == 0 and insn.rex_w and insn.mem is None and insn.modrm is not None and (insn.modrm >> 6) == 3):
             unhandled.append((insn.address, insn_raw))

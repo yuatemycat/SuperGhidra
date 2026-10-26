@@ -123,6 +123,14 @@ class TestCliDecompile(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertNotIn("0x42", proc.stdout)
 
+    def test_sample_x64_displacement_decompile(self):
+        fixtures_dir = Path(__file__).resolve().parent.parent / "fixtures" / "binaries"
+        sample_x64 = str(fixtures_dir / "sample_x64.dll")
+        proc = self._run_cli([sample_x64, "--rva", "0x1000", "--standalone"])
+        self.assertEqual(proc.returncode, 0, f"Stderr: {proc.stderr}")
+        self.assertIn("uint64_t rax = 0;", proc.stdout)
+        self.assertIn("*(uint64_t *)(rcx_0x18)", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

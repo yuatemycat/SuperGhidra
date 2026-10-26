@@ -130,6 +130,20 @@ class TestCompilableDecompilerFilter(unittest.TestCase):
         plain = CompilableDecompilerFilter.filter("int func0(int x) { return x; }\n")
         self.assertNotIn("__ctype_b_loc", plain)
 
+    def test_declare_undeclared_registers(self):
+        code = (
+            "uint64_t target_func(uint64_t rcx) {\n"
+            "    rax = rax + rbx;\n"
+            "    edx = 42;\n"
+            "    return rax;\n"
+            "}"
+        )
+        filtered = CompilableDecompilerFilter.filter(code)
+        self.assertIn("uint64_t rax = 0;", filtered)
+        self.assertIn("uint64_t rbx = 0;", filtered)
+        self.assertIn("uint32_t edx = 0;", filtered)
+        self.assertNotIn("uint64_t rcx = 0;", filtered)
+
     def test_ulong_mapping(self):
         ghidra_code = "ulong get_size(ulong x) { return x + 1; }"
         res = CompilableDecompilerFilter.filter(ghidra_code)

@@ -1197,6 +1197,9 @@ class BlockRegion(RegionNode):
         if op.opcode == PCodeOpCode.RETURN:
             val = op.inputs[0].format_c() if op.inputs else "0"
             return f"vast.hl.return %{val} : i64"
+        if op.opcode == PCodeOpCode.STORE:
+            ins = ", ".join(f"%{v.format_c()}" for v in op.inputs)
+            return f"pcode.store {ins} : i64"
         out = f"%{op.output.format_c()}" if op.output else "%_"
         ins = ", ".join(f"%{v.format_c()}" for v in op.inputs)
         return f"{out} = pcode.{op.opcode.name.lower()} {ins} : i64"
@@ -1209,6 +1212,21 @@ class BlockRegion(RegionNode):
         out = op.output.format_c() if op.output else "_"
         if op.opcode == PCodeOpCode.COPY:
             return f"{out} = {op.inputs[0].format_c()};"
+        if op.opcode == PCodeOpCode.LOAD:
+            type_str = "uint64_t" if (op.output and op.output.size == 8) else "uint32_t"
+            addr_expr = op.inputs[1].format_c() if len(op.inputs) > 1 else op.inputs[0].format_c()
+            return f"{out} = *({type_str} *)({addr_expr});"
+        if op.opcode == PCodeOpCode.STORE:
+            addr_expr = op.inputs[1].format_c() if len(op.inputs) > 1 else op.inputs[0].format_c()
+            val_expr = op.inputs[2].format_c() if len(op.inputs) > 2 else op.inputs[1].format_c()
+            val_size = op.inputs[2].size if len(op.inputs) > 2 else 8
+            type_str = "uint64_t" if val_size == 8 else "uint32_t"
+            return f"*({type_str} *)({addr_expr}) = {val_expr};"
+        if op.opcode in (PCodeOpCode.PTRADD, PCodeOpCode.PTRSUB):
+            base_expr = op.inputs[0].format_c()
+            off_expr = op.inputs[1].format_c() if len(op.inputs) > 1 else "0"
+            op_sym = "+" if op.opcode == PCodeOpCode.PTRADD else "-"
+            return f"{out} = {base_expr} {op_sym} {off_expr};"
         bin_map = {
             PCodeOpCode.INT_ADD: "+",
             PCodeOpCode.INT_SUB: "-",
@@ -1284,8 +1302,23 @@ class MLIRGotoFreeRestructurer:
             f"  }}\n"
             f"}}"
         )
+
+        param_symbols = {p.symbol for p in func.params if p.symbol}
+        local_vars: dict[str, int] = {}
+        for blk in func.blocks.values():
+            for op in blk.ops:
+                if op.output and op.output.symbol and op.output.symbol not in param_symbols:
+                    local_vars[op.output.symbol] = op.output.size
+                for inp in op.inputs:
+                    if not inp.is_const and inp.symbol and inp.symbol not in param_symbols:
+                        local_vars[inp.symbol] = inp.size
+
+        decls = [f"    {'uint64_t' if sz == 8 else 'uint32_t'} {sym} = 0;" for sym, sz in sorted(local_vars.items())]
+        decl_block = ("\n".join(decls) + "\n") if decls else ""
+
         c_text = (
             f"{func.return_type} {func.name}({params_sig}) {{\n"
+            f"{decl_block}"
             f"{root_region.to_c(indent=1)}\n"
             f"}}"
         )

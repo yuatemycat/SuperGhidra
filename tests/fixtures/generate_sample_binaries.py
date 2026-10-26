@@ -318,15 +318,324 @@ def generate_arm64_elf_so(out_path: Path) -> None:
     out_path.write_bytes(bytes(raw))
 
 
+def generate_mfc_sample_dll(out_path: Path) -> None:
+    """Generates a redistributable PE64 DLL containing authentic MSVC RTTI and MFC class hierarchies."""
+    image_base = 0x180000000
+    e_lfanew = 0x80
+    headers_size = 0x400
+    machine = 0x8664  # AMD64
+    opt_size = 240
+    va = lambda rva: image_base + rva
+
+    classes = [
+        {"name": "CObject", "size": 8, "schema": 0xFFFF, "base_idx": None, "create": False},
+        {"name": "CCmdTarget", "size": 0x28, "schema": 0xFFFF, "base_idx": 0, "create": False},
+        {"name": "CWnd", "size": 0x80, "schema": 0xFFFF, "base_idx": 1, "create": False},
+        {"name": "CDialog", "size": 0xA0, "schema": 0xFFFF, "base_idx": 2, "create": True},
+        {"name": "CMyDocument", "size": 0x60, "schema": 0x80000001, "base_idx": 1, "create": True},
+        {"name": "CFeature", "size": 0x40, "schema": 0x80000003, "base_idx": 0, "create": True},
+    ]
+
+    text = bytearray(0x1000)
+    rdata = bytearray(0x2000)
+
+    for i, c in enumerate(classes):
+        base_off = i * 0x300
+        name_rva = 0x2000 + base_off
+        rtc_rva = 0x2000 + base_off + 0x40
+        td_rva = 0x2000 + base_off + 0x80
+        bcd_rva = 0x2000 + base_off + 0xC0
+        bca_rva = 0x2000 + base_off + 0x100
+        chd_rva = 0x2000 + base_off + 0x120
+        col_rva = 0x2000 + base_off + 0x140
+        vtable_rva = 0x2000 + base_off + 0x180
+
+        fn_base = i * 0x40
+        get_rtc_rva = 0x1000 + fn_base
+        dtor_rva = 0x1000 + fn_base + 0x10
+        serialize_rva = 0x1000 + fn_base + 0x20
+        create_rva = 0x1000 + fn_base + 0x30
+
+        # GetRuntimeClass: lea rax, [rip + rtc_rva] ; ret
+        rel = va(rtc_rva) - (va(get_rtc_rva) + 7)
+        text[fn_base : fn_base + 8] = b"\x48\x8D\x05" + struct.pack("<i", rel) + b"\xC3"
+        text[fn_base + 0x10] = 0xC3
+        text[fn_base + 0x20] = 0xC3
+        text[fn_base + 0x30] = 0xC3
+
+        # Name:
+        cname = c["name"].encode("ascii") + b"\x00"
+        rdata[base_off : base_off + len(cname)] = cname
+
+        base_va = va(0x2000 + c["base_idx"] * 0x300 + 0x40) if c["base_idx"] is not None else 0
+        create_fn_va = va(create_rva) if c["create"] else 0
+
+        # CRuntimeClass:
+        struct.pack_into(
+            "<QiIQQQQ",
+            rdata,
+            base_off + 0x40,
+            va(name_rva),
+            c["size"],
+            c["schema"],
+            create_fn_va,
+            base_va,
+            0,
+            0,
+        )
+
+        # RTTI TypeDescriptor:
+        struct.pack_into("<QQ", rdata, base_off + 0x80, 0, 0)
+        td_name = f".?AV{c['name']}@@\x00".encode("ascii")
+        rdata[base_off + 0x90 : base_off + 0x90 + len(td_name)] = td_name
+
+        # BCD:
+        struct.pack_into("<iIiiiIi", rdata, base_off + 0xC0, td_rva, 0, 0, -1, 0, 0, chd_rva)
+        # BCA:
+        struct.pack_into("<i", rdata, base_off + 0x100, bcd_rva)
+        # CHD:
+        struct.pack_into("<IIIi", rdata, base_off + 0x120, 0, 0, 1, bca_rva)
+        # COL:
+        struct.pack_into("<IIIiii", rdata, base_off + 0x140, 1, 0, 0, td_rva, chd_rva, col_rva)
+        # Vtable:
+        struct.pack_into(
+            "<QQQQQ",
+            rdata,
+            base_off + 0x180,
+            va(col_rva),
+            va(get_rtc_rva),
+            va(dtor_rva),
+            va(serialize_rva),
+            0,
+        )
+
+    sections = [
+        (b".text\x00\x00\x00", 0x1000, bytes(text), 0x60000020),
+        (b".rdata\x00\x00", 0x2000, bytes(rdata), 0x40000040),
+    ]
+
+    hdr = bytearray(headers_size)
+    hdr[0:2] = b"MZ"
+    struct.pack_into("<I", hdr, 0x3C, e_lfanew)
+    hdr[e_lfanew : e_lfanew + 4] = b"PE\x00\x00"
+    struct.pack_into(
+        "<HHIIIHH",
+        hdr,
+        e_lfanew + 4,
+        machine,
+        len(sections),
+        0, 0, 0,
+        opt_size,
+        0x2022,
+    )
+    opt = e_lfanew + 24
+    struct.pack_into("<HQ", hdr, opt, 0x20B, 0)
+    struct.pack_into("<Q", hdr, opt + 24, image_base)
+    struct.pack_into("<I", hdr, opt + 32, 0x1000)
+    struct.pack_into("<I", hdr, opt + 36, 0x200)
+    struct.pack_into("<I", hdr, opt + 56, 0x5000)
+    struct.pack_into("<I", hdr, opt + 60, headers_size)
+    struct.pack_into("<H", hdr, opt + 68, 0x2160)
+    struct.pack_into("<I", hdr, opt + 108, 16)
+
+    raw = bytearray(hdr)
+    for i, (name, rva, blob, ch) in enumerate(sections):
+        file_align = (len(blob) + 0x1FF) & ~0x1FF
+        padded_blob = blob.ljust(file_align, b"\x00")
+        raw_offset = len(raw)
+        struct.pack_into(
+            "<8sIIIIIIHHI",
+            raw,
+            opt + opt_size + 40 * i,
+            name,
+            len(blob),
+            rva,
+            len(padded_blob),
+            raw_offset,
+            0, 0, 0, 0,
+            ch,
+        )
+        raw += padded_blob
+
+    out_path.write_bytes(bytes(raw))
+
+
+def generate_objc_arm64_dylib(out_path: Path) -> None:
+    """Generates a redistributable Mach-O 64-bit ARM64 dynamic library containing Objective-C metadata."""
+    base = 0x100000000
+    va = lambda rva: base + rva
+
+    text_sec = bytearray(0x100)
+    text_sec[0:4] = struct.pack("<I", 0xD65F03C0)  # ret
+    text_sec[4:8] = struct.pack("<I", 0xD65F03C0)  # ret
+    text_sec[8:12] = struct.pack("<I", 0xD65F03C0)  # ret
+
+    methname_sec = bytearray(0x100)
+    meth_init_off = 0
+    methname_sec[0:5] = b"init\x00"
+    meth_vdl_off = 8
+    methname_sec[8:20] = b"viewDidLoad\x00"
+    meth_shared_off = 24
+    methname_sec[24:39] = b"sharedInstance\x00"
+    meth_count_off = 40
+    methname_sec[40:46] = b"count\x00"
+
+    methtype_sec = bytearray(0x100)
+    type_id_off = 0
+    methtype_sec[0:8] = b"@16@0:8\x00"
+    type_void_off = 8
+    methtype_sec[8:16] = b"v16@0:8\x00"
+    type_uint_off = 16
+    methtype_sec[16:24] = b"Q16@0:8\x00"
+
+    classname_sec = bytearray(0x100)
+    name_base_off = 0
+    classname_sec[0:12] = b"MyBaseModel\x00"
+    name_ctrl_off = 16
+    classname_sec[16:35] = b"MyCustomController\x00"
+
+    const_sec = bytearray(0x400)
+    data_sec = bytearray(0x200)
+    classlist_sec = bytearray(0x10)
+
+    # Method lists
+    struct.pack_into("<II", const_sec, 0x00, 24, 2)
+    struct.pack_into("<QQQ", const_sec, 0x08, va(0x1100 + meth_init_off), va(0x1200 + type_id_off), va(0x1000))
+    struct.pack_into("<QQQ", const_sec, 0x20, va(0x1100 + meth_count_off), va(0x1200 + type_uint_off), va(0x1004))
+
+    struct.pack_into("<II", const_sec, 0x40, 24, 1)
+    struct.pack_into("<QQQ", const_sec, 0x48, va(0x1100 + meth_vdl_off), va(0x1200 + type_void_off), va(0x1008))
+
+    struct.pack_into("<II", const_sec, 0x68, 24, 1)
+    struct.pack_into("<QQQ", const_sec, 0x70, va(0x1100 + meth_shared_off), va(0x1200 + type_id_off), va(0x1000))
+
+    # Ivars
+    ivar_off_rva = 0x24C0
+    struct.pack_into("<II", const_sec, 0x90, 32, 1)
+    struct.pack_into("<QQQII", const_sec, 0x98, va(ivar_off_rva), va(0x1100 + 48), va(0x1200 + type_id_off), 3, 8)
+    methname_sec[48:60] = b"_identifier\x00"
+    struct.pack_into("<I", data_sec, 0xC0, 16)
+
+    # class_ro_t
+    struct.pack_into(
+        "<IIIIQQQQQQQ",
+        const_sec,
+        0x100,
+        0, 8, 32, 0, 0,
+        va(0x1300 + name_base_off),
+        va(0x2000 + 0x00),
+        0,
+        va(0x2000 + 0x90),
+        0, 0
+    )
+
+    struct.pack_into(
+        "<IIIIQQQQQQQ",
+        const_sec,
+        0x160,
+        0, 32, 48, 0, 0,
+        va(0x1300 + name_ctrl_off),
+        va(0x2000 + 0x40),
+        0, 0, 0, 0
+    )
+
+    struct.pack_into(
+        "<IIIIQQQQQQQ",
+        const_sec,
+        0x1C0,
+        1, 40, 40, 0, 0,
+        va(0x1300 + name_ctrl_off),
+        va(0x2000 + 0x68),
+        0, 0, 0, 0
+    )
+
+    # objc_class_t
+    struct.pack_into("<QQQQQ", data_sec, 0x00, 0, 0, 0, 0, va(0x2000 + 0x100))
+    struct.pack_into("<QQQQQ", data_sec, 0x28, 0, 0, 0, 0, va(0x2000 + 0x1C0))
+    struct.pack_into("<QQQQQ", data_sec, 0x50, va(0x2400 + 0x28), va(0x2400 + 0x00), 0, 0, va(0x2000 + 0x160))
+
+    # classlist
+    struct.pack_into("<QQ", classlist_sec, 0x00, va(0x2400 + 0x00), va(0x2400 + 0x50))
+
+    sects = [
+        ("__TEXT", "__text", 0x1000, len(text_sec), 0x300, text_sec, 0x80000400),
+        ("__TEXT", "__objc_methname", 0x1100, len(methname_sec), 0x400, methname_sec, 0),
+        ("__TEXT", "__objc_methtype", 0x1200, len(methtype_sec), 0x500, methtype_sec, 0),
+        ("__TEXT", "__objc_classname", 0x1300, len(classname_sec), 0x600, classname_sec, 0),
+        ("__DATA", "__objc_const", 0x2000, len(const_sec), 0x700, const_sec, 0),
+        ("__DATA", "__objc_data", 0x2400, len(data_sec), 0xB00, data_sec, 0),
+        ("__DATA", "__objc_classlist", 0x2600, len(classlist_sec), 0xD00, classlist_sec, 0),
+    ]
+
+    seg_cmd_size = 72 + len(sects) * 80
+    hdr = bytearray(0x300)
+    struct.pack_into(
+        "<IIIIIIII",
+        hdr, 0,
+        0xFEEDFACF,
+        0x0100000C,
+        0,
+        6,
+        1,
+        seg_cmd_size,
+        0x00200000,
+        0
+    )
+
+    struct.pack_into(
+        "<II16sQQQQiiII",
+        hdr, 32,
+        0x19,
+        seg_cmd_size,
+        b"",
+        base,
+        0x4000,
+        0,
+        0x2000,
+        7, 7,
+        len(sects),
+        0
+    )
+
+    for i, (seg, sname, addr, sz, off, content, flags) in enumerate(sects):
+        s_off = 32 + 72 + i * 80
+        struct.pack_into(
+            "<16s16sQQIIIIIIII",
+            hdr, s_off,
+            sname.encode("latin-1"),
+            seg.encode("latin-1"),
+            base + addr,
+            sz,
+            off,
+            2,
+            0, 0,
+            flags,
+            0, 0, 0
+        )
+
+    raw = bytearray(0x2000)
+    raw[:len(hdr)] = hdr
+    for _, _, _, _, off, content, _ in sects:
+        raw[off : off + len(content)] = content
+
+    out_path.write_bytes(bytes(raw))
+
+
 def main() -> None:
     pe_target = OUT_DIR / "sample_x64.dll"
+    mfc_target = OUT_DIR / "sample_mfc_x64.dll"
     elf_target = OUT_DIR / "sample_arm64.so"
+    objc_target = OUT_DIR / "sample_objc_arm64.dylib"
 
     generate_pe64_dll(pe_target)
+    generate_mfc_sample_dll(mfc_target)
+    print(f"[+] Generated MFC PE64: {mfc_target} ({mfc_target.stat().st_size} bytes)")
     print(f"[+] Generated PE64: {pe_target} ({pe_target.stat().st_size} bytes)")
 
     generate_arm64_elf_so(elf_target)
     print(f"[+] Generated ELF64 ARM64: {elf_target} ({elf_target.stat().st_size} bytes)")
+    generate_objc_arm64_dylib(objc_target)
+    print(f"[+] Generated Mach-O ARM64 ObjC: {objc_target} ({objc_target.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":
