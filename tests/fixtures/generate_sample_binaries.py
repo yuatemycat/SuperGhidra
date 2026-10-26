@@ -33,11 +33,11 @@ def generate_pe64_dll(out_path: Path) -> None:
     # mov rax, rbx ; mov rcx, rax ; mov rdx, rcx ; ret (dataflow chain + type lattice displacements)
     # 48 8B 41 18 ; 48 89 41 20 ; 8B 51 08 ; 48 89 D8 ; 48 89 C1 ; 48 89 CA ; C3
     code = bytearray()
-    # FUN at 0x1000
+    # FUN 1 at 0x1000: type lattice memory displacements + dataflow
     code.extend(bytes.fromhex("488B4118 48894120 8B5108 4889D8 4889C1 4889CA C3"))
-    # Padding
-    code.extend(b"\x90" * 8)
-    # FUN at 0x101C: add and xor chain
+    # Align FUN 2 to 0x1020
+    code.extend(b"\x90" * (0x20 - len(code)))
+    # FUN 2 at 0x1020: supported standalone arithmetic (add rax, rbx ; xor rcx, rcx ; ret)
     code.extend(bytes.fromhex("4801D8 4831C9 C3"))
     # Pad to at least 16 KB so chunk compression tests work
     code.extend(b"\x90" * (16384 - len(code)))
@@ -74,7 +74,7 @@ def generate_pe64_dll(out_path: Path) -> None:
     rdata[0x90 + len(f1_name) : 0x90 + len(f1_name) + len(f2_name)] = f2_name
 
     # AddressOfFunctions: [0x1000, 0x1010]
-    struct.pack_into("<II", rdata, 0x60, 0x1000, 0x1010)
+    struct.pack_into("<II", rdata, 0x60, 0x1000, 0x1020)
     # AddressOfNames: [f1_rva, f2_rva]
     struct.pack_into("<II", rdata, 0x70, f1_rva, f2_rva)
     # AddressOfNameOrdinals: [0, 1]

@@ -894,6 +894,25 @@ class GhidraOracleSession:
     def program_id(self) -> str:
         return self.get_program_id()
 
+    def matches_binary(self, binary_path: str) -> bool:
+        """Returns True if the requested binary path matches this session's loaded program."""
+        if not binary_path:
+            return True
+        req_base = os.path.basename(binary_path).lower()
+        if self.program_name and req_base == self.program_name.lower():
+            return True
+        if self.program is not None:
+            try:
+                exec_path = self.program.getExecutablePath()
+                if exec_path:
+                    if os.path.abspath(exec_path).lower() == os.path.abspath(binary_path).lower():
+                        return True
+                    if os.path.basename(exec_path).lower() == req_base:
+                        return True
+            except Exception:
+                pass
+        return False if self.program_name else True
+
     def clean_locks(
         self,
         proj_dir: str,
@@ -2074,6 +2093,14 @@ class MockGhidraOracleSession:
     def close(self) -> None:
         pass
 
+    def matches_binary(self, binary_path: str) -> bool:
+        """Returns True if the requested binary matches the mock loaded program."""
+        if not binary_path or not self.program_name or self.program_name in ("mock_program", "*"):
+            return True
+        req_base = os.path.basename(binary_path).lower()
+        prog_base = os.path.basename(self.program_name).lower()
+        return req_base == prog_base
+
     def query_rva(self, addr: Any) -> Dict[str, Any]:
         val = parse_addr_int(addr)
         return {
@@ -2421,6 +2448,17 @@ class GhidraDaemonServer:
                         "code": 401,
                         "message": "Unauthorized: invalid or missing session token",
                     }
+
+        # Reject requests directed to a different binary if daemon has one loaded
+        req_binary = args.get("binary") or req.get("binary")
+        if req_binary and hasattr(self.session, "matches_binary"):
+            if not self.session.matches_binary(req_binary):
+                loaded_name = getattr(self.session, "program_name", "unknown") or "unknown"
+                return {
+                    "status": "error",
+                    "code": 409,
+                    "message": f"Daemon binary mismatch: loaded '{loaded_name}', requested '{req_binary}'",
+                }
 
         try:
             if cmd == "rva":

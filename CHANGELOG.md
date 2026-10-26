@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Public API Resolution**: Resolved 10 broken `AttributeError` exports in `superghidra.__all__` (`Relocation`, `RTTIClass`, `RTTIBaseClass`, `CRuntimeClassInfo`, `MemberVariable`, `MFCArchiveDecoder`, `MFCClassSchema`, `start_daemon`, `stop_daemon`, `filter_c_code`).
 - **MFC Class Recovery Validation**: Added MFC linkage check and `CObject` hierarchy reachability validation in `msvc_class_recovery._scan_mfc`, pruning 18 false-positive candidate classes in pure C binaries like `libcrypto-3.dll`.
 - **Cross-Platform Type Lattice CI**: Regenerated `tests/fixtures/binaries/sample_x64.dll` with memory displacement instructions, fixing type lattice test failures on non-Windows CI platforms.
-- **Decompiler Daemon Routing (#25)**: Connected `superghidra decompile` to route through active Ghidra background daemon on default port 5073 with automatic multi-function response parsing and compilable C filter normalization (`filter_c_code`), while adding `--raw` bypass flag and local ALU fallback lifter.
+- **Decompiler Daemon Routing & Binary Validation (#25)**: Connected `superghidra decompile` with opt-in `--daemon` routing to active Ghidra background daemons (default port 5073) with automatic multi-function response parsing and compilable C filter normalization (`filter_c_code`). Added binary validation to the daemon server refusing cross-binary decompilation (HTTP 409) if the requested file mismatches the loaded project.
 - **Linux Socket Reset Handling**: Handled `ConnectionResetError` during oversized TCP payload test termination across POSIX environments.
 - **CI Wheel Isolation & DCO Verification**: Added `test-wheel` isolated verification job installing into clean virtualenv outside repository, and added per-commit DCO sign-off check for PRs.
 
@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Real-binary and integration tests now run deterministically across all environments in CI without relying on host system libraries.
 - **Python 3.13 & macOS CI**: Added Python 3.13 and `macos-latest` runners to GitHub Actions test matrix.
 - **Release Automation Gate**: Tagged releases only trigger and publish to PyPI after all matrix CI tests pass.
-- **Typing & Linting**: Added PEP 561 `py.typed` marker file, strict `mypy` configuration, and `ruff` lint rules in `pyproject.toml`.
+- **Typing & Linting**: Added PEP 561 `py.typed` marker file for public core types and `ruff` lint rules in `pyproject.toml`.
 
 ### Changed
 - **Packaging Directory Layout**: Migrated from flat root layout to canonical `src/` layout (`src/superghidra/`).

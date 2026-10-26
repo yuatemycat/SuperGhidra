@@ -93,5 +93,5 @@ jobs:
           superghidra version
           superghidra rtti-recover $GITHUB_WORKSPACE/tests/fixtures/binaries/sample_x64.dll -o /tmp/clean_env/recovered.json
           python -c "import json; data = json.load(open('/tmp/clean_env/recovered.json')); assert 'rtti_classes' in data"
-          superghidra decompile $GITHUB_WORKSPACE/tests/fixtures/binaries/sample_x64.dll --rva 0x1000 --standalone -o /tmp/clean_env/decomp.c
+          superghidra decompile $GITHUB_WORKSPACE/tests/fixtures/binaries/sample_x64.dll --rva 0x1020 --standalone -o /tmp/clean_env/decomp.c
           python -c "code = open('/tmp/clean_env/decomp.c').read(); assert 'rax' in code"

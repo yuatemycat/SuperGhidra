@@ -121,6 +121,50 @@ class TestDecompileDaemonRouting(unittest.TestCase):
             content = out_file.read_text(encoding="utf-8")
             self.assertIn("func_00001000", content)
 
+    def test_decompile_binary_mismatch_refused_by_daemon(self):
+        """Verifies daemon refuses decompile when requested binary mismatches loaded program."""
+        stderr_buf = io.StringIO()
+        orig_name = self.mock_session.program_name
+        try:
+            self.mock_session.program_name = "different_app.dll"
+            args = [
+                "decompile",
+                str(SAMPLE_X64),
+                "--rva",
+                "0x1000",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self.port),
+                "--daemon",
+            ]
+            with patch("sys.stderr", stderr_buf):
+                ret = main(args)
+
+            self.assertEqual(ret, 2)
+            err = stderr_buf.getvalue()
+            self.assertIn("Daemon binary mismatch", err)
+            self.assertIn("different_app.dll", err)
+        finally:
+            self.mock_session.program_name = orig_name
+
+    def test_decompile_defaults_to_standalone_without_daemon_flag(self):
+        """Verifies CLI runs standalone lifter by default when --daemon is omitted."""
+        stdout_buf = io.StringIO()
+        args = [
+            "decompile",
+            str(SAMPLE_X64),
+            "--rva",
+            "0x1020",
+        ]
+        with patch("sys.stdout", stdout_buf):
+            ret = main(args)
+
+        self.assertEqual(ret, 0)
+        output = stdout_buf.getvalue()
+        self.assertIn("uint64_t target_func", output)
+        self.assertIn("rax = rax + rbx", output)
+
     def test_decompile_offline_with_daemon_flag_exits_nonzero(self):
         """Verifies --daemon flag with offline daemon exits non-zero."""
         stderr_buf = io.StringIO()

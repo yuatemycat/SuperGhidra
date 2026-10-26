@@ -38,6 +38,9 @@ jobs:
     name: Build & Release Package to GitHub & PyPI
     needs: [ci-gate]
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/superghidra
     permissions:
       contents: write
       id-token: write
@@ -81,4 +84,3 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
-          password: ${{ secrets.PYPI_API_TOKEN }}

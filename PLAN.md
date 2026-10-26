@@ -194,7 +194,7 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
 - [x] ~~**Target Modules:** [`synthetic_symbol_exporter.py`](superghidra/formats/synthetic_symbol_exporter.py)~~
 - [x] ~~**Accomplished:**~~
   - DWARF 5 ELF64 container (`DWARF5Exporter`, `EM_AARCH64` by default) emitting CU headers, `.debug_info`, `.debug_abbrev`, `.debug_line`, `.debug_str`, and `.symtab`; every `DW_AT_type` references a real DIE.
-  - **Experimental** MSF 7.0 / PDB container (`PDBExporter`): correct 64-byte DBI header, FPM blocks reserved, valid named-stream map, `S_PUB32` records. No GSI hash stream, so MSVC/LLVM tools may not load it.
+  - MSF 7.0 / PDB container (`PDBExporter`): correct 64-byte DBI header, FPM blocks reserved, valid named-stream map, `S_PUB32` records, and GSI public symbol hash stream.
   - Breakpad `.sym` format (`SymFileExporter`) and linker `.map` format (`MapFileExporter`).
   - Batch export API: `export_from_ledger(ledger, output_base, formats=['dwarf', 'pdb', 'sym', 'map'])` and CLI.
 
@@ -286,7 +286,7 @@ Regression tests for the 2026-10-17 audit live in `test_g1_regressions.py`, `tes
 ## ⚠️ Known Limitations
 
 - **Java codec is standalone.** Ghidra builds its own `LocalManagedBufferFile` and has no hook to replace it, so installing the extension does not compress Ghidra projects.
-- **PDB export is experimental.** It has no GSI hash stream, so MSVC/LLVM tools may not load it. DWARF export is the supported path.
+- **PDB export is experimental.** Emits MSF 7.0 with DBI streams, `S_PUB32` symbol records, and GSI hash tables, but lacks full CodeView type (TPI) streams for complex structs. DWARF export remains the primary recommended path for external tooling.
 - **SMT verifier is sound but incomplete.** It returns `UNKNOWN`, never "equivalent", for floats, calls, unhandled P-code and loops beyond the unroll limit.
 - **ARM64 lifter covers an integer subset.** Atomics and unsupported encodings lift as `UNIMPLEMENTED`.
 - **Neural and Colab output needs a real LLM endpoint.** Without one, the neural stage returns neutral heuristic names labelled `heuristic-fallback`, and the Colab pipeline reports `not_implemented` stages.

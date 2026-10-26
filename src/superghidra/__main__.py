@@ -191,65 +191,62 @@ def cmd_decompile(args: argparse.Namespace) -> int:
     target_addr = args.rva if args.rva is not None else args.va
     addr_str = f"{target_addr:#x}" if target_addr is not None else "main"
 
-    # Route through active Ghidra daemon if available and not forced standalone (#25)
-    if not args.standalone:
+    # Route through active Ghidra daemon if explicitly requested via --daemon (#25)
+    if getattr(args, "daemon", False) and not getattr(args, "standalone", False):
         from superghidra.core.ghidra_oracle import is_daemon_online, client_send_request
 
         daemon_up = is_daemon_online(host=args.host, port=args.port)
-        if daemon_up or args.daemon:
-            if not daemon_up:
-                print(f"Error: Ghidra daemon is offline at {args.host}:{args.port}", file=sys.stderr)
-                return 1
-            req_args = {
-                "binary": str(args.binary.resolve()) if args.binary.exists() else str(args.binary),
-                "rva": args.rva,
-                "va": args.va,
-                "addr": addr_str,
-                "arch": args.arch,
-            }
-            if target_addr is not None:
-                req_args["targets"] = [target_addr]
-            try:
-                resp = client_send_request(
-                    "decompile",
-                    req_args,
-                    host=args.host,
-                    port=args.port,
-                    auto_spawn=False,
-                    token=args.token,
-                )
-                if resp.get("status") == "ok":
-                    c_code = ""
-                    if isinstance(resp.get("code"), str) and resp["code"]:
-                        c_code = resp["code"]
-                    elif isinstance(resp.get("functions"), list) and resp["functions"]:
-                        codes = [fn["code"] for fn in resp["functions"] if isinstance(fn, dict) and "code" in fn]
-                        c_code = "\n\n".join(codes)
-                    elif isinstance(resp.get("results"), list) and resp["results"]:
-                        codes = [r["code"] for r in resp["results"] if isinstance(r, dict) and "code" in r]
-                        c_code = "\n\n".join(codes)
-                    elif isinstance(resp.get("decompiled"), str):
-                        c_code = resp["decompiled"]
+        if not daemon_up:
+            print(f"Error: Ghidra daemon is offline at {args.host}:{args.port}", file=sys.stderr)
+            return 1
+        req_args = {
+            "binary": str(args.binary.resolve()) if args.binary.exists() else str(args.binary),
+            "rva": args.rva,
+            "va": args.va,
+            "addr": addr_str,
+            "arch": args.arch,
+        }
+        if target_addr is not None:
+            req_args["targets"] = [target_addr]
+        try:
+            resp = client_send_request(
+                "decompile",
+                req_args,
+                host=args.host,
+                port=args.port,
+                auto_spawn=False,
+                token=args.token,
+            )
+            if resp.get("status") == "ok":
+                c_code = ""
+                if isinstance(resp.get("code"), str) and resp["code"]:
+                    c_code = resp["code"]
+                elif isinstance(resp.get("functions"), list) and resp["functions"]:
+                    codes = [fn["code"] for fn in resp["functions"] if isinstance(fn, dict) and "code" in fn]
+                    c_code = "\n\n".join(codes)
+                elif isinstance(resp.get("results"), list) and resp["results"]:
+                    codes = [r["code"] for r in resp["results"] if isinstance(r, dict) and "code" in r]
+                    c_code = "\n\n".join(codes)
+                elif isinstance(resp.get("decompiled"), str):
+                    c_code = resp["decompiled"]
 
-                    if c_code:
-                        if not getattr(args, "raw", False):
-                            from superghidra.core.compilable_filter import filter_c_code
-                            c_code = filter_c_code(c_code)
-                        if args.output:
-                            args.output.write_text(c_code, encoding="utf-8")
-                            print(f"Decompiled code written to {args.output}")
-                        else:
-                            print(c_code)
-                        return 0
+                if c_code:
+                    if not getattr(args, "raw", False):
+                        from superghidra.core.compilable_filter import filter_c_code
+                        c_code = filter_c_code(c_code)
+                    if args.output:
+                        args.output.write_text(c_code, encoding="utf-8")
+                        print(f"Decompiled code written to {args.output}")
+                    else:
+                        print(c_code)
+                    return 0
 
-                if args.daemon:
-                    err_msg = resp.get("message") or resp.get("error") or "unknown error"
-                    print(f"Error from daemon: {err_msg}", file=sys.stderr)
-                    return 2
-            except Exception as e:
-                if args.daemon:
-                    print(f"Daemon request failed: {e}", file=sys.stderr)
-                    return 2
+            err_msg = resp.get("message") or resp.get("error") or "unknown error"
+            print(f"Error from daemon: {err_msg}", file=sys.stderr)
+            return 2
+        except Exception as e:
+            print(f"Daemon request failed: {e}", file=sys.stderr)
+            return 2
 
     # Standalone local fallback lifter
     from superghidra.core.live_binary_tools import LiftError, staged_decompile_function
