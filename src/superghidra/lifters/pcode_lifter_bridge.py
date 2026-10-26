@@ -21,7 +21,7 @@ import enum
 import json
 import socket
 import struct
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple
 
 try:
     import numpy as np
@@ -38,7 +38,6 @@ except ImportError:
     HAS_PYPCODE = False
 
 from superghidra.lifters import x86_decode
-
 
 # ==============================================================================
 # P-Code Opcode Definitions (Standard Ghidra P-Code Set)
@@ -126,10 +125,10 @@ class Varnode:
     space: AddressSpace
     offset: Any
     size: int = 8
-    reg_name: Optional[str] = dataclasses.field(default=None, compare=False)
+    reg_name: str | None = dataclasses.field(default=None, compare=False)
 
     @property
-    def name(self) -> Optional[str]:
+    def name(self) -> str | None:
         if self.reg_name is not None:
             return self.reg_name
         if self.space == AddressSpace.REGISTER and isinstance(self.offset, str):
@@ -166,7 +165,7 @@ class PcodeOp:
     """Represents a single P-Code instruction."""
     opcode: PcodeOpcode
     inputs: List[Varnode] = dataclasses.field(default_factory=list)
-    output: Optional[Varnode] = None
+    output: Varnode | None = None
     pc: int = 0
 
     def __repr__(self) -> str:
@@ -275,7 +274,7 @@ class ARM64PcodeLifter:
         return ops
 
     def __init__(self):
-        self._last_cmp_operands: Optional[Any] = None
+        self._last_cmp_operands: Any | None = None
 
     @staticmethod
     def _eval_nzcv_condition(cond: int, n: int, z: int, c: int, v: int) -> bool:
@@ -2404,7 +2403,7 @@ class ARM64PcodeLifter:
         self,
         code: bytes,
         base_addr: int = 0x1000,
-        max_insns: Optional[int] = None,
+        max_insns: int | None = None,
     ) -> List[PcodeOp]:
         """Lifts ARM64 bytes starting at `base_addr`, up to `max_insns` instructions."""
         if max_insns is not None and max_insns >= 0:
@@ -2475,7 +2474,7 @@ class X86_64PcodeLifter:
 
     def __init__(self, mode: int = 64):
         self.mode = mode
-        self._last_cmp_operands: Optional[Tuple[Varnode, Varnode, int, bool]] = None
+        self._last_cmp_operands: Tuple[Varnode, Varnode, int, bool] | None = None
 
     @staticmethod
     def _reg_varnode(reg_idx: int, size: int = 8) -> Varnode:
@@ -2550,7 +2549,7 @@ class X86_64PcodeLifter:
             ops.append(PcodeOp(PcodeOpcode.COPY, [self._const_varnode(eff_addr, 8)], u_addr, pc=pc))
             return ops
 
-        cur_addr: Optional[Varnode] = None
+        cur_addr: Varnode | None = None
         if mem.base is not None:
             base_idx = _X86_REG_NAME_TO_IDX.get(mem.base.lower(), 0)
             cur_addr = self._reg_varnode(base_idx, 8)
@@ -3071,7 +3070,7 @@ class X86_64PcodeLifter:
         self,
         code: bytes,
         base_addr: int = 0x1000,
-        max_insns: Optional[int] = None,
+        max_insns: int | None = None,
     ) -> List[PcodeOp]:
         """Lifts x86_64 / x86 bytes starting at `base_addr`, up to `max_insns` instructions."""
         all_ops: List[PcodeOp] = []
@@ -3145,7 +3144,7 @@ class PypcodeSleighBackend:
         (0x200, 1): "ng", (0x201, 1): "zr", (0x202, 1): "cy", (0x203, 1): "ov",
     }
 
-    def __init__(self, lang_id: str = "x86_64", context: Optional[Any] = None):
+    def __init__(self, lang_id: str = "x86_64", context: Any | None = None):
         self.lang_id = lang_id
         self.language_id = self.resolve_language_id(lang_id)
         if context is not None:
@@ -3191,7 +3190,7 @@ class PypcodeSleighBackend:
                 if off not in self._reg_by_offset or low_name in CANONICAL_REG_OFFSETS:
                     self._reg_by_offset[off] = low_name
 
-    def _resolve_register_name(self, vn: Any) -> Optional[str]:
+    def _resolve_register_name(self, vn: Any) -> str | None:
         off = getattr(vn, "offset", 0)
         sz = int(getattr(vn, "size", 8))
         if isinstance(off, str):
@@ -3249,7 +3248,7 @@ class PypcodeSleighBackend:
             return Varnode(space=AddrSpace.RAM, offset=off_val, size=size)
 
     @staticmethod
-    def _translate_opcode(raw_opcode: Any) -> Optional[PcodeOpcode]:
+    def _translate_opcode(raw_opcode: Any) -> PcodeOpcode | None:
         if isinstance(raw_opcode, PcodeOpcode):
             return raw_opcode
         op_name = getattr(raw_opcode, "name", None) or str(raw_opcode)
@@ -3266,7 +3265,7 @@ class PypcodeSleighBackend:
         self,
         code: bytes,
         base_addr: int = 0x1000,
-        max_insns: Optional[int] = None,
+        max_insns: int | None = None,
     ) -> List[PcodeOp]:
         """Lifts `code` at `base_addr` via `pypcode` into canonical `PcodeOp`s."""
         if not code:
@@ -3322,7 +3321,7 @@ class _DualAvailableDescriptor:
     def __init__(self, func: Callable[..., bool]):
         self.func = func
 
-    def __get__(self, instance: Optional[DaemonPcodeBackend], owner: Any = None) -> Callable[..., bool]:
+    def __get__(self, instance: DaemonPcodeBackend | None, owner: Any = None) -> Callable[..., bool]:
         if instance is None:
             def _cls_check(host: str = "127.0.0.1", port: int = 5073, timeout: float = 0.25) -> bool:
                 return self.func(None, host=host, port=port, timeout=timeout)
@@ -3346,7 +3345,7 @@ class DaemonPcodeBackend:
         port: int = 5073,
         timeout: float = 2.0,
         arch: str = "x86_64",
-        rpc_client: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        rpc_client: Callable[[Dict[str, Any]], Any] | None = None,
     ):
         self.host = host
         self.port = port
@@ -3356,7 +3355,7 @@ class DaemonPcodeBackend:
 
     @_DualAvailableDescriptor
     def is_available(
-        self: Optional[DaemonPcodeBackend],
+        self: DaemonPcodeBackend | None,
         host: str = "127.0.0.1",
         port: int = 5073,
         timeout: float = 0.25,
@@ -3370,7 +3369,7 @@ class DaemonPcodeBackend:
             return False
 
     @staticmethod
-    def parse_varnode_dict(vn_data: Union[Dict[str, Any], Varnode]) -> Varnode:
+    def parse_varnode_dict(vn_data: Dict[str, Any] | Varnode) -> Varnode:
         if isinstance(vn_data, Varnode):
             return vn_data
         raw_space = str(vn_data.get("space", "ram")).lower()
@@ -3458,7 +3457,7 @@ class DaemonPcodeBackend:
         self,
         code: bytes,
         base_addr: int = 0x1000,
-        max_insns: Optional[int] = None,
+        max_insns: int | None = None,
     ) -> List[PcodeOp]:
         """Requests P-Code operations from the persistent SuperGhidra daemon over TCP JSON RPC."""
         req: Dict[str, Any] = {
@@ -3500,8 +3499,8 @@ class UnifiedPcodeLifter:
         daemon_host: str = "127.0.0.1",
         daemon_port: int = 5073,
         daemon_timeout: float = 0.5,
-        daemon_backend: Optional[DaemonPcodeBackend] = None,
-        pypcode_backend: Optional[PypcodeSleighBackend] = None,
+        daemon_backend: DaemonPcodeBackend | None = None,
+        pypcode_backend: PypcodeSleighBackend | None = None,
     ):
         self.arch = self._normalize_arch(arch)
         self.backend = backend.lower()
@@ -3512,7 +3511,7 @@ class UnifiedPcodeLifter:
         self.pypcode_backend = pypcode_backend
 
         if self.arch == "arm64":
-            self.builtin_lifter: Union[ARM64PcodeLifter, X86_64PcodeLifter] = ARM64PcodeLifter()
+            self.builtin_lifter: ARM64PcodeLifter | X86_64PcodeLifter = ARM64PcodeLifter()
         elif self.arch == "x86_64":
             self.builtin_lifter = X86_64PcodeLifter(mode=64)
         else:
@@ -3533,8 +3532,8 @@ class UnifiedPcodeLifter:
         self,
         code: bytes,
         base_addr: int = 0x1000,
-        max_insns: Optional[int] = None,
-        backend: Optional[str] = None,
+        max_insns: int | None = None,
+        backend: str | None = None,
     ) -> Tuple[List[PcodeOp], str]:
         """Lifts `code` and returns `(ops, backend_used)` where `backend_used` is `'pypcode' | 'daemon' | 'builtin'`."""
         choice = (backend or self.backend).strip().lower()
@@ -3593,8 +3592,8 @@ class UnifiedPcodeLifter:
         self,
         code: bytes,
         base_addr: int = 0x1000,
-        max_insns: Optional[int] = None,
-        backend: Optional[str] = None,
+        max_insns: int | None = None,
+        backend: str | None = None,
     ) -> List[PcodeOp]:
         """Lifts `code` into `List[PcodeOp]` using configured backend resolution order."""
         ops, _ = self.lift_with_provenance(code, base_addr=base_addr, max_insns=max_insns, backend=backend)

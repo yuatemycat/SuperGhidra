@@ -15,8 +15,8 @@ import time
 import unittest
 
 from superghidra.core.compilable_filter import CompilableDecompilerFilter
-from superghidra.core.live_binary_tools import staged_decompile_function, get_struct_catalog, import_type_library
-from superghidra.lifters.egraph_mlir_pipeline import build_obfuscated_test_function, StagedPCodePassManager
+from superghidra.core.live_binary_tools import staged_decompile_function
+from superghidra.lifters.egraph_mlir_pipeline import StagedPCodePassManager, build_obfuscated_test_function
 
 
 class TestParityBenchmarkScorecard(unittest.TestCase):

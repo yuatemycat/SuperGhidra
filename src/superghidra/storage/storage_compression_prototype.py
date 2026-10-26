@@ -16,13 +16,11 @@ import argparse
 import io
 import os
 import random
-import string
 import struct
-import sys
 import time
 import zlib
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 try:
     import lz4.block
@@ -77,7 +75,7 @@ class SlotDirectoryEntry:
 class DataBuffer:
     """Python representation of Ghidra's db.buffers.DataBuffer."""
 
-    def __init__(self, buffer_id: int = -1, data: Optional[bytearray] = None, empty: bool = False):
+    def __init__(self, buffer_id: int = -1, data: bytearray | None = None, empty: bool = False):
         self.buffer_id: int = buffer_id
         self.empty: bool = empty
         self.dirty: bool = False
@@ -120,7 +118,7 @@ class SlotDirectory:
     def set_entry(self, entry: SlotDirectoryEntry) -> None:
         self._entries[entry.block_id] = entry
 
-    def get_entry(self, block_id: int) -> Optional[SlotDirectoryEntry]:
+    def get_entry(self, block_id: int) -> SlotDirectoryEntry | None:
         return self._entries.get(block_id)
 
     def __len__(self) -> int:
@@ -160,7 +158,7 @@ class CompressedLocalManagedBufferFile:
     CODEC_ZSTD_L3 = 2
     CODEC_DEFLATE = 3
 
-    def __init__(self, backing_stream: Optional[io.BytesIO] = None, codec: str = "lz4"):
+    def __init__(self, backing_stream: io.BytesIO | None = None, codec: str = "lz4"):
         self.stream = backing_stream if backing_stream is not None else io.BytesIO()
         self.codec = codec.lower()
         if self.codec not in ("lz4", "zstd", "deflate"):
@@ -232,7 +230,7 @@ class CompressedLocalManagedBufferFile:
         self.slot_directory.set_entry(entry)
         buf.dirty = False
 
-    def get(self, buf: Optional[DataBuffer], index: int) -> DataBuffer:
+    def get(self, buf: DataBuffer | None, index: int) -> DataBuffer:
         """Intercepts LocalManagedBufferFile.get(DataBuffer buf, int index).
 
         Looks up slot directory entry, seeks to 64-bit offset, decompresses block.
@@ -244,7 +242,7 @@ class CompressedLocalManagedBufferFile:
         self.stream.seek(entry.offset, io.SEEK_SET)
         comp_bytes = self.stream.read(entry.comp_len)
         if len(comp_bytes) != entry.comp_len:
-            raise IOError(f"Short read at offset {entry.offset}: expected {entry.comp_len}, got {len(comp_bytes)}")
+            raise OSError(f"Short read at offset {entry.offset}: expected {entry.comp_len}, got {len(comp_bytes)}")
 
         raw_bytes = self._decompress(comp_bytes, entry.orig_len)
         restored = DataBuffer.deserialize(raw_bytes)
@@ -280,8 +278,8 @@ class CompressedLocalManagedBufferFile:
     def export_java_sgdb_file(
         self,
         file_path: str,
-        parameters: Optional[Dict[str, int]] = None,
-        free_indexes: Optional[List[int]] = None,
+        parameters: Dict[str, int] | None = None,
+        free_indexes: List[int] | None = None,
     ) -> int:
         """Exports the buffer file to disk in the exact Java SuperGhidraBufferFileAdapter SGDB binary container format.
 
@@ -393,7 +391,7 @@ class CompressedLocalManagedBufferFile:
             file_bytes = f.read()
 
         if len(file_bytes) < JAVA_SGDB_HEADER_SIZE:
-            raise IOError(f"Invalid SGDB file (too small: {len(file_bytes)} bytes): {file_path}")
+            raise OSError(f"Invalid SGDB file (too small: {len(file_bytes)} bytes): {file_path}")
 
         magic, version, algo_id, flags, dir_offset, dir_count, buffer_size, _ = JAVA_SGDB_HEADER_STRUCT.unpack_from(
             file_bytes, 0
@@ -414,7 +412,7 @@ class CompressedLocalManagedBufferFile:
             raw_slots: List[Tuple[int, int, int, int, int]] = []
             for _ in range(dir_count):
                 if pos + JAVA_SLOT_ENTRY_SIZE > len(file_bytes):
-                    raise IOError("Truncated SGDB slot directory")
+                    raise OSError("Truncated SGDB slot directory")
                 block_id, offset, comp_len, orig_len, crc32_val = JAVA_SLOT_ENTRY_STRUCT.unpack_from(file_bytes, pos)
                 raw_slots.append((block_id, offset, comp_len, orig_len, crc32_val))
                 pos += JAVA_SLOT_ENTRY_SIZE
@@ -447,7 +445,7 @@ class CompressedLocalManagedBufferFile:
             # Decompress each block in block_id order and populate instance
             for block_id, frame_offset, slot_comp_len, slot_orig_len, slot_crc32 in sorted(raw_slots, key=lambda x: x[0]):
                 if frame_offset + slot_comp_len > len(file_bytes) or slot_comp_len < JAVA_FRAME_HEADER_SIZE:
-                    raise IOError(f"Corrupt SGDB frame bounds for block {block_id}")
+                    raise OSError(f"Corrupt SGDB frame bounds for block {block_id}")
 
                 f_magic, f_version, f_algo_id, f_flags, f_orig_len, f_comp_len, f_crc32 = JAVA_FRAME_HEADER_STRUCT.unpack_from(
                     file_bytes, frame_offset
@@ -455,7 +453,7 @@ class CompressedLocalManagedBufferFile:
                 if f_magic != cls.JAVA_FILE_MAGIC:
                     raise ValueError(f"Invalid SGDB block frame magic at offset {frame_offset}: {f_magic!r}")
                 if JAVA_FRAME_HEADER_SIZE + f_comp_len > slot_comp_len:
-                    raise IOError(f"Corrupt SGDB block frame payload size for block {block_id}")
+                    raise OSError(f"Corrupt SGDB block frame payload size for block {block_id}")
 
                 payload_start = frame_offset + JAVA_FRAME_HEADER_SIZE
                 payload = file_bytes[payload_start : payload_start + f_comp_len]
@@ -478,7 +476,7 @@ class CompressedLocalManagedBufferFile:
 
                 actual_crc = zlib.crc32(uncompressed) & 0xFFFFFFFF
                 if actual_crc != f_crc32 or actual_crc != slot_crc32:
-                    raise IOError(
+                    raise OSError(
                         f"CRC32 mismatch on SGDB block {block_id}: expected {f_crc32:#x}, actual {actual_crc:#x}"
                     )
 
@@ -739,10 +737,10 @@ class StorageCompressionBenchmark:
         print(f"[*] Generating Ghidra DB synthetic corpus: {num_pages} pages ({num_pages * 16 / 1024:.2f} MB)...")
         corpus = GhidraPageSimulator.generate_database_corpus(num_pages=num_pages, seed=seed)
 
-        print(f"[*] Running LZ4 (In-Flight Buffer Compression) benchmark...")
+        print("[*] Running LZ4 (In-Flight Buffer Compression) benchmark...")
         res_lz4 = cls.run_codec_benchmark(corpus, codec="lz4")
 
-        print(f"[*] Running Zstandard Level 3 (Snapshot Compression) benchmark...")
+        print("[*] Running Zstandard Level 3 (Snapshot Compression) benchmark...")
         res_zstd = cls.run_codec_benchmark(corpus, codec="zstd")
 
         return res_lz4, res_zstd
@@ -760,7 +758,7 @@ class StorageCompressionBenchmark:
         report.append("=" * 78)
         report.append(f" Corpus Pages:        {res_lz4.num_pages:,} Ghidra B-Tree pages (16 KB each)")
         report.append(f" Raw Database Size:   {orig_mb:.2f} MB ({res_lz4.orig_total_bytes:,} bytes)")
-        report.append(f" Slot Entry Format:   [block_id: uint32, offset: uint64, comp_len: uint32, orig_len: uint32]")
+        report.append(" Slot Entry Format:   [block_id: uint32, offset: uint64, comp_len: uint32, orig_len: uint32]")
         report.append(f" Slot Entry Size:     {SLOT_ENTRY_SIZE} bytes / page ({res_lz4.slot_index_bytes:,} bytes total)")
         report.append("-" * 78)
         report.append(f"{'Metric':<32} | {'LZ4 (In-Flight)':<20} | {'ZSTD Level 3 (Snapshot)':<20}")
@@ -777,7 +775,7 @@ class StorageCompressionBenchmark:
 
         target_met_lz4 = "PASS (Met > 75%)" if res_lz4.reduction_pct >= 75.0 else "FAIL (< 75%)"
         target_met_zstd = "PASS (Met > 75%)" if res_zstd.reduction_pct >= 75.0 else "FAIL (< 75%)"
-        report.append(f" Target Verification:")
+        report.append(" Target Verification:")
         report.append(f"   - LZ4 Reduction > 75%:    {res_lz4.reduction_pct:.2f}% -> {target_met_lz4}")
         report.append(f"   - ZSTD Reduction > 75%:   {res_zstd.reduction_pct:.2f}% -> {target_met_zstd}")
         report.append("=" * 78)

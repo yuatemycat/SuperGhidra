@@ -17,14 +17,14 @@ Covers:
 from __future__ import annotations
 
 import ctypes
-from dataclasses import dataclass, field
 import enum
 import hashlib
 import mmap
 import random
 import struct
 import time
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Sequence, Set, Tuple
 
 try:
     import z3
@@ -99,7 +99,7 @@ class Varnode:
     space: AddressSpace
     offset: int
     size: int = 8
-    symbol: Optional[str] = None
+    symbol: str | None = None
     ssa_version: int = 0
 
     @property
@@ -130,10 +130,10 @@ class PCodeOp:
     """Single P-Code instruction inside a BasicBlock."""
     seq_num: int
     opcode: PCodeOpCode
-    output: Optional[Varnode]
+    output: Varnode | None
     inputs: List[Varnode]
     address: int = 0
-    comment: Optional[str] = None
+    comment: str | None = None
 
 
 @dataclass
@@ -279,7 +279,7 @@ class StagedDecompileResult:
     mba_simplifications_count: int
     dispatchers_removed: int
     pruned_branches_count: int
-    telemetry: List[Dict[str, Union[str, int, float]]]
+    telemetry: List[Dict[str, str | int | float]]
 
 
 class StagedPCodePassManager:
@@ -287,12 +287,12 @@ class StagedPCodePassManager:
     Orchestrates the 7-stage P-Code maturation pipeline, firing user/MCP hooks
     and updating the zero-copy SHM window at every maturity boundary.
     """
-    def __init__(self, shm_bridge: Optional[ZeroCopyShmBridge] = None):
+    def __init__(self, shm_bridge: ZeroCopyShmBridge | None = None):
         self.shm = shm_bridge or ZeroCopyShmBridge()
         self._hooks: Dict[PCodeMaturityStage, List[Tuple[str, PCodePassHook]]] = {
             stage: [] for stage in PCodeMaturityStage
         }
-        self.telemetry: List[Dict[str, Union[str, int, float]]] = []
+        self.telemetry: List[Dict[str, str | int | float]] = []
 
     def register_hook(self, stage: PCodeMaturityStage, name: str, callback: PCodePassHook) -> None:
         """Registers an IDA-style microcode maturation callback at a specific P-Code tier."""
@@ -389,7 +389,7 @@ class ENode:
     """
     op: str
     children: Tuple[int, ...] = ()
-    leaf: Optional[Varnode] = None
+    leaf: Varnode | None = None
 
     def canonicalize(self, find_fn: Callable[[int], int]) -> ENode:
         if not self.children:
@@ -413,7 +413,7 @@ class ExprTree:
     """Extracted minimal-cost expression tree from an E-Graph."""
     op: str
     args: Tuple[ExprTree, ...] = ()
-    leaf: Optional[Varnode] = None
+    leaf: Varnode | None = None
 
     def cost(self) -> int:
         base_cost = {
@@ -566,7 +566,7 @@ class EGraph:
                     self.classes[root].nodes = canon_nodes
             self.memo = {k: self.find(v) for k, v in new_memo.items()}
 
-    def get_const(self, cid: int) -> Optional[int]:
+    def get_const(self, cid: int) -> int | None:
         root = self.find(cid)
         for n in self.classes[root].nodes:
             if n.op == "const" and n.leaf is not None:
@@ -782,7 +782,7 @@ class EGraph:
                 merges += 1
         return merges
 
-    def _extract_doubled_arg(self, node: ENode) -> Optional[int]:
+    def _extract_doubled_arg(self, node: ENode) -> int | None:
         if len(node.children) != 2:
             return None
         c0, c1 = self.find(node.children[0]), self.find(node.children[1])
@@ -917,7 +917,7 @@ class EGraphMBADeobfuscatorPass:
     EGRAPH_TO_OPCODE = {v: k for k, v in OPCODE_TO_EGRAPH.items()}
 
     def __init__(self) -> None:
-        self.simplifications_log: List[Dict[str, Union[str, int, bool, float]]] = []
+        self.simplifications_log: List[Dict[str, str | int | bool | float]] = []
 
     def __call__(self, func: PCodeFunction, stage: PCodeMaturityStage) -> None:
         for blk in func.blocks.values():
@@ -1000,7 +1000,7 @@ class EGraphMBADeobfuscatorPass:
         ops: List[PCodeOp] = []
         temp_idx = [900 + start_seq * 10]
 
-        def build(node: ExprTree, target_vn: Optional[Varnode] = None) -> Varnode:
+        def build(node: ExprTree, target_vn: Varnode | None = None) -> Varnode:
             if node.op in {"const", "var"} and node.leaf is not None:
                 if target_vn is not None:
                     ops.append(
@@ -1069,7 +1069,7 @@ class SymbolicCFFDeflattenerPass:
     folds constant CBRANCH edges, and prunes dead trap basic blocks.
     """
     def __init__(self) -> None:
-        self.pruned_opaque_branches: List[Dict[str, Union[int, str]]] = []
+        self.pruned_opaque_branches: List[Dict[str, int | str]] = []
 
     def __call__(self, func: PCodeFunction, stage: PCodeMaturityStage) -> None:
         for blk in list(func.blocks.values()):
@@ -1132,7 +1132,7 @@ class SymbolicCFFDeflattenerPass:
             del func.blocks[dead_id]
 
     @staticmethod
-    def _evaluate_opaque_predicate(blk: PCodeBasicBlock, cond_vn: Varnode) -> Optional[bool]:
+    def _evaluate_opaque_predicate(blk: PCodeBasicBlock, cond_vn: Varnode) -> bool | None:
         """Checks whether a CBRANCH condition Varnode is folded to a constant by E-Graph or COPY."""
         if cond_vn.is_const:
             return cond_vn.offset != 0
@@ -1249,7 +1249,7 @@ class IfElseRegion(RegionNode):
     """Structured `scf.if` / goto-free `if-else` region."""
     condition_c: str
     then_region: RegionNode
-    else_region: Optional[RegionNode] = None
+    else_region: RegionNode | None = None
 
     def to_mlir(self, indent: int = 0) -> str:
         pad = "  " * indent
@@ -1310,7 +1310,7 @@ class MLIRGotoFreeRestructurer:
         self,
         func: PCodeFunction,
         blk_id: int,
-        stop_at: Optional[int],
+        stop_at: int | None,
         visited: Set[int],
     ) -> RegionNode:
         if blk_id == stop_at or blk_id not in func.blocks or blk_id in visited:
@@ -1340,7 +1340,7 @@ class MLIRGotoFreeRestructurer:
                 else None
             )
 
-            current_region: Optional[RegionNode] = default_region
+            current_region: RegionNode | None = default_region
             for idx in range(len(resolved_succs) - 2, -1, -1):
                 case_id = resolved_succs[idx]
                 cond_str = self._format_switch_case_condition(blk, idx, case_id)
@@ -1422,11 +1422,11 @@ class MLIRGotoFreeRestructurer:
         return cond_vn.format_c()
 
     @staticmethod
-    def _find_merge_node(func: PCodeFunction, true_id: int, false_id: int) -> Optional[int]:
+    def _find_merge_node(func: PCodeFunction, true_id: int, false_id: int) -> int | None:
         return MLIRGotoFreeRestructurer._find_multi_merge_node(func, [true_id, false_id])
 
     @staticmethod
-    def _find_multi_merge_node(func: PCodeFunction, target_ids: Sequence[int]) -> Optional[int]:
+    def _find_multi_merge_node(func: PCodeFunction, target_ids: Sequence[int]) -> int | None:
         if not target_ids:
             return None
 

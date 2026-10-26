@@ -24,7 +24,6 @@ Validates:
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import sys
@@ -40,30 +39,17 @@ if CURRENT_DIR not in sys.path:
 from superghidra.core.dependency_cache_dag import (
     DecompilationLRUCache,
     DependencyCacheDAG,
-    FunctionNode,
-    InvalidationImpactReport,
-    StructFieldInfo,
-    StructNode,
     generate_synthetic_dependency_dag,
+)
+from superghidra.diff.binary_diff_engine import (
+    generate_paired_synthetic_binaries,
 )
 from superghidra.diff.semantic_delta_log import (
     CommentType,
     DeltaEventType,
     DeltaMigrationEngine,
-    DeltaMigrationReport,
-    MigrationStatus,
     SemanticDeltaLog,
     SemanticEvent,
-    compute_event_proof_hash,
-)
-from superghidra.diff.binary_diff_engine import (
-    BatchedBinaryMatcher,
-    generate_paired_synthetic_binaries,
-)
-from superghidra.diff.evidence_ledger import (
-    ObligationStatus,
-    ObligationType,
-    ReconstructionObligationLedger,
 )
 
 

@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Sequence, Tuple
 
 
 def _newest_subdir(parent: Path) -> str:
@@ -65,15 +65,15 @@ def msvc_env() -> dict:
     return env
 
 
-def _portable_cl() -> Optional[str]:
+def _portable_cl() -> str | None:
     return str(_CL) if _VC_VER and _CL.is_file() else None
 
 
-def c_compiler() -> Optional[str]:
+def c_compiler() -> str | None:
     return shutil.which("gcc") or shutil.which("clang") or _portable_cl()
 
 
-def cxx_compiler() -> Optional[str]:
+def cxx_compiler() -> str | None:
     return shutil.which("g++") or shutil.which("clang++") or _portable_cl()
 
 
@@ -84,7 +84,7 @@ def _is_cl(compiler: str) -> bool:
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-def _compiler_for(language: str) -> Optional[str]:
+def _compiler_for(language: str) -> str | None:
     return cxx_compiler() if language == "C++" else c_compiler()
 
 
@@ -94,7 +94,7 @@ def _compile_command(
     exe_path: Path,
     language: str,
     extra_flags: Sequence[str],
-) -> Tuple[list, Optional[dict]]:
+) -> Tuple[list, dict | None]:
     if _is_cl(compiler):
         cmd = [
             compiler,
@@ -115,7 +115,7 @@ def _compile_command(
     return cmd, None
 
 
-def _spawn(cmd: list, *, timeout: float, env: Optional[dict], cwd: str):
+def _spawn(cmd: list, *, timeout: float, env: dict | None, cwd: str):
     return subprocess.run(
         cmd,
         capture_output=True,

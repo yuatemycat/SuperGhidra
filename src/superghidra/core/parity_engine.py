@@ -50,7 +50,6 @@ from __future__ import annotations
 
 import ast
 import dataclasses
-from dataclasses import dataclass, field
 import enum
 import hashlib
 import json
@@ -60,10 +59,11 @@ import operator
 import re
 import struct
 import zlib
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Sequence, Set, Tuple
 
 import numpy as np
-
 
 # =============================================================================
 # GAP 1: MULTI-MATURITY P-CODE PASS MANAGER & ZERO-COPY SHM VARNODE HOOKS
@@ -116,8 +116,8 @@ class Varnode:
     offset: int           # Register offset, immediate value, or address
     size: int             # Size in bytes (1, 2, 4, 8, 16)
     ssa_version: int = 0
-    symbol_name: Optional[str] = None
-    type_hint: Optional[str] = None
+    symbol_name: str | None = None
+    type_hint: str | None = None
 
     def is_constant(self) -> bool:
         return self.space == "const"
@@ -138,7 +138,7 @@ class PCodeOp:
     seq_num: int
     address: int
     opcode: PCodeOpcode
-    output: Optional[Varnode]
+    output: Varnode | None
     inputs: List[Varnode]
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -168,7 +168,7 @@ class FuncdataGraph:
                 key = (op.output.space, op.output.offset, op.output.ssa_version)
                 self.def_map[key] = op
 
-    def find_defining_op(self, vn: Varnode) -> Optional[PCodeOp]:
+    def find_defining_op(self, vn: Varnode) -> PCodeOp | None:
         return self.def_map.get((vn.space, vn.offset, vn.ssa_version))
 
 
@@ -218,7 +218,7 @@ class SHMVarnodeBuffer:
         for _ in range(op_count):
             seq_num, addr, opcode_val, has_out, in_count, _ = cls.OP_STRUCT.unpack_from(raw, cursor)
             cursor += cls.OP_STRUCT.size
-            out_vn: Optional[Varnode] = None
+            out_vn: Varnode | None = None
             if has_out:
                 out_vn, cursor = cls._unpack_varnode(raw, cursor)
             inputs: List[Varnode] = []
@@ -376,8 +376,8 @@ class StagedPCodePassManager:
             struct_base = field_add.inputs[0]
             field_offset = field_add.inputs[1].offset
 
-            stride: Optional[int] = None
-            index_vn: Optional[Varnode] = None
+            stride: int | None = None
+            index_vn: Varnode | None = None
             if scale_op.opcode == PCodeOpcode.INT_MULT and len(scale_op.inputs) == 2 and scale_op.inputs[1].is_constant():
                 index_vn = scale_op.inputs[0]
                 stride = scale_op.inputs[1].offset
@@ -423,14 +423,14 @@ class BasicBlock:
     ops: List[PCodeOp] = field(default_factory=list)
     successors: List[int] = field(default_factory=list)
     predecessors: List[int] = field(default_factory=list)
-    state_assignment: Optional[int] = None
-    state_guard: Optional[int] = None
-    conditional_states: Optional[Any] = None  # (cond_expr, true_state, false_state) or list of (cond, state)
-    opaque_predicate_expr: Optional[str] = None
-    state_transform: Optional[Tuple[int, int, int]] = None  # (C1, C2, mask) for state = (state * C1 + C2) & mask
-    state_xor_chain: Optional[Sequence[int]] = None         # [k1, k2, ...] for state = state ^ k1 ^ k2...
-    state_formula: Optional[str] = None                     # Formula string, e.g. "(state * C1 + C2) & mask"
-    multi_conditional_states: Optional[List[Tuple[str, Any]]] = None # Multi-condition dispatch list
+    state_assignment: int | None = None
+    state_guard: int | None = None
+    conditional_states: Any | None = None  # (cond_expr, true_state, false_state) or list of (cond, state)
+    opaque_predicate_expr: str | None = None
+    state_transform: Tuple[int, int, int] | None = None  # (C1, C2, mask) for state = (state * C1 + C2) & mask
+    state_xor_chain: Sequence[int] | None = None         # [k1, k2, ...] for state = state ^ k1 ^ k2...
+    state_formula: str | None = None                     # Formula string, e.g. "(state * C1 + C2) & mask"
+    multi_conditional_states: List[Tuple[str, Any]] | None = None # Multi-condition dispatch list
     is_trampoline: bool = False                             # Marks intermediate switch / return trampoline block
 
 
@@ -448,7 +448,7 @@ class PCodeCFG:
                 if succ in self.blocks and blk.block_id not in self.blocks[succ].predecessors:
                     self.blocks[succ].predecessors.append(blk.block_id)
 
-    def reachable_blocks(self, start_id: Optional[int] = None) -> Set[int]:
+    def reachable_blocks(self, start_id: int | None = None) -> Set[int]:
         """Returns the set of block IDs reachable from start_id (or entry_block)."""
         start = self.entry_block if start_id is None else start_id
         reachable: Set[int] = set()
@@ -590,7 +590,7 @@ class SymbolicCFGDeflattener:
     """
 
     @staticmethod
-    def evaluate_opaque_predicate(expr: str, bit_width: int = 32) -> Optional[bool]:
+    def evaluate_opaque_predicate(expr: str, bit_width: int = 32) -> bool | None:
         """
         Determines whether a boolean predicate over integer variable(s) (x, y)
         is an invariant tautology (always True) or contradiction (always False).
@@ -639,20 +639,20 @@ class SymbolicCFGDeflattener:
     @classmethod
     def evaluate_state_transformation(
         cls,
-        base_state: Optional[int],
-        state_assignment: Optional[int] = None,
-        state_transform: Optional[Tuple[int, int, int]] = None,
-        state_xor_chain: Optional[Sequence[int]] = None,
-        state_formula: Optional[str] = None,
-        ops: Optional[List[PCodeOp]] = None,
+        base_state: int | None,
+        state_assignment: int | None = None,
+        state_transform: Tuple[int, int, int] | None = None,
+        state_xor_chain: Sequence[int] | None = None,
+        state_formula: str | None = None,
+        ops: List[PCodeOp] | None = None,
         bit_width: int = 32,
-    ) -> Optional[int]:
+    ) -> int | None:
         """
         Symbolically evaluates auxiliary state transformations used by OLLVM, Hikari,
         and Promon SHIELD (e.g. state = (state * C1 + C2) & MASK, XOR chains, or arithmetic P-Code sequences).
         """
         mask = (1 << bit_width) - 1
-        curr: Optional[int] = state_assignment if state_assignment is not None else base_state
+        curr: int | None = state_assignment if state_assignment is not None else base_state
 
         if ops:
             env: Dict[Tuple[str, int], int] = {}
@@ -660,7 +660,7 @@ class SymbolicCFGDeflattener:
                 env[("register", 0)] = curr & mask
                 env[("state", 0)] = curr & mask
 
-            computed_state: Optional[int] = None
+            computed_state: int | None = None
             for op in ops:
                 if op.opcode == PCodeOpcode.COPY:
                     inp = op.inputs[0]
@@ -722,7 +722,7 @@ class SymbolicCFGDeflattener:
     def deflatten_state_machine(
         self,
         cfg: PCodeCFG,
-        explicit_dispatcher_id: Optional[int] = None,
+        explicit_dispatcher_id: int | None = None,
         bit_width: int = 32,
     ) -> Dict[str, Any]:
         """
@@ -736,7 +736,7 @@ class SymbolicCFGDeflattener:
         opaque_report = self.eliminate_opaque_predicates(cfg)
         dominators = cfg.compute_dominators()
 
-        dispatcher_id: Optional[int] = None
+        dispatcher_id: int | None = None
         if explicit_dispatcher_id is not None and explicit_dispatcher_id in cfg.blocks:
             dispatcher_id = explicit_dispatcher_id
         else:
@@ -918,7 +918,7 @@ class RegisterDescriptor:
     reg_class: str        # 'gpr', 'vector_fp', 'stack', 'flags'
     offset: int           # Ghidra Varnode register space offset
     size: int             # Size in bytes
-    parent_reg: Optional[str] = None
+    parent_reg: str | None = None
 
 
 class ArchitectureRegisterBank:
@@ -976,7 +976,7 @@ class VariableStorageBinding:
     storage_space: str                  # 'register', 'stack', 'join'
     registers: List[str]
     varnode_tuples: List[Tuple[str, int, int]]  # (space, offset, size)
-    stack_offset: Optional[int] = None
+    stack_offset: int | None = None
     vector_integer_spill: bool = False  # True when Clang -O3 spills integer/ptr into d0..d7/q0..q3/xmm
 
 
@@ -986,7 +986,7 @@ class CompiledUsercallPrototype:
     function_name: str
     calling_convention: str
     architecture: str
-    return_binding: Optional[VariableStorageBinding]
+    return_binding: VariableStorageBinding | None
     parameters: List[VariableStorageBinding]
     spoiled_registers: List[str]
     cspec_xml: str
@@ -1044,7 +1044,7 @@ class UsercallPrototypeCompiler:
         params_raw = match.group("params").strip()
         spoils_raw = match.group("spoils")
 
-        return_binding: Optional[VariableStorageBinding] = None
+        return_binding: VariableStorageBinding | None = None
         if ret_type != "void":
             default_ret = "x0" if "AARCH64" in self.lang_id else "rax"
             return_binding = self._compile_binding("return", ret_type, ret_loc or default_ret)
@@ -1175,7 +1175,7 @@ class UsercallPrototypeCompiler:
     @staticmethod
     def _emit_cspec_xml(
         func_name: str,
-        ret: Optional[VariableStorageBinding],
+        ret: VariableStorageBinding | None,
         params: Sequence[VariableStorageBinding],
         spoiled: Sequence[str],
     ) -> str:
@@ -1261,7 +1261,7 @@ class AppcallMarshaller:
     SCRATCH_STACK_TOP = 0x00007FFF00008000
     RETURN_TRAP_ADDR = 0x00007FFF0000DEAD
 
-    def __init__(self, struct_registry: Optional[Dict[str, StructLayoutSpec]] = None) -> None:
+    def __init__(self, struct_registry: Dict[str, StructLayoutSpec] | None = None) -> None:
         self.struct_registry: Dict[str, StructLayoutSpec] = struct_registry or {}
 
     def register_struct(self, spec: StructLayoutSpec) -> None:
@@ -1270,9 +1270,9 @@ class AppcallMarshaller:
     def prepare_appcall_frame(
         self,
         target_rva: int,
-        args: Sequence[Union[int, float, bytes, Dict[str, Any]]],
-        arg_types: Optional[Sequence[str]] = None,
-        usercall_proto: Optional[CompiledUsercallPrototype] = None,
+        args: Sequence[int | float | bytes | Dict[str, Any]],
+        arg_types: Sequence[str] | None = None,
+        usercall_proto: CompiledUsercallPrototype | None = None,
     ) -> AppcallExecutionFrame:
         sp = self.SCRATCH_STACK_TOP
         registers: Dict[str, int] = {"lr": self.RETURN_TRAP_ADDR}
@@ -1283,7 +1283,7 @@ class AppcallMarshaller:
         fp_index = 0
 
         for idx, arg in enumerate(args):
-            explicit_reg: Optional[str] = None
+            explicit_reg: str | None = None
             if usercall_proto and idx < len(usercall_proto.parameters):
                 param_bind = usercall_proto.parameters[idx]
                 if param_bind.registers:
@@ -1407,9 +1407,9 @@ class CFGSignatureIndex:
     def __init__(self) -> None:
         self._records: List[FunctionSignatureRecord] = []
         self._hash_lookup: Dict[str, List[FunctionSignatureRecord]] = {}
-        self._flirt_index: Optional[Any] = None
+        self._flirt_index: Any | None = None
 
-    def load_flirt_signatures(self, sig_path: Union[str, Path]) -> int:
+    def load_flirt_signatures(self, sig_path: str | Path) -> int:
         """Load IDA FLIRT signatures (.sig) into the index via FlirtSignatureIndex.
 
         Returns the number of pattern signatures loaded.
@@ -1421,11 +1421,11 @@ class CFGSignatureIndex:
         return self._flirt_index.load_sig_file(sig_path)
 
     @property
-    def flirt_index(self) -> Optional[Any]:
+    def flirt_index(self) -> Any | None:
         """Access the underlying FlirtSignatureIndex if loaded."""
         return self._flirt_index
 
-    def match_flirt(self, prologue_bytes: bytes) -> Optional[str]:
+    def match_flirt(self, prologue_bytes: bytes) -> str | None:
         """Match function prologue bytes directly against loaded FLIRT signatures."""
         if self._flirt_index is None:
             return None
@@ -1523,7 +1523,7 @@ class CFGSignatureIndex:
 
     def query_function(
         self,
-        prologue_bytes: Optional[bytes],
+        prologue_bytes: bytes | None,
         cfg_vector_32d: np.ndarray,
         top_k: int = 3,
         min_cosine: float = 0.80,
@@ -1574,8 +1574,8 @@ class ParsedFieldRecord:
     c_type: str
     byte_offset: int
     byte_size: int
-    bit_size: Optional[int] = None
-    bit_offset: Optional[int] = None
+    bit_size: int | None = None
+    bit_offset: int | None = None
 
 
 @dataclass
@@ -1673,7 +1673,7 @@ class ClangHeaderImporter:
             bases_raw = match.group("bases")
             body = match.group("body")
 
-            explicit_align: Optional[int] = None
+            explicit_align: int | None = None
             am = self.ALIGNED_RE.search(attrs)
             if am:
                 explicit_align = int(am.group(1))
@@ -1703,7 +1703,7 @@ class ClangHeaderImporter:
         kind: str,
         base_classes: List[str],
         body: str,
-        explicit_align: Optional[int],
+        explicit_align: int | None,
         is_packed: bool,
     ) -> ParsedCompositeType:
         fields: List[ParsedFieldRecord] = []
@@ -1746,7 +1746,7 @@ class ClangHeaderImporter:
                 if not is_packed:
                     max_align = max(max_align, btype.alignment)
 
-        bit_unit_offset: Optional[int] = None
+        bit_unit_offset: int | None = None
         bit_unit_size: int = 0
         bit_cursor: int = 0
 
@@ -2136,7 +2136,7 @@ class SuperGhidraSection3MCPServer:
         self._schema_cache: Dict[str, Any] = {}
         self._cache_generation: int = 1
 
-    def clear_cache(self, subsystem: Optional[str] = None) -> Dict[str, Any]:
+    def clear_cache(self, subsystem: str | None = None) -> Dict[str, Any]:
         """
         Invalidates cached schemas, type stores, and tool metadata without restarting the server process.
         """

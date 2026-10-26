@@ -30,46 +30,64 @@ Supported Commands:
   - stop                         : Cleanly shuts down the daemon.
 """
 
-import os
-import sys
-import time
-import json
-import socket
-import struct
-import sqlite3
 import contextlib
-import logging
-import re
-import subprocess
-import threading
-import secrets
+import hashlib
 import ipaddress
-from typing import Dict, Any, List, Optional, Set, Tuple, Union, Iterable, Sequence
+import json
+import logging
+import os
+import re
+import secrets
+import socket
+import sqlite3
+import struct
+import subprocess
+import sys
+import threading
+import time
 from collections import OrderedDict
+from typing import Any, Dict, Iterable, List, Sequence, Set, Tuple
 
 # Import DependencyCacheDAG and SemanticDeltaLog
 try:
-    from superghidra.core.dependency_cache_dag import DependencyCacheDAG, FunctionNode, InvalidationImpactReport
+    from superghidra.core.dependency_cache_dag import (
+        DependencyCacheDAG,
+    )
+    from superghidra.core.dependency_cache_dag import (
+        FunctionNode as FunctionNode,
+    )
+    from superghidra.core.dependency_cache_dag import (
+        InvalidationImpactReport as InvalidationImpactReport,
+    )
 except ImportError:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from superghidra.core.dependency_cache_dag import DependencyCacheDAG, FunctionNode, InvalidationImpactReport
+    from superghidra.core.dependency_cache_dag import DependencyCacheDAG
 
 try:
-    from superghidra.diff.semantic_delta_log import SemanticDeltaLog, DeltaEventType, SemanticEvent, CommentType
+    from superghidra.diff.semantic_delta_log import (
+        CommentType as CommentType,
+    )
+    from superghidra.diff.semantic_delta_log import (
+        DeltaEventType as DeltaEventType,
+    )
+    from superghidra.diff.semantic_delta_log import (
+        SemanticDeltaLog,
+        SemanticEvent,
+    )
 except ImportError:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from superghidra.diff.semantic_delta_log import SemanticDeltaLog, DeltaEventType, SemanticEvent, CommentType
+    from superghidra.diff.semantic_delta_log import SemanticDeltaLog, SemanticEvent
 
 # Import OffHeapTypeStore, OracleTypeStoreAdapter, TypeDeduplicator, TypeKind, StructMember
 try:
     from superghidra.formats.dwarf_pdb_preindexer import (
         OffHeapTypeStore,
         OracleTypeStoreAdapter,
+        StructMember,
         TypeDeduplicator,
         TypeKind,
-        StructMember,
     )
 except ImportError:
     import sys
@@ -77,29 +95,31 @@ except ImportError:
     from superghidra.formats.dwarf_pdb_preindexer import (
         OffHeapTypeStore,
         OracleTypeStoreAdapter,
+        StructMember,
         TypeDeduplicator,
         TypeKind,
-        StructMember,
     )
 
 # Import Resource Governor components
 try:
     from superghidra.core.resource_governor import (
-        ResourceMode,
-        ModePolicy,
-        get_default_mode_policy,
         DecompilerComplexityGovernor,
-        FunctionComplexityTier,
+        ResourceMode,
+        get_default_mode_policy,
+    )
+    from superghidra.core.resource_governor import (
+        FunctionComplexityTier as FunctionComplexityTier,
+    )
+    from superghidra.core.resource_governor import (
+        ModePolicy as ModePolicy,
     )
 except ImportError:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from superghidra.core.resource_governor import (
-        ResourceMode,
-        ModePolicy,
-        get_default_mode_policy,
         DecompilerComplexityGovernor,
-        FunctionComplexityTier,
+        ResourceMode,
+        get_default_mode_policy,
     )
 # ==============================================================================
 # Configuration & Constants
@@ -170,7 +190,7 @@ def get_default_token_path() -> str:
     return os.path.join(dir_path, DEFAULT_TOKEN_FILENAME)
 
 
-def save_session_token(token: str, path: Optional[str] = None) -> str:
+def save_session_token(token: str, path: str | None = None) -> str:
     """Saves session token to disk with restricted permissions (0o600)."""
     token_path = path or get_default_token_path()
     os.makedirs(os.path.dirname(token_path), exist_ok=True)
@@ -190,7 +210,7 @@ def save_session_token(token: str, path: Optional[str] = None) -> str:
     return token_path
 
 
-def load_session_token(token_arg: Optional[str] = None, token_path: Optional[str] = None) -> Optional[str]:
+def load_session_token(token_arg: str | None = None, token_path: str | None = None) -> str | None:
     """Resolves session token from argument, environment variable, or token file on disk."""
     if token_arg:
         return token_arg.strip()
@@ -200,7 +220,7 @@ def load_session_token(token_arg: Optional[str] = None, token_path: Optional[str
     path = token_path or get_default_token_path()
     if os.path.isfile(path):
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 content = f.read().strip()
                 if content:
                     return content
@@ -210,14 +230,14 @@ def load_session_token(token_arg: Optional[str] = None, token_path: Optional[str
 
 # No built-in projects: pass --project-dir/--project-name, or set
 # SUPERGHIDRA_PROJECTS to "dir,name[,program]" entries separated by ";".
-DEFAULT_PROJECT_CANDIDATES: List[Tuple[str, str, Optional[str]]] = []
+DEFAULT_PROJECT_CANDIDATES: List[Tuple[str, str, str | None]] = []
 PROJECT_CANDIDATES = list(DEFAULT_PROJECT_CANDIDATES)
 
 
-def get_project_candidates() -> List[Tuple[str, str, Optional[str]]]:
+def get_project_candidates() -> List[Tuple[str, str, str | None]]:
     """Returns candidate project tuples from the SUPERGHIDRA_PROJECTS env var."""
     env_projects = os.environ.get("SUPERGHIDRA_PROJECTS")
-    candidates: List[Tuple[str, str, Optional[str]]] = []
+    candidates: List[Tuple[str, str, str | None]] = []
     if env_projects:
         for item in env_projects.split(";"):
             item = item.strip()
@@ -242,7 +262,7 @@ logger = logging.getLogger("ghidra_oracle")
 # Environment Configuration
 # ==============================================================================
 
-def setup_environment(ghidra_dir: Optional[str] = None, java_home: Optional[str] = None):
+def setup_environment(ghidra_dir: str | None = None, java_home: str | None = None):
     """Configures JDK 21 and Ghidra environment paths before starting PyGhidra."""
     g_dir = ghidra_dir or os.environ.get("GHIDRA_INSTALL_DIR")
     if g_dir:
@@ -320,7 +340,7 @@ class LRUCache:
         self.misses = 0
         self._lock = threading.Lock()
 
-    def get(self, key: Any) -> Optional[Any]:
+    def get(self, key: Any) -> Any | None:
         with self._lock:
             if key in self.cache:
                 self.hits += 1
@@ -400,7 +420,7 @@ class L2SQLiteCache:
     Enables instant lookups with 0% JVM CPU even when the daemon is offline.
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         if db_path is None:
             cache_dir = os.path.join(os.path.expanduser("~"), ".cache")
             os.makedirs(cache_dir, exist_ok=True)
@@ -449,7 +469,7 @@ class L2SQLiteCache:
             except Exception as e:
                 logger.warning(f"Failed to initialize L2 SQLite cache at {self.db_path}: {e}")
 
-    def get(self, query_type: str, query_key: str, program_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get(self, query_type: str, query_key: str, program_id: str | None = None) -> Dict[str, Any] | None:
         with self._lock:
             try:
                 with self._conn_ctx() as conn:
@@ -482,8 +502,8 @@ class L2SQLiteCache:
         query_type: str,
         query_key: str,
         data: Dict[str, Any],
-        timestamp: Optional[float] = None,
-        program_id: Optional[str] = None,
+        timestamp: float | None = None,
+        program_id: str | None = None,
     ) -> None:
         with self._lock:
             try:
@@ -504,10 +524,10 @@ class L2SQLiteCache:
 
     def evict(
         self,
-        query_type: Optional[str] = None,
-        query_key: Optional[str] = None,
-        older_than_sec: Optional[float] = None,
-        max_entries: Optional[int] = None,
+        query_type: str | None = None,
+        query_key: str | None = None,
+        older_than_sec: float | None = None,
+        max_entries: int | None = None,
     ) -> int:
         """
         Evicts cached entries by type, key, age, or capacity limit.
@@ -581,7 +601,7 @@ class L2SQLiteCache:
                 logger.debug(f"L2 cache count error: {e}")
                 return 0
 
-    def invalidate_address(self, va: Any, program_id: Optional[str] = None) -> int:
+    def invalidate_address(self, va: Any, program_id: str | None = None) -> int:
         """
         Deletes cached entries from L2 SQLite cache matching the given virtual address
         across all query types that may embed names (decompile, vtable, refs, disassemble).
@@ -669,7 +689,7 @@ class WriteOverlay:
     and address comments without modifying the read-only Ghidra project database.
     """
 
-    def __init__(self, filepath: Optional[str] = None):
+    def __init__(self, filepath: str | None = None):
         if filepath is None:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             filepath = os.path.join(base_dir, OVERLAY_FILENAME)
@@ -684,7 +704,7 @@ class WriteOverlay:
         with self._lock:
             if os.path.exists(self.filepath):
                 try:
-                    with open(self.filepath, "r", encoding="utf-8") as f:
+                    with open(self.filepath, encoding="utf-8") as f:
                         data = json.load(f)
                         self.renames = {normalize_hex_key(k): v for k, v in data.get("renames", {}).items()}
                         self.comments = {normalize_hex_key(k): v for k, v in data.get("comments", {}).items()}
@@ -725,7 +745,7 @@ class WriteOverlay:
             self.comments[key] = comment
         self.save()
 
-    def get_rename(self, va: int, rva: int) -> Optional[str]:
+    def get_rename(self, va: int, rva: int) -> str | None:
         with self._lock:
             for k in [normalize_hex_key(va), normalize_hex_key(rva)]:
                 if k in self.renames:
@@ -739,7 +759,7 @@ class WriteOverlay:
             self.prototypes[key] = prototype_text
         self.save()
 
-    def get_prototype(self, va: int, rva: Optional[int] = None) -> Optional[str]:
+    def get_prototype(self, va: int, rva: int | None = None) -> str | None:
         with self._lock:
             keys = [normalize_hex_key(va)]
             if rva is not None:
@@ -749,7 +769,7 @@ class WriteOverlay:
                     return self.prototypes[k]
         return None
 
-    def get_comment(self, va: int, rva: int) -> Optional[str]:
+    def get_comment(self, va: int, rva: int) -> str | None:
         with self._lock:
             for k in [normalize_hex_key(va), normalize_hex_key(rva)]:
                 if k in self.comments:
@@ -827,12 +847,12 @@ class GhidraOracleSession:
 
     def __init__(
         self,
-        project_dir: Optional[str] = None,
-        project_name: Optional[str] = None,
-        program_name: Optional[str] = None,
+        project_dir: str | None = None,
+        project_name: str | None = None,
+        program_name: str | None = None,
         resource_mode: str = "balanced",
-        l2_cache: Optional[L2SQLiteCache] = None,
-        overlay: Optional[WriteOverlay] = None,
+        l2_cache: L2SQLiteCache | None = None,
+        overlay: WriteOverlay | None = None,
         clean_stale_locks: bool = False,
         lock_stale_threshold_sec: float = 600.0,
     ):
@@ -867,7 +887,7 @@ class GhidraOracleSession:
         self.throttle_ms = 10
         self.last_decompile_time = time.time()
         self.is_hibernating = False
-        self._watchdog_thread: Optional[threading.Thread] = None
+        self._watchdog_thread: threading.Thread | None = None
         self._watchdog_stop = threading.Event()
         self._session_lock = threading.Lock()
         self._engine_lock = threading.RLock()
@@ -898,6 +918,24 @@ class GhidraOracleSession:
         """Returns True if the requested binary path matches this session's loaded program."""
         if not binary_path:
             return True
+        # If the file exists, verify SHA-256 hash when available
+        if os.path.isfile(binary_path):
+            try:
+                with open(binary_path, "rb") as f:
+                    req_sha256 = hashlib.sha256(f.read()).hexdigest().lower()
+                if self.program is not None:
+                    try:
+                        prog_sha256 = self.program.getExecutableSHA256()
+                        if prog_sha256:
+                            return req_sha256 == prog_sha256.lower()
+                    except Exception:
+                        pass
+                session_sha256 = getattr(self, "sha256", None) or getattr(self, "program_sha256", None)
+                if session_sha256:
+                    return req_sha256 == session_sha256.lower()
+            except Exception:
+                pass
+
         req_base = os.path.basename(binary_path).lower()
         if self.program_name and req_base == self.program_name.lower():
             return True
@@ -917,8 +955,8 @@ class GhidraOracleSession:
         self,
         proj_dir: str,
         proj_name: str,
-        clean_stale_locks: Optional[bool] = None,
-        stale_threshold_sec: Optional[float] = None,
+        clean_stale_locks: bool | None = None,
+        stale_threshold_sec: float | None = None,
     ) -> List[str]:
         """
         Safely inspects Ghidra project lock files.
@@ -962,7 +1000,7 @@ class GhidraOracleSession:
                     with open(p, "r+") as f:
                         fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                except (IOError, OSError) as e:
+                except OSError as e:
                     logger.warning(f"Lock file '{p}' is held by an active process, skipping removal: {e}")
                     continue
 
@@ -981,9 +1019,9 @@ class GhidraOracleSession:
         import pyghidra
         pyghidra.start(False)
 
+        from ghidra.app.decompiler import DecompileOptions, DecompInterface
         from ghidra.base.project import GhidraProject
         from ghidra.program.flatapi import FlatProgramAPI
-        from ghidra.app.decompiler import DecompInterface, DecompileOptions
         from ghidra.util.task import ConsoleTaskMonitor
 
         if self.project_dir and self.project_name:
@@ -1119,7 +1157,7 @@ class GhidraOracleSession:
             with self._engine_lock:
                 with self._session_lock:
                     if self.decompiler is None:
-                        from ghidra.app.decompiler import DecompInterface, DecompileOptions
+                        from ghidra.app.decompiler import DecompileOptions, DecompInterface
                         self.decompiler = DecompInterface()
                         options = DecompileOptions()
                         self.decompiler.setOptions(options)
@@ -1232,9 +1270,10 @@ class GhidraOracleSession:
 
     def _build_fast_indexes(self) -> None:
         """Extracts executable segments into memory to build instant opcode & ADRP tables across all segments."""
-        from java.lang.reflect import Array
-        from java.lang import Byte
         import re
+
+        from java.lang import Byte
+        from java.lang.reflect import Array
 
         try:
             mem = self.program.getMemory()
@@ -1286,6 +1325,7 @@ class GhidraOracleSession:
                     gpu_scanned = False
                     try:
                         import numpy as np
+
                         from superghidra.acceleration.gpu_adrp_scanner import GPUAdrpScanner
 
                         scanner = GPUAdrpScanner(backend="auto")
@@ -1391,8 +1431,8 @@ class GhidraOracleSession:
     def query_decompile(
         self,
         targets: List[Any],
-        style: Optional[str] = None,
-        throttle_ms: Optional[int] = None,
+        style: str | None = None,
+        throttle_ms: int | None = None,
     ) -> Dict[str, Any]:
         """Returns decompiled C code, mapping Ghidra VA and runtime RVA."""
         with self._engine_lock:
@@ -1478,7 +1518,7 @@ class GhidraOracleSession:
                             self.dep_dag.add_function(caller_fid, address=entry_addr, name=fn_name)
 
                             # Record all callees by address
-                            discovered_callees: Set[Tuple[int, Optional[str]]] = set()
+                            discovered_callees: Set[Tuple[int, str | None]] = set()
                             try:
                                 if hasattr(func, "getCalledFunctions"):
                                     for cf in func.getCalledFunctions(self.monitor):
@@ -1925,7 +1965,7 @@ class GhidraOracleSession:
             finally:
                 self.last_decompile_time = time.time()
 
-    def set_rename(self, addr: Any, new_name: str, old_name: Optional[str] = None) -> Dict[str, Any]:
+    def set_rename(self, addr: Any, new_name: str, old_name: str | None = None) -> Dict[str, Any]:
         """
         Sets function rename in WriteOverlay, records mutation in SemanticDeltaLog,
         and performs 1-hop selective cache invalidation.
@@ -2070,8 +2110,8 @@ class MockGhidraOracleSession:
     def __init__(
         self,
         resource_mode: str = "balanced",
-        overlay: Optional[WriteOverlay] = None,
-        l2_cache: Optional[L2SQLiteCache] = None,
+        overlay: WriteOverlay | None = None,
+        l2_cache: L2SQLiteCache | None = None,
     ):
         self.project_dir = "mock_project_dir"
         self.project_name = "mock_project"
@@ -2095,7 +2135,18 @@ class MockGhidraOracleSession:
 
     def matches_binary(self, binary_path: str) -> bool:
         """Returns True if the requested binary matches the mock loaded program."""
-        if not binary_path or not self.program_name or self.program_name in ("mock_program", "*"):
+        if not binary_path:
+            return True
+        expected_sha256 = getattr(self, "sha256", None) or getattr(self, "program_sha256", None)
+        if expected_sha256 and os.path.isfile(binary_path):
+            try:
+                with open(binary_path, "rb") as f:
+                    file_sha256 = hashlib.sha256(f.read()).hexdigest().lower()
+                return file_sha256 == expected_sha256.lower()
+            except Exception:
+                return False
+
+        if not self.program_name or self.program_name in ("mock_program", "*"):
             return True
         req_base = os.path.basename(binary_path).lower()
         prog_base = os.path.basename(self.program_name).lower()
@@ -2110,7 +2161,7 @@ class MockGhidraOracleSession:
             "time_ms": 0.05,
         }
 
-    def query_decompile(self, targets: Sequence[Any], style: str = "ghidra", throttle_ms: Optional[int] = None) -> Dict[str, Any]:
+    def query_decompile(self, targets: Sequence[Any], style: str = "ghidra", throttle_ms: int | None = None) -> Dict[str, Any]:
         funcs = []
         for t in targets:
             addr_int = parse_addr_int(t)
@@ -2222,7 +2273,7 @@ class MockGhidraOracleSession:
         self.resource_mode = new_mode
         return {"status": "ok", "mode": new_mode}
 
-    def set_rename(self, addr: Any, name: str, old_name: Optional[str] = None) -> Dict[str, Any]:
+    def set_rename(self, addr: Any, name: str, old_name: str | None = None) -> Dict[str, Any]:
         hex_addr = normalize_hex_key(addr)
         self.overlay.set_rename(hex_addr, name)
         return {"status": "ok", "addr": hex_addr, "new_name": name}
@@ -2283,7 +2334,7 @@ class GhidraDaemonServer:
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
         allow_remote: bool = False,
-        token: Optional[str] = None,
+        token: str | None = None,
     ):
         if not allow_remote and not is_loopback_host(host):
             raise ValueError(
@@ -2397,7 +2448,7 @@ class GhidraDaemonServer:
                         if response.get("should_stop"):
                             threading.Thread(target=self.stop, daemon=True).start()
                             return
-                except socket.timeout:
+                except TimeoutError:
                     break
                 except Exception as e:
                     err_resp = {"status": "error", "message": str(e)}
@@ -2407,7 +2458,7 @@ class GhidraDaemonServer:
                         pass
                     break
 
-    def _dispatch_command(self, req_or_line: Union[Dict[str, Any], str]) -> Dict[str, Any]:
+    def _dispatch_command(self, req_or_line: Dict[str, Any] | str) -> Dict[str, Any]:
         if isinstance(req_or_line, dict):
             req = req_or_line
         else:
@@ -2557,14 +2608,14 @@ def is_daemon_online(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> bool
     try:
         with socket.create_connection((host, port), timeout=0.5):
             return True
-    except (ConnectionRefusedError, socket.timeout, OSError):
+    except (TimeoutError, ConnectionRefusedError, OSError):
         return False
 
 
 def spawn_background_daemon(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
-    token: Optional[str] = None,
+    token: str | None = None,
     allow_remote: bool = False,
 ) -> None:
     """Spawns persistent background daemon if offline."""
@@ -2637,7 +2688,7 @@ CACHEABLE_COMMANDS = {
     "opcodes",
 }
 
-_client_l2_cache: Optional[L2SQLiteCache] = None
+_client_l2_cache: L2SQLiteCache | None = None
 
 
 def get_client_l2_cache() -> L2SQLiteCache:
@@ -2648,7 +2699,7 @@ def get_client_l2_cache() -> L2SQLiteCache:
     return _client_l2_cache
 
 
-def _make_l2_cache_key(cmd: str, args: Dict[str, Any]) -> Optional[str]:
+def _make_l2_cache_key(cmd: str, args: Dict[str, Any]) -> str | None:
     """Creates deterministic JSON cache key from query command and arguments."""
     norm_cmd = "refs" if cmd in ("refs", "references") else cmd.lower()
     if norm_cmd not in CACHEABLE_COMMANDS:
@@ -2711,8 +2762,8 @@ def client_send_request(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     auto_spawn: bool = True,
-    l2_cache: Optional[L2SQLiteCache] = None,
-    token: Optional[str] = None,
+    l2_cache: L2SQLiteCache | None = None,
+    token: str | None = None,
 ) -> Dict[str, Any]:
     """Sends JSON-RPC command to the daemon, auto-spawning if offline."""
     t0 = time.perf_counter()
@@ -2875,12 +2926,12 @@ def client_send_request(
 
 def query_oracle(
     cmd: str,
-    args: Optional[Dict[str, Any]] = None,
+    args: Dict[str, Any] | None = None,
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
-    token: Optional[str] = None,
+    token: str | None = None,
     auto_spawn: bool = True,
-    l2_cache: Optional[L2SQLiteCache] = None,
+    l2_cache: L2SQLiteCache | None = None,
 ) -> Dict[str, Any]:
     """Client helper function to query the Ghidra Oracle daemon with session token support."""
     return client_send_request(
@@ -3058,7 +3109,7 @@ def print_status_result(res: Dict[str, Any]) -> None:
 # CLI Entry Point
 # ==============================================================================
 
-def main():
+def main(argv: Sequence[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -3124,12 +3175,12 @@ def main():
     )
     parser.add_argument("-h", "--help", action="store_true", help="Show help message")
 
-    parsed, unknown = parser.parse_known_args()
+    parsed, unknown = parser.parse_known_args(argv)
 
     if parsed.help or not parsed.command:
         print(__doc__)
         parser.print_help()
-        return
+        return 0
 
     cmd = parsed.command.lower()
     c_args = parsed.args
@@ -3340,6 +3391,8 @@ def main():
         t_ms = res.get("time_ms", 0.0)
         print(f"\n[L2 SQLite Cache Hit: {t_ms:.4f} ms | 0% JVM CPU]")
 
+    return 0
+
 
 if __name__ == "__main__":
     main()
@@ -3348,7 +3401,7 @@ if __name__ == "__main__":
 def start_daemon(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
-    token: Optional[str] = None,
+    token: str | None = None,
     allow_remote: bool = False,
     wait_online: bool = True,
     timeout: float = 5.0,
@@ -3373,7 +3426,7 @@ def start_daemon(
 def stop_daemon(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
-    token: Optional[str] = None,
+    token: str | None = None,
     timeout: float = 3.0,
 ) -> bool:
     """Stops the running Ghidra daemon via TCP request.

@@ -13,10 +13,21 @@ import struct
 import sys
 import tempfile
 import unittest
+
 import z3
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')))
 
+from superghidra.diff.evidence_ledger import (
+    LedgerVerificationError,
+    ObligationStatus,
+    ObligationType,
+    ReconstructionObligationLedger,
+)
+from superghidra.formats.dwarf_pdb_preindexer import (
+    OffHeapTypeStore,
+    TypeDeduplicator,
+)
 from superghidra.formats.synthetic_symbol_exporter import (
     DWARF5Exporter,
     ExportField,
@@ -24,47 +35,27 @@ from superghidra.formats.synthetic_symbol_exporter import (
     ExportSymbol,
     MapFileExporter,
     PDBExporter,
-    SymFileExporter,
     SymbolLedgerIngestor,
+    SymFileExporter,
     export_from_ledger,
 )
-
-from superghidra.lifters.smt_pcode_verifier import (
-    CCodeParser,
-    CIntrinsic,
-    CSymbolicEvaluator,
-    PcodeSymbolicSimulator,
-    SMTPcodeVerifier,
-    SymbolicState,
-    VerificationResult,
-)
-
 from superghidra.lifters.pcode_lifter_bridge import (
-    ARM64PcodeLifter,
-    AddressSpace,
-    FLAG_C_OFFSET,
     FLAG_N_OFFSET,
     FLAG_V_OFFSET,
     FLAG_Z_OFFSET,
+    AddressSpace,
+    ARM64PcodeLifter,
     PcodeOp,
     PcodeOpcode,
     Varnode,
     X86_64PcodeLifter,
 )
-
-from superghidra.diff.evidence_ledger import (
-    LedgerVerificationError,
-    ObligationStatus,
-    ObligationType,
-    ProofObligation,
-    ReconstructionObligationLedger,
-)
-
-from superghidra.formats.dwarf_pdb_preindexer import (
-    OffHeapTypeStore,
-    StructMember,
-    TypeDeduplicator,
-    TypeKind,
+from superghidra.lifters.smt_pcode_verifier import (
+    CCodeParser,
+    CSymbolicEvaluator,
+    PcodeSymbolicSimulator,
+    SMTPcodeVerifier,
+    SymbolicState,
 )
 
 

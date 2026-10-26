@@ -15,8 +15,7 @@ into compilable, standard C99/C++17 code:
 from __future__ import annotations
 
 import re
-from typing import Optional
-
+from typing import Any
 
 # Scalar type mapping: Ghidra pseudo-types -> standard C99 types
 GHIDRA_TYPE_MAP = [
@@ -530,7 +529,7 @@ class CompilableDecompilerFilter:
         return code
 
     @classmethod
-    def resolve_callee_types(cls, code: str, struct_catalog: Optional[dict] = None) -> str:
+    def resolve_callee_types(cls, code: str, struct_catalog: dict | None = None) -> str:
         """
         Auto-resolves callee argument types using STRUCT_CATALOG and standard APIs.
         Replaces generic undefined8/longlong arguments with typed pointers when callee is known.
@@ -572,7 +571,7 @@ class CompilableDecompilerFilter:
         strip_canary: bool = True,
         include_headers: bool = True,
         collapse_strides: bool = True,
-        struct_catalog: Optional[dict] = None,
+        struct_catalog: dict | None = None,
         include_ida_defs: bool = True,
     ) -> str:
         """

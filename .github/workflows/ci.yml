@@ -11,22 +11,54 @@ jobs:
   dco-check:
     name: Verify DCO Sign-off (CLA)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Verify Signed-off-by Trailer on All PR Commits
+      - name: Verify Signed-off-by Trailer
         run: |
-          for commit in $(git log --no-merges --format="%H" origin/${{ github.base_ref }}..HEAD); do
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            COMMITS=$(git log --no-merges --format="%H" origin/${{ github.base_ref }}..HEAD)
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ] && [ -n "${{ github.event.before }}" ]; then
+            COMMITS=$(git log --no-merges --format="%H" ${{ github.event.before }}..${{ github.event.after }})
+          else
+            COMMITS=$(git log --no-merges -n 5 --format="%H")
+          fi
+          for commit in $COMMITS; do
             msg=$(git log -1 --format="%B" $commit)
             if ! echo "$msg" | grep -q "Signed-off-by:"; then
               echo "Error: Commit $commit is missing a 'Signed-off-by:' trailer (git commit -s) per CLA.md"
               exit 1
             fi
           done
+
+  lint-and-typecheck:
+    name: Lint & Typecheck (Ruff & Mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Linting & Typing Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy numpy
+
+      - name: Run Ruff Lint Checks
+        run: |
+          ruff check src tests
+
+      - name: Run Mypy Type Checks
+        run: |
+          mypy
 
   test:
     name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})

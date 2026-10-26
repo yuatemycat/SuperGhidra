@@ -10,6 +10,7 @@ import pytest
 from benchmarks.humaneval_decompile.harness import averages_from_log, score_sample
 from superghidra.core.native_compiler import c_compiler
 
+
 def _working_c_compiler() -> bool:
     if c_compiler() is None:
         return False

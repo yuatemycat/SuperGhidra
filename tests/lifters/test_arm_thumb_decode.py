@@ -16,10 +16,9 @@ import struct
 import tempfile
 import unittest
 
-from superghidra.lifters import arm_thumb_decode as A
 from superghidra.diff import binary_diff_engine as D
-from superghidra.formats import binary_loader as B
 from superghidra.diff import struct_shift_migrator as M
+from superghidra.lifters import arm_thumb_decode as A
 
 # Optional Capstone cross-verification if available
 try:

@@ -18,8 +18,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import platform
-import shutil
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Tuple
 
 
 @dataclasses.dataclass
@@ -35,8 +34,8 @@ class HeadlessProfile:
     analysis_timeout_seconds: int = 120
     use_ram_disk: bool = False
     ephemeral_project: bool = True
-    pre_script_path: Optional[str] = None
-    post_script_path: Optional[str] = None
+    pre_script_path: str | None = None
+    post_script_path: str | None = None
     script_paths: List[str] = dataclasses.field(default_factory=list)
 
     def to_command_args(self) -> List[str]:
@@ -104,7 +103,7 @@ class HeadlessEnvironmentConfigurator:
         return "linux"
 
     @classmethod
-    def get_optimal_ram_disk_path(cls, env: Optional[str] = None) -> str:
+    def get_optimal_ram_disk_path(cls, env: str | None = None) -> str:
         """Returns optimal RAM disk mount path for zero-I/O ephemeral analysis."""
         target_env = env or cls.detect_environment()
         if target_env in ("linux", "colab"):

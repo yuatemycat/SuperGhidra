@@ -18,16 +18,14 @@ Evaluates tools against:
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import struct
 import tempfile
 import time
 import unittest
-from typing import Any, Dict
+from pathlib import Path
 
 from superghidra.core.live_binary_tools import (
     STRUCT_CATALOG,
-    get_struct_catalog,
     import_type_library,
     match_flirt_signatures,
     query_binary_dataflow,
@@ -39,7 +37,6 @@ from superghidra.formats.msvc_class_recovery import (
     recover_classes,
 )
 from tests.formats.test_msvc_class_recovery import BASE, build_pe_sections
-
 
 KERNEL32_PATH = Path(r"C:\Windows\System32\kernel32.dll")
 IDA_DIR = os.environ.get("IDA_DIR") or os.environ.get("IDADIR")

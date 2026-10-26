@@ -13,17 +13,17 @@ functions (C/C++ runtime, STL, Borland, POSIX) using IDA's signature library.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 from superghidra.formats.ida_til_importer import find_ida_install
 
 
-def find_dumpsig(ida_dir: Optional[Union[str, Path]] = None) -> Optional[Path]:
+def find_dumpsig(ida_dir: str | Path | None = None) -> Path | None:
     """Locate the Hex-Rays dumpsig.exe utility."""
     root = Path(ida_dir) if ida_dir else find_ida_install()
     if not root:
@@ -42,7 +42,7 @@ def find_dumpsig(ida_dir: Optional[Union[str, Path]] = None) -> Optional[Path]:
     return None
 
 
-def list_available_sigs(ida_dir: Optional[Union[str, Path]] = None) -> Dict[str, List[Path]]:
+def list_available_sigs(ida_dir: str | Path | None = None) -> Dict[str, List[Path]]:
     """Enumerate all .sig files grouped by architecture directory."""
     root = Path(ida_dir) if ida_dir else find_ida_install()
     if not root:
@@ -95,7 +95,7 @@ class FlirtMatch:
     symbol_name: str
     offset_in_module: int
     pattern: FlirtPattern
-    matched_address: Optional[int] = None
+    matched_address: int | None = None
     confidence: float = 1.0
 
 
@@ -132,7 +132,7 @@ def parse_flirt_pattern_string(pat_hex: str) -> Tuple[bytes, bytes]:
     return bytes(expected), bytes(mask)
 
 
-def dump_flirt_file(sig_path: Union[str, Path], dumpsig_path: Optional[Union[str, Path]] = None) -> str:
+def dump_flirt_file(sig_path: str | Path, dumpsig_path: str | Path | None = None) -> str:
     """Execute `dumpsig.exe -f <sig>` into a temporary file and return the text."""
     sig = Path(sig_path)
     if not sig.is_file():
@@ -151,7 +151,7 @@ def dump_flirt_file(sig_path: Union[str, Path], dumpsig_path: Optional[Union[str
         cmd = [str(dumpsig), "-f", str(sig), tmp_name]
         proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
         if os.path.exists(tmp_name) and os.path.getsize(tmp_name) > 0:
-            with open(tmp_name, "r", encoding="utf-8", errors="replace") as f:
+            with open(tmp_name, encoding="utf-8", errors="replace") as f:
                 return f.read()
         return proc.stdout or ""
     finally:
@@ -216,7 +216,7 @@ class FlirtSignatureIndex:
         else:
             self._unmasked_patterns.append(pattern)
 
-    def load_sig_file(self, sig_path: Union[str, Path], dumpsig_path: Optional[Union[str, Path]] = None) -> int:
+    def load_sig_file(self, sig_path: str | Path, dumpsig_path: str | Path | None = None) -> int:
         """Load and index all patterns from an IDA .sig file."""
         sig = Path(sig_path)
         text = dump_flirt_file(sig, dumpsig_path=dumpsig_path)
@@ -246,7 +246,7 @@ class FlirtSignatureIndex:
                     )
         return matches
 
-    def match_function_prologue(self, prologue: bytes) -> Optional[str]:
+    def match_function_prologue(self, prologue: bytes) -> str | None:
         """Return the best matching symbol name for a function prologue, or None."""
         matches = self.match_bytes(prologue, offset=0)
         if not matches:
@@ -259,8 +259,8 @@ class FlirtSignatureIndex:
 
 
 def match_flirt_signatures(
-    binary_path: Union[str, Path],
-    sig_path: Optional[Union[str, Path]] = None,
+    binary_path: str | Path,
+    sig_path: str | Path | None = None,
     max_matches: int = 100,
 ) -> Dict[str, Any]:
     """Match binary functions against FLIRT signatures without opening a Ghidra .rep."""

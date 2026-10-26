@@ -40,7 +40,7 @@ from __future__ import annotations
 import bisect
 from collections import Counter
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from superghidra.formats import binary_loader, msvc_class_recovery
 from superghidra.lifters import x86_decode
@@ -79,9 +79,9 @@ class ArchiveOp:
     direction: str  # read | write | both
     kind: str  # u8..u64, i8..i64, f32, f64, bool, bytes, cstring, object, class, count,
     #            serialize, virtual_serialize
-    size: Optional[int] = None
-    member: Optional[str] = None  # "this+0x40", "local", "this+0x18->0x8", "base"
-    callee: Optional[str] = None  # import / class name / helper address
+    size: int | None = None
+    member: str | None = None  # "this+0x40", "local", "this+0x18->0x8", "base"
+    callee: str | None = None  # import / class name / helper address
     gates: List[str] = field(default_factory=list)
     via: List[str] = field(default_factory=list)  # helper chain that produced the op
     repeat: bool = False  # inside a loop (typically once per element of a preceding count)
@@ -101,10 +101,10 @@ class ArchiveOp:
 
 @dataclass
 class SerializeTrace:
-    class_name: Optional[str]
+    class_name: str | None
     function: int
     ops: List[ArchiveOp]
-    schema: Optional[int] = None
+    schema: int | None = None
     truncated: bool = False
 
     @property
@@ -147,7 +147,7 @@ class SerializeTrace:
 #   ("const", value)
 
 
-def _render(val) -> Optional[str]:
+def _render(val) -> str | None:
     """Readable location for an address or loaded value."""
     if val is None:
         return None
@@ -257,7 +257,7 @@ class _State:
         # spills them around a loop and reloads them afterwards.
         self.slots: Dict[int, tuple] = {}
 
-    def copy(self) -> "_State":
+    def copy(self) -> _State:
         s = _State(self.regs, self.gates, self.cmp, self.pushes, self.esp)
         s.slots = dict(self.slots)
         return s
@@ -305,7 +305,7 @@ class _Summary:
     has_fffe: bool = False
     has_ffff: bool = False
     uses_cstring: bool = False
-    returns_modebit: Optional[bool] = None  # inverted flag when the function returns mode&1
+    returns_modebit: bool | None = None  # inverted flag when the function returns mode&1
     returns_read: bool = False  # returns a value just read from the archive
     returns_ar: bool = False  # returns the archive itself (chained `ar << a << b`)
     n_insns: int = 0
@@ -315,8 +315,8 @@ class _Summary:
 class SerializeTracer:
     """Static Serialize() tracer bound to one PE image (results are memoised per helper)."""
 
-    def __init__(self, source, report: Optional[msvc_class_recovery.ClassRecoveryReport] = None,
-                 archive_flags: Optional[int] = 0):
+    def __init__(self, source, report: msvc_class_recovery.ClassRecoveryReport | None = None,
+                 archive_flags: int | None = 0):
         """`archive_flags`: value assumed for archive mode bits other than load/store (e.g.
         SOLIDWORKS' text/XML archive bit). The default 0 specialises traces to the plain
         binary format and prunes the alternate paths; None keeps them as gates."""
@@ -340,7 +340,7 @@ class SerializeTracer:
     # ---------------- decoding helpers ----------------
 
     @staticmethod
-    def _reg_index(name: Optional[str]) -> Optional[int]:
+    def _reg_index(name: str | None) -> int | None:
         if name is None:
             return None
         for table in (x86_decode.REG64, x86_decode.REG32):
@@ -348,13 +348,13 @@ class SerializeTracer:
                 return table.index(name)
         return None
 
-    def _import_name(self, va: int) -> Optional[str]:
+    def _import_name(self, va: int) -> str | None:
         insn = msvc_class_recovery._decode_at(self.view, va)
         if insn is not None and insn.flow == "jmp_ind":
             return msvc_class_recovery._import_slot(self.view, insn)
         return None
 
-    def _call_target(self, insn) -> Tuple[Optional[int], Optional[str]]:
+    def _call_target(self, insn) -> Tuple[int | None, str | None]:
         """(resolved VA, import name) for a direct call/jmp or `call [rip+IAT]`."""
         if insn.flow in ("call", "jmp") and insn.target is not None:
             va = msvc_class_recovery._follow_thunks(self.view, insn.target)
@@ -400,7 +400,7 @@ class SerializeTracer:
     # ---------------- import classification ----------------
 
     @staticmethod
-    def _classify_import(name: str) -> Optional[Tuple[str, str, Optional[int]]]:
+    def _classify_import(name: str) -> Tuple[str, str, int | None] | None:
         """(direction, kind, size) for an imported CArchive / CString archive method."""
         if "CArchive" not in name:
             return None
@@ -445,7 +445,7 @@ class SerializeTracer:
 
     # ---------------- interprocedural summary ----------------
 
-    def summarize(self, func: int, ar_arg: int, this_arg: Optional[int] = 0, depth: int = 0) -> _Summary:
+    def summarize(self, func: int, ar_arg: int, this_arg: int | None = 0, depth: int = 0) -> _Summary:
         """Archive operations performed by `func` when argument #ar_arg is the archive."""
         key = (func, ar_arg)
         if key in self._memo:
@@ -460,7 +460,7 @@ class SerializeTracer:
         self._memo[key] = summ
         return summ
 
-    def _val_of_mem(self, st: _State, mem) -> Optional[tuple]:
+    def _val_of_mem(self, st: _State, mem) -> tuple | None:
         """Abstract address of a memory operand."""
         if mem.rip_relative or (mem.base is None and mem.index is None):
             return ("ptr", "glob", mem.disp)
@@ -484,7 +484,7 @@ class SerializeTracer:
             return ("ptr", bv, mem.disp)
         return None
 
-    def _trace(self, func: int, ar_arg: int, this_arg: Optional[int], depth: int) -> _Summary:
+    def _trace(self, func: int, ar_arg: int, this_arg: int | None, depth: int) -> _Summary:
         insns, truncated = self._instructions(func)
         x64 = self.mode == 64
         entry = _State()
@@ -511,7 +511,7 @@ class SerializeTracer:
         loops: List[Tuple[int, int]] = []  # back edges: (loop head, branch address)
         back_targets = {i.target for i in insns if i.flow in ("jcc", "loop", "jmp") and i.target is not None
                         and func <= i.target <= i.address}
-        cur: Optional[_State] = entry
+        cur: _State | None = entry
 
         for insn in insns:
             a = insn.address
@@ -863,7 +863,7 @@ class SerializeTracer:
                 return ("vtable", obj)
         return ("load", loc[1], loc[2], size)
 
-    def _cursor_access(self, st: _State, insn, loc, pending_access) -> Optional[ArchiveOp]:
+    def _cursor_access(self, st: _State, insn, loc, pending_access) -> ArchiveOp | None:
         """A load/store through the archive buffer cursor: start a pending primitive op."""
         if not loc or loc[:2] != ("ptr", "cursor"):
             return None
@@ -911,7 +911,7 @@ class SerializeTracer:
         op.conditions = [g for g in st.gates if g not in (LOADING, STORING)] + op.conditions
         summ.ops.append(op)
 
-    def _operand_desc(self, st: _State, insn, reg: Optional[int]) -> Optional[str]:
+    def _operand_desc(self, st: _State, insn, reg: int | None) -> str | None:
         if reg is None and insn.mem is not None:
             loc = self._val_of_mem(st, insn.mem)
             return _render(loc) if loc else None
@@ -964,7 +964,7 @@ class SerializeTracer:
         return (desc, rel, imm)
 
     @staticmethod
-    def _rebase(obj, member: Optional[str]) -> Optional[str]:
+    def _rebase(obj, member: str | None) -> str | None:
         """Express a callee's `this+X` member relative to the caller's object argument."""
         if member is None or not member.startswith("this"):
             return member
@@ -983,7 +983,7 @@ class SerializeTracer:
         outer = _render(obj)
         return f"{outer}->{member[5:] or '0x0'}" if outer else member
 
-    def _args(self, st: _State) -> List[Optional[tuple]]:
+    def _args(self, st: _State) -> List[tuple | None]:
         if self.mode == 64:
             return [st.regs.get(r) for r in _ARGS64]
         return [st.regs.get(1)] + list(reversed(st.pushes))
@@ -1126,13 +1126,13 @@ class SerializeTracer:
 
     # ---------------- public ----------------
 
-    def trace(self, func: int, class_name: Optional[str] = None, schema: Optional[int] = None) -> SerializeTrace:
+    def trace(self, func: int, class_name: str | None = None, schema: int | None = None) -> SerializeTrace:
         """Trace one Serialize(CArchive&) body (this = arg 0, archive = arg 1)."""
         summ = self.summarize(func, 1, 0)
         ops = _collapse_inline_strings(sorted(summ.ops, key=lambda o: o.address))
         return SerializeTrace(class_name, func, ops, schema, summ.truncated)
 
-    def trace_classes(self, names: Optional[List[str]] = None) -> List[SerializeTrace]:
+    def trace_classes(self, names: List[str] | None = None) -> List[SerializeTrace]:
         out = []
         wanted = set(names) if names else None
         for c in self.report.mfc_classes:
@@ -1145,14 +1145,14 @@ class SerializeTracer:
 
     # ---------------- decode layouts ----------------
 
-    def _class(self, name: Optional[str]):
+    def _class(self, name: str | None):
         if not hasattr(self, "_mfc_by_name"):
             self._mfc_by_name = self.report.mfc_by_name()
             self._rtti_by_name = self.report.rtti_by_name()
             self._ops_cache: Dict[Tuple[int, str], List[ArchiveOp]] = {}
         return self._mfc_by_name.get(name) if name else None
 
-    def _exported_serialize(self, name: str) -> Optional[int]:
+    def _exported_serialize(self, name: str) -> int | None:
         """Address of an exported `?Serialize@<name>@@...CArchive...` member, if any."""
         if not hasattr(self, "_serialize_exports"):
             self._serialize_exports: Dict[str, int] = {}
@@ -1195,7 +1195,7 @@ class SerializeTracer:
         return out
 
     def class_layout(self, name: str, path: str = "storing",
-                     others: Tuple["SerializeTracer", ...] = (), _depth: int = 0) -> Optional[List[ArchiveOp]]:
+                     others: Tuple[SerializeTracer, ...] = (), _depth: int = 0) -> List[ArchiveOp] | None:
         """Fully expanded archive ops of one class, ready for mfc_archive.decode_stream.
 
         Base-class Serialize calls are inlined; virtual calls on `this` are resolved through
@@ -1327,14 +1327,14 @@ class SerializeTracer:
                 if off and (isinstance(vt, str) or vt in owners)}
         return self._member_types[cls.name]
 
-    def _export_name(self, va: Optional[int]) -> Optional[str]:
+    def _export_name(self, va: int | None) -> str | None:
         if va is None:
             return None
         if not hasattr(self, "_export_names"):
             self._export_names = {a: n for n, a in self.img.export_map().items()}
         return self._export_names.get(va)
 
-    def _ctor_class(self, insn) -> Optional[str]:
+    def _ctor_class(self, insn) -> str | None:
         """Class X when `insn` calls X's constructor (`??0X@@...`, local export or import)."""
         va, imported = self._call_target(insn)
         name = imported or self._export_name(va)
@@ -1417,7 +1417,7 @@ class SerializeTracer:
             self._rtti_bases = {c.name: set(c.bases or []) for c in self.report.rtti_classes}
         return self._rtti_bases.get(name, set())
 
-    def _method_class(self, insn) -> Optional[str]:
+    def _method_class(self, insn) -> str | None:
         """Class X when `insn` calls a non-static member function `?m@X@@Q.../U...` (not ctor/dtor)."""
         va, imported = self._call_target(insn)
         name = imported or self._export_name(va)
@@ -1442,8 +1442,8 @@ class SerializeTracer:
         return typed
 
     def _expand(self, ops: List[ArchiveOp], dyn, path: str, others, depth: int,
-                typed: Optional[Dict[Tuple[str, ...], List[str]]] = None,
-                func: Optional[int] = None) -> List[ArchiveOp]:
+                typed: Dict[Tuple[str, ...], List[str]] | None = None,
+                func: int | None = None) -> List[ArchiveOp]:
         out: List[ArchiveOp] = []
         for o in ops:
             sub = None
@@ -1491,8 +1491,8 @@ class SerializeTracer:
                 out.extend(self._inline(o, sub))
         return out
 
-    def class_layouts(self, path: str = "storing", others: Tuple["SerializeTracer", ...] = (),
-                      names: Optional[List[str]] = None) -> Dict[str, List[ArchiveOp]]:
+    def class_layouts(self, path: str = "storing", others: Tuple[SerializeTracer, ...] = (),
+                      names: List[str] | None = None) -> Dict[str, List[ArchiveOp]]:
         """class_layout() for every serializable class (optionally only `names`)."""
         self._class(None)
         out: Dict[str, List[ArchiveOp]] = {}
@@ -1509,7 +1509,7 @@ class SerializeTracer:
 _SAVE_CONTEXT_QUERIES = ("?hasCondition@moArchiveHelper_c@@",)
 
 
-def object_operator_class(mangled: Optional[str]) -> Optional[str]:
+def object_operator_class(mangled: str | None) -> str | None:
     """`moNodeName_c` for `??6@YAAEAVsu_CArchive@@AEAV0@AEAPEAVmoNodeName_c@@@Z`: the class
     an `operator<<` / `operator>>` on an object pointer reads or writes. None otherwise."""
     if not mangled or not mangled.startswith(("??5", "??6")):
@@ -1522,7 +1522,7 @@ def object_operator_class(mangled: Optional[str]) -> Optional[str]:
     return None
 
 
-def _archive_query(mangled: str) -> Optional[str]:
+def _archive_query(mangled: str) -> str | None:
     """`IsLoading` for `?IsLoading@su_CArchive@@QEBAHXZ`: a const, argument-less `Is*()`
     member of an archive class returning int/bool. None for anything else."""
     if not mangled.startswith("?Is") or "@@QEBAHXZ" not in mangled and "@@QBEHXZ" not in mangled \
@@ -1533,7 +1533,7 @@ def _archive_query(mangled: str) -> Optional[str]:
     return method if owner.endswith("CArchive") else None
 
 
-def _class_of_method(mangled: Optional[str]) -> Optional[str]:
+def _class_of_method(mangled: str | None) -> str | None:
     """`?Serialize@CStringArray@@UEAAX...` -> `CStringArray`."""
     if not mangled or not mangled.startswith("?"):
         return mangled
@@ -1599,7 +1599,7 @@ def _collapse_inline_strings(ops: List[ArchiveOp]) -> List[ArchiveOp]:
     return out
 
 
-def trace_serialize_functions(source, class_names: Optional[List[str]] = None) -> List[SerializeTrace]:
+def trace_serialize_functions(source, class_names: List[str] | None = None) -> List[SerializeTrace]:
     """Convenience wrapper: recover classes and trace every (or the named) Serialize()."""
     return SerializeTracer(source).trace_classes(class_names)
 

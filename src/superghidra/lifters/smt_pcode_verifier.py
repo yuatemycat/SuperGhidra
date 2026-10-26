@@ -24,10 +24,9 @@ from __future__ import annotations
 
 import ast
 import dataclasses
-import enum
 import re
 import sys
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Set, Tuple
 
 try:
     import z3
@@ -41,18 +40,6 @@ def _require_z3():
 
 # Import P-Code lifter and ledger models
 try:
-    from superghidra.lifters.pcode_lifter_bridge import (
-        ARM64PcodeLifter,
-        AddressSpace,
-        CANONICAL_REG_OFFSETS,
-        DaemonPcodeBackend,
-        PcodeOp,
-        PcodeOpcode,
-        PypcodeSleighBackend,
-        UnifiedPcodeLifter,
-        Varnode,
-        X86_64PcodeLifter,
-    )
     from superghidra.diff.evidence_ledger import (
         CheckResult,
         ObligationStatus,
@@ -60,27 +47,33 @@ try:
         ProofObligation,
         ReconstructionObligationLedger,
     )
+    from superghidra.lifters.pcode_lifter_bridge import (
+        CANONICAL_REG_OFFSETS,
+        AddressSpace,
+        ARM64PcodeLifter,
+        PcodeOp,
+        PcodeOpcode,
+        UnifiedPcodeLifter,
+        Varnode,
+    )
 except ImportError:
     import os
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from superghidra.lifters.pcode_lifter_bridge import (  # type: ignore
-        ARM64PcodeLifter,
-        AddressSpace,
-        CANONICAL_REG_OFFSETS,
-        DaemonPcodeBackend,
-        PcodeOp,
-        PcodeOpcode,
-        PypcodeSleighBackend,
-        UnifiedPcodeLifter,
-        Varnode,
-        X86_64PcodeLifter,
-    )
     from superghidra.diff.evidence_ledger import (  # type: ignore
         CheckResult,
         ObligationStatus,
         ObligationType,
         ProofObligation,
         ReconstructionObligationLedger,
+    )
+    from superghidra.lifters.pcode_lifter_bridge import (  # type: ignore
+        CANONICAL_REG_OFFSETS,
+        AddressSpace,
+        ARM64PcodeLifter,
+        PcodeOp,
+        PcodeOpcode,
+        UnifiedPcodeLifter,
+        Varnode,
     )
 
 
@@ -91,15 +84,15 @@ except ImportError:
 @dataclasses.dataclass
 class VerificationResult:
     """Outcome of SMT formal equivalence verification."""
-    obligation_id: Optional[str]
+    obligation_id: str | None
     equivalent: bool
     status: str  # "UNSAT" (proven equivalent), "SAT" (counterexample found), "UNKNOWN", "ERROR"
     details: str
-    counterexample: Optional[Dict[str, Any]] = None
-    model_inputs: Optional[Dict[str, Any]] = None
-    pcode_out: Optional[str] = None
-    c_out: Optional[str] = None
-    backend_used: Optional[str] = None
+    counterexample: Dict[str, Any] | None = None
+    model_inputs: Dict[str, Any] | None = None
+    pcode_out: str | None = None
+    c_out: str | None = None
+    backend_used: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -171,7 +164,7 @@ class SymbolicState:
     Tracks registers, unique scratchpad Varnodes, named variables, and byte-addressed RAM.
     """
 
-    def __init__(self, name_prefix: str = "", initial_mem: Optional[z3.ArrayRef] = None):
+    def __init__(self, name_prefix: str = "", initial_mem: z3.ArrayRef | None = None):
         _require_z3()
         self.prefix = name_prefix
         # Register mapping: offset (e.g. reg_idx * 8) -> 64-bit BitVecRef
@@ -189,13 +182,13 @@ class SymbolicState:
         # Parameter bindings: {"player": "x0", "damage": "w2"}
         self.param_map: Dict[str, str] = {}
         # Return value expression
-        self.return_val: Optional[z3.BitVecRef] = None
+        self.return_val: z3.BitVecRef | None = None
         # Branch conditions and path constraints
         self.path_constraints: List[z3.BoolRef] = []
         self.branches: List[Tuple[Any, Any]] = []
         # Soundness: track when state contains unsupported/undecidable approximations
         self.is_unknown: bool = False
-        self.unknown_reason: Optional[str] = None
+        self.unknown_reason: str | None = None
 
     def mark_unknown(self, reason: str) -> None:
         """Marks this state as undecidable/unsupported for formal equivalence."""
@@ -203,7 +196,7 @@ class SymbolicState:
         if not self.unknown_reason:
             self.unknown_reason = reason
 
-    def clone(self, new_prefix: Optional[str] = None) -> SymbolicState:
+    def clone(self, new_prefix: str | None = None) -> SymbolicState:
         """Creates a copy of the symbolic state sharing base memory and registers."""
         st = SymbolicState(new_prefix or self.prefix, initial_mem=self.mem)
         st.regs = dict(self.regs)
@@ -217,7 +210,7 @@ class SymbolicState:
         st.unknown_reason = self.unknown_reason
         return st
 
-    def get_register(self, reg_offset: Union[int, str], size: int = 8) -> z3.BitVecRef:
+    def get_register(self, reg_offset: int | str, size: int = 8) -> z3.BitVecRef:
         """Gets or lazily creates a symbolic register."""
         if isinstance(reg_offset, str):
             reg_offset = CANONICAL_REG_OFFSETS.get(reg_offset.lower(), 0x800)
@@ -243,7 +236,7 @@ class SymbolicState:
         else:
             return z3.ZeroExt(target_bits - val_reg.size(), val_reg)
 
-    def set_register(self, reg_offset: Union[int, str], val: z3.BitVecRef, size: int = 8) -> None:
+    def set_register(self, reg_offset: int | str, val: z3.BitVecRef, size: int = 8) -> None:
         """Sets a register, with 32-bit writes automatically zero-extended to 64-bit."""
         if isinstance(reg_offset, str):
             reg_offset = CANONICAL_REG_OFFSETS.get(reg_offset.lower(), 0x800)
@@ -919,7 +912,7 @@ class CDeref(CASTNode):
 class CFieldAccess(CASTNode):
     base_expr: CASTNode
     field_name: str
-    offset: Optional[int] = None
+    offset: int | None = None
     size: int = 4
 
 
@@ -962,7 +955,7 @@ class CBlock(CASTNode):
 class CIfElse(CASTNode):
     condition: CASTNode
     then_block: CBlock
-    else_block: Optional[CBlock] = None
+    else_block: CBlock | None = None
 
 
 @dataclasses.dataclass
@@ -980,7 +973,7 @@ class CCodeParser:
     standard C operators, and structured if/else control flow.
     """
 
-    def __init__(self, struct_schemas: Optional[Dict[str, Dict[str, Tuple[int, int]]]] = None):
+    def __init__(self, struct_schemas: Dict[str, Dict[str, Tuple[int, int]]] | None = None):
         self.struct_schemas = struct_schemas or {}
         self.flat_fields: Dict[str, Tuple[int, int]] = {}
         for st_name, fields in self.struct_schemas.items():
@@ -1267,14 +1260,14 @@ class CCodeParser:
 
         return CBlock(statements=statements)
 
-    def _parse_switch_body(self, switch_expr: CASTNode, body_text: str) -> Optional[CASTNode]:
+    def _parse_switch_body(self, switch_expr: CASTNode, body_text: str) -> CASTNode | None:
         """Lowers switch body with case/default into a chained CIfElse AST."""
         pattern = re.compile(r'\b(case\s+([^:]+)|default)\s*:', re.MULTILINE)
         matches = list(pattern.finditer(body_text))
         if not matches:
             return None
 
-        cases: List[Tuple[Optional[CASTNode], CBlock]] = []
+        cases: List[Tuple[CASTNode | None, CBlock]] = []
         for idx_m, m in enumerate(matches):
             label_kind = m.group(1).strip()
             code_start = m.end()
@@ -1290,7 +1283,7 @@ class CCodeParser:
             else:
                 cases.append((None, case_block))
 
-        default_block: Optional[CBlock] = None
+        default_block: CBlock | None = None
         case_list = []
         for val_node, blk in cases:
             if val_node is None:
@@ -1298,7 +1291,7 @@ class CCodeParser:
             else:
                 case_list.append((val_node, blk))
 
-        cur_else: Optional[CBlock] = default_block
+        cur_else: CBlock | None = default_block
         for val_node, blk in reversed(case_list):
             cond = CBinary("==", switch_expr, val_node)
             cur_else = CBlock(statements=[CIfElse(condition=cond, then_block=blk, else_block=cur_else)])
@@ -1578,7 +1571,7 @@ class CSymbolicEvaluator:
         else:
             return a, z3.ZeroExt(a.size() - b.size(), b)
 
-    def _resolve_var_target(self, state: SymbolicState, name: str) -> Optional[Tuple[int, int]]:
+    def _resolve_var_target(self, state: SymbolicState, name: str) -> Tuple[int, int] | None:
         """Resolves variable name to (reg_offset, size) if it is a register or mapped param."""
         # 1. Direct param_map lookup
         if name in state.param_map:
@@ -1926,12 +1919,12 @@ class SMTPcodeVerifier:
     def verify_equivalence(
         self,
         pcode_ops: List[PcodeOp],
-        c_code_or_ast: Union[str, CASTNode],
-        struct_fields: Optional[Dict[str, Tuple[int, int]]] = None,
-        param_map: Optional[Dict[str, str]] = None,
-        obligation_id: Optional[str] = None,
+        c_code_or_ast: str | CASTNode,
+        struct_fields: Dict[str, Tuple[int, int]] | None = None,
+        param_map: Dict[str, str] | None = None,
+        obligation_id: str | None = None,
         check_memory: bool = True,
-        tracked_registers: Optional[List[int]] = None,
+        tracked_registers: List[int] | None = None,
     ) -> VerificationResult:
         """
         Formally verifies equivalence between a sequence of P-Code ops and a decompiled C snippet.
@@ -2068,7 +2061,7 @@ class SMTPcodeVerifier:
         bytes_b: bytes,
         arch: str = "arm64",
         base_addr: int = 0x1000,
-        output_regs: Optional[List[str]] = None,
+        output_regs: List[str] | None = None,
         backend: str = "auto",
         check_memory: bool = True,
     ) -> EquivalenceResult:
@@ -2398,7 +2391,7 @@ class SMTPcodeVerifier:
     def verify_ledger(
         self,
         ledger: ReconstructionObligationLedger,
-        status_filter: Optional[Set[ObligationStatus]] = None,
+        status_filter: Set[ObligationStatus] | None = None,
     ) -> Dict[str, VerificationResult]:
         """Verifies all pending obligations in ledger with SMT evidence."""
         if status_filter is None:

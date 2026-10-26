@@ -8,15 +8,12 @@ WriteOverlay, .ghidra-delta.jsonl, and EvidenceLedger obligations.
 
 from __future__ import annotations
 
-import io
 import json
 import os
-from pathlib import Path
-import sqlite3
-import struct
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 
 from superghidra.formats import database_migrator as root_migrator
 from superghidra.formats.database_migrator import (
@@ -371,7 +368,7 @@ class TestUniversalMigrationConverters(unittest.TestCase):
         overlay.save()
 
         self.assertTrue(overlay_file.exists())
-        with open(overlay_file, "r", encoding="utf-8") as f:
+        with open(overlay_file, encoding="utf-8") as f:
             data = json.load(f)
 
         renames = data.get("renames", {})

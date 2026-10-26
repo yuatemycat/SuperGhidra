@@ -28,12 +28,10 @@ prototypes used to test Section 6 and Section 7 design concepts in isolation:
 
 from __future__ import annotations
 
-import dataclasses
-from dataclasses import dataclass, field
 import hashlib
 import json
-import math
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -43,9 +41,9 @@ class CFGNodeSpec:
     """Basic block specification for condition-projected region restructuring."""
     block_id: int
     statements: List[str]
-    branch_cond: Optional[str] = None
-    true_target: Optional[int] = None
-    false_target: Optional[int] = None
+    branch_cond: str | None = None
+    true_target: int | None = None
+    false_target: int | None = None
 
 
 class RellicGotoFreeRestructurer:
@@ -115,7 +113,7 @@ class RellicGotoFreeRestructurer:
         }
 
     @staticmethod
-    def _or_join(existing: Optional[str], new_cond: str) -> str:
+    def _or_join(existing: str | None, new_cond: str) -> str:
         if existing is None:
             return new_cond
         if existing == "true" or new_cond == "true":
@@ -271,7 +269,7 @@ class MonomorphizedTemplateCollapser:
     def collapse_subgraph(sub: InlinedTemplateSubgraph) -> Dict[str, Any]:
         stride_set = set(sub.pointer_strides)
         topo_sig = hashlib.sha256(
-            f"{sorted(stride_set)}:{sub.loop_back_edges}:{sub.comparison_opcodes}:{sub.pointer_swaps}".encode("utf-8")
+            f"{sorted(stride_set)}:{sub.loop_back_edges}:{sub.comparison_opcodes}:{sub.pointer_swaps}".encode()
         ).hexdigest()[:16]
 
         # Pattern 1: std::map / std::_Rb_tree_insert_and_rebalance (parent=+8, left=+16, right=+24, color=+0)

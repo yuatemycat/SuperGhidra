@@ -34,22 +34,22 @@ import abc
 import ctypes
 import dataclasses
 import json
+import logging
 import math
 import os
 import re
 import struct
 import sys
 import time
-import logging
 
 logger = logging.getLogger(__name__)
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 # Import SuperGhidra ShmChannel and message structures
 try:
-    from superghidra.core.shm_decompiler_bridge import ShmChannel, ShmMessage
+    from superghidra.core.shm_decompiler_bridge import ShmChannel
 except ImportError:
-    from .shm_decompiler_bridge import ShmChannel, ShmMessage
+    from .shm_decompiler_bridge import ShmChannel
 
 # -----------------------------------------------------------------------------
 # 1. Android Emulator Fleet Safety Protocols
@@ -282,7 +282,7 @@ class EmulatorFleetGuard:
             proc = psutil.Process(pid)
             proc_name = proc.name().lower()
             cmdline = " ".join(proc.cmdline()).lower() if hasattr(proc, "cmdline") else ""
-            
+
             # Known emulator process names
             known_emu_exes = [
                 "qemu", "emulator", "memu", "memuheadless", "dnplayer", "ldplayer", "nox"
@@ -311,7 +311,7 @@ class EmulatorFleetGuard:
         cls,
         serial: str,
         package_name: str,
-        pid: Optional[int] = None,
+        pid: int | None = None,
         allow_readonly_live: bool = False,
     ) -> bool:
         """Ensures that the process is explicitly verified before probing."""
@@ -352,7 +352,7 @@ class BaseMemoryReader(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_module_base(self, module_name: str) -> Optional[int]:
+    def get_module_base(self, module_name: str) -> int | None:
         """Resolves dynamic base virtual address of a shared object (.so) or library."""
         pass
 
@@ -642,7 +642,7 @@ class FridaMemoryReader(BaseMemoryReader):
     def __init__(
         self,
         device_serial: str,
-        target_process: Union[str, int],
+        target_process: str | int,
         allow_readonly_live: bool = False,
     ):
         self.device_serial = device_serial
@@ -704,7 +704,7 @@ class FridaMemoryReader(BaseMemoryReader):
                 raise MemoryError(f"Frida readBytes failed at 0x{address:X}: {e}")
         raise MemoryError("Frida session not connected.")
 
-    def get_module_base(self, module_name: str) -> Optional[int]:
+    def get_module_base(self, module_name: str) -> int | None:
         if module_name in self._module_cache:
             return self._module_cache[module_name]
 
@@ -771,7 +771,7 @@ class MockMemoryReader(BaseMemoryReader):
         base: int,
         size: int,
         permissions: str = "r-x",
-        data: Optional[bytes] = None,
+        data: bytes | None = None,
         name: str = "",
     ) -> None:
         buf = bytearray(size)
@@ -821,7 +821,7 @@ class MockMemoryReader(BaseMemoryReader):
 
         raise MemoryError(f"Unmapped address 0x{address:016X} (size {size}) in MockMemoryReader")
 
-    def get_module_base(self, module_name: str) -> Optional[int]:
+    def get_module_base(self, module_name: str) -> int | None:
         return self._module_map.get(module_name)
 
     def get_memory_regions(self) -> List[MemoryRegion]:
@@ -843,7 +843,7 @@ class ModuleBaseResolver:
         self.default_module = default_module
         self._module_base_cache: Dict[str, int] = {}
 
-    def resolve_module_base(self, module_name: Optional[str] = None) -> int:
+    def resolve_module_base(self, module_name: str | None = None) -> int:
         mod = module_name or self.default_module
         if mod in self._module_base_cache:
             return self._module_base_cache[mod]
@@ -854,17 +854,17 @@ class ModuleBaseResolver:
         self._module_base_cache[mod] = base
         return base
 
-    def rva_to_dynamic(self, rva: int, module_name: Optional[str] = None) -> int:
+    def rva_to_dynamic(self, rva: int, module_name: str | None = None) -> int:
         """dynamic_addr = module_base + rva"""
         base = self.resolve_module_base(module_name)
         return base + rva
 
-    def dynamic_to_rva(self, dynamic_addr: int, module_name: Optional[str] = None) -> int:
+    def dynamic_to_rva(self, dynamic_addr: int, module_name: str | None = None) -> int:
         """rva = dynamic_addr - module_base"""
         base = self.resolve_module_base(module_name)
         return dynamic_addr - base
 
-    def is_pointer_in_module(self, ptr: int, module_name: Optional[str] = None) -> bool:
+    def is_pointer_in_module(self, ptr: int, module_name: str | None = None) -> bool:
         """Checks whether dynamic pointer points within the mapped module address range."""
         try:
             base = self.resolve_module_base(module_name)
@@ -890,7 +890,7 @@ class VTableSlot:
     slot_dynamic_addr: int
     target_dynamic_addr: int
     target_rva: int
-    expected_rva: Optional[int]
+    expected_rva: int | None
     is_match: bool
 
 
@@ -932,7 +932,7 @@ class VTableVerificationResult:
 def verify_vtable_pointer(
     reader: BaseMemoryReader,
     rva: int,
-    expected_slots: List[Union[int, str]],
+    expected_slots: List[int | str],
     module_name: str = "libtarget.so",
     is_64bit: bool = True,
 ) -> VTableVerificationResult:
@@ -972,7 +972,7 @@ def verify_vtable_pointer(
                     is_match=is_match,
                 )
             )
-        except Exception as e:
+        except Exception:
             slots.append(
                 VTableSlot(
                     index=i,
@@ -1007,7 +1007,7 @@ class StructFieldVerificationResult:
     field_address: int
     field_type: str
     actual_value: Any
-    expected_range: Optional[Tuple[Any, Any]]
+    expected_range: Tuple[Any, Any] | None
     raw_bytes: bytes
     message: str
 
@@ -1029,8 +1029,8 @@ def verify_struct_field(
     base_ptr: int,
     offset: int,
     expected_type: str,
-    expected_val_range: Optional[Tuple[Any, Any]] = None,
-    expected_val: Optional[Any] = None,
+    expected_val_range: Tuple[Any, Any] | None = None,
+    expected_val: Any | None = None,
 ) -> StructFieldVerificationResult:
     """
     Validates live struct field values at base_ptr + offset.
@@ -1160,7 +1160,7 @@ def extract_dynamic_encryption_keys(
     rva: int,
     length: int = 32,
     module_name: str = "libtarget.so",
-    device_serial: Optional[str] = None,
+    device_serial: str | None = None,
 ) -> DynamicKeyResult:
     """
     Reads live runtime keys from memory at module_base + rva and assesses Shannon entropy.
@@ -1321,10 +1321,10 @@ class EmulatorSidecarShmClient:
         res = self._query(MSG_RESOLVE_RVA_REQ, {"rva": rva, "module_name": module_name})
         return int(res["dynamic_address"], 16)
 
-    def verify_vtable(self, rva: int, expected_slots: List[Union[int, str]], module_name: str = "libtarget.so") -> Dict[str, Any]:
+    def verify_vtable(self, rva: int, expected_slots: List[int | str], module_name: str = "libtarget.so") -> Dict[str, Any]:
         return self._query(MSG_VERIFY_VTABLE_REQ, {"rva": rva, "expected_slots": expected_slots, "module_name": module_name})
 
-    def verify_struct(self, base_ptr: int, offset: int, expected_type: str, expected_range: Optional[Tuple[Any, Any]] = None) -> Dict[str, Any]:
+    def verify_struct(self, base_ptr: int, offset: int, expected_type: str, expected_range: Tuple[Any, Any] | None = None) -> Dict[str, Any]:
         return self._query(MSG_VERIFY_STRUCT_REQ, {"base_ptr": base_ptr, "offset": offset, "expected_type": expected_type, "expected_range": expected_range})
 
     def extract_key(self, rva: int, length: int = 32, module_name: str = "libtarget.so") -> Dict[str, Any]:

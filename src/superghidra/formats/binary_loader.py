@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import struct
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Tuple
 
 __all__ = [
     "BinaryFormatError",
@@ -68,23 +68,23 @@ class Symbol:
     address: int
     size: int = 0
     kind: str = "func"  # func | object | other
-    ordinal: Optional[int] = None
-    forwarder: Optional[str] = None  # PE forwarded export, e.g. "NTDLL.RtlAllocateHeap"
+    ordinal: int | None = None
+    forwarder: str | None = None  # PE forwarded export, e.g. "NTDLL.RtlAllocateHeap"
 
 
 @dataclass
 class Import:
-    library: Optional[str]
-    name: Optional[str]
-    ordinal: Optional[int] = None
-    address: Optional[int] = None  # IAT / GOT slot VA when known
+    library: str | None
+    name: str | None
+    ordinal: int | None = None
+    address: int | None = None  # IAT / GOT slot VA when known
     delay_loaded: bool = False
 
 
 @dataclass
 class Relocation:
     offset: int
-    symbol: Optional[str] = None
+    symbol: str | None = None
     type: int = 0
     addend: int = 0
 
@@ -96,7 +96,7 @@ class BinaryImage:
     bits: int
     endian: str  # little | big
     image_base: int
-    entry: Optional[int]
+    entry: int | None
     is_library: bool
     data: bytes = field(repr=False)
     sections: List[Section] = field(default_factory=list)
@@ -106,15 +106,15 @@ class BinaryImage:
     symbols: List[Symbol] = field(default_factory=list)
     function_starts: List[int] = field(default_factory=list)
     libraries: List[str] = field(default_factory=list)
-    pdb_path: Optional[str] = None
+    pdb_path: str | None = None
     is_dotnet: bool = False
     thumb_entry: bool = False  # ARM32: entry/function addresses with bit 0 set run in Thumb mode
     machine: int = 0  # raw machine / cputype value
-    path: Optional[str] = None
+    path: str | None = None
 
     # ---------------- address translation ----------------
 
-    def section_for_va(self, va: int) -> Optional[Section]:
+    def section_for_va(self, va: int) -> Section | None:
         for sec in self.sections:
             if sec.mapped and (sec.vsize or sec.file_size) and sec.contains_va(va):
                 return sec
@@ -123,7 +123,7 @@ class BinaryImage:
                 return seg
         return None
 
-    def va_to_offset(self, va: int) -> Optional[int]:
+    def va_to_offset(self, va: int) -> int | None:
         sec = self.section_for_va(va)
         if sec is None:
             return None
@@ -132,7 +132,7 @@ class BinaryImage:
             return None  # inside .bss-like zero-fill
         return sec.file_offset + delta
 
-    def offset_to_va(self, offset: int) -> Optional[int]:
+    def offset_to_va(self, offset: int) -> int | None:
         for sec in self.sections:
             if sec.file_size and sec.file_offset <= offset < sec.file_offset + sec.file_size:
                 return sec.vaddr + (offset - sec.file_offset)
@@ -152,7 +152,7 @@ class BinaryImage:
         avail = sec.file_offset + sec.file_size - off if sec else 0
         return self.data[off : off + max(0, min(size, avail))]
 
-    def read_c_string(self, va: int, limit: int = 1024) -> Optional[str]:
+    def read_c_string(self, va: int, limit: int = 1024) -> str | None:
         raw = self.read_va(va, limit)
         if not raw:
             return None
@@ -161,7 +161,7 @@ class BinaryImage:
             return None
         return raw[:end].decode("latin-1")
 
-    def read_pointer(self, va: int) -> Optional[int]:
+    def read_pointer(self, va: int) -> int | None:
         size = self.bits // 8
         raw = self.read_va(va, size)
         if len(raw) != size:
@@ -177,7 +177,7 @@ class BinaryImage:
             secs = [s for s in self.segments if s.executable and s.file_size > 0]
         return secs
 
-    def section(self, name: str) -> Optional[Section]:
+    def section(self, name: str) -> Section | None:
         for s in self.sections:
             if s.name == name:
                 return s
@@ -352,7 +352,7 @@ def _load_elf(data: bytes) -> BinaryImage:
         img.thumb_entry = True
 
     sym_size = 24 if bits == 64 else 16
-    seen = set()
+    seen: set[Tuple[Any, ...]] = set()
 
     def parse_symbols(sym_off: int, count: int, strtab: bytes, dynamic: bool) -> None:
         for j in range(1, count):
@@ -396,7 +396,7 @@ def _load_elf(data: bytes) -> BinaryImage:
 
     # 2) PT_DYNAMIC: DT_NEEDED, and the dynamic symbol table when the section table
     #    is stripped or forged (common in protected Android libraries).
-    if dynamic_off is not None:
+    if dynamic_off is not None and dynamic_size is not None:
         dyn_size = 16 if bits == 64 else 8
         tags: Dict[int, int] = {}
         needed: List[int] = []
@@ -506,7 +506,7 @@ def _load_pe(data: bytes) -> BinaryImage:
     if arch == "arm" and machine in (0x01C2, 0x01C4):
         img.thumb_entry = True
 
-    def rva_off(rva: int) -> Optional[int]:
+    def rva_off(rva: int) -> int | None:
         return img.va_to_offset(image_base + rva)
 
     def rva_str(rva: int) -> str:
@@ -646,7 +646,7 @@ _MACHO_CPU = {
 _FAT_PREFERENCE = ["arm64", "x86_64", "arm", "x86"]
 
 
-def _load_macho_fat(data: bytes, prefer: Optional[str]) -> BinaryImage:
+def _load_macho_fat(data: bytes, prefer: str | None) -> BinaryImage:
     magic, nfat = struct.unpack_from(">II", data, 0)
     is64 = magic == 0xCAFEBABF
     slices = []
@@ -814,8 +814,8 @@ def _load_macho(data: bytes) -> BinaryImage:
 # --------------------------------------------------------------------------------------
 
 
-def load_binary(source: Union[str, bytes, bytearray, memoryview], *,
-                prefer_arch: Optional[str] = None,
+def load_binary(source: str | bytes | bytearray | memoryview, *,
+                prefer_arch: str | None = None,
                 raw_arch: str = "unknown", raw_base: int = 0) -> BinaryImage:
     """Parse an ELF / PE / Mach-O / raw file path or buffer into a BinaryImage.
 
@@ -882,7 +882,7 @@ def _ordinal_table(path: str) -> Dict[int, str]:
     return _ORDINAL_TABLES[path]
 
 
-def resolve_import_ordinals(img: BinaryImage, symbol_dirs: Optional[List[str]] = None) -> int:
+def resolve_import_ordinals(img: BinaryImage, symbol_dirs: List[str] | None = None) -> int:
     """Name PE imports that are by ordinal only (e.g. every mfc140u.dll import).
 
     Uses Ghidra's ``data/symbols/win32|win64/<dll>.exports`` tables (from

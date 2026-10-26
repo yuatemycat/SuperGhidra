@@ -22,7 +22,7 @@ import hashlib
 import os
 import struct
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 @dataclasses.dataclass
@@ -133,7 +133,7 @@ quit
         return self._generate_linux_bash_script()
 
     def _generate_linux_bash_script(self) -> str:
-        return f"""#!/bin/bash
+        return """#!/bin/bash
 set -e
 echo "=== SuperGhidra Native C++ Decompiler PGO Pipeline ==="
 
@@ -174,7 +174,7 @@ echo "=== PGO Build Successfully Completed! ==="
 """
 
     def _generate_windows_batch_script(self) -> str:
-        return f"""@echo off
+        return """@echo off
 echo === SuperGhidra Native C++ Decompiler Windows PGO Pipeline ===
 
 set BUILD_DIR=build_pgo
@@ -298,7 +298,7 @@ public:
 """
         return xml
 
-    def inspect_live_decompiler(self, ghidra_install_dir: Optional[str] = None) -> Dict[str, Any]:
+    def inspect_live_decompiler(self, ghidra_install_dir: str | None = None) -> Dict[str, Any]:
         """
         Locates Ghidra's live decompile executable, parses its PE or ELF header,
         validates machine architecture and sections, and audits C++ decompiler source files.
@@ -317,7 +317,7 @@ public:
             Path(self.config.output_bin_dir) / "decompile",
         ]
 
-        target_binary: Optional[Path] = None
+        target_binary: Path | None = None
         for c in candidates:
             if c.is_file():
                 target_binary = c
@@ -416,7 +416,7 @@ public:
             "readiness": "ready_for_pgo" if ready_for_pgo else "sources_missing",
         }
 
-    def generate_portable_devops_build_script(self, devops_root: Optional[str] = None) -> str:
+    def generate_portable_devops_build_script(self, devops_root: str | None = None) -> str:
         """
         Generates a portable Windows batch script that:
         1. Activates the toolchain folder's env.bat (devops_root, or SUPERGHIDRA_DEVOPS_ROOT).

@@ -22,11 +22,8 @@ import ast
 import copy
 import json
 import time
-from pathlib import Path
 from typing import Dict
 from unittest.mock import MagicMock
-
-import pytest
 
 from superghidra.integrations.ghidra_gui_overlay_sync import (
     OverlaySyncBridge,

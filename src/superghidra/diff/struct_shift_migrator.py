@@ -20,13 +20,10 @@ from __future__ import annotations
 
 import dataclasses
 import difflib
-import json
 import os
 import re
 import struct
-import sys
-import time
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Set, Tuple
 
 from superghidra.formats import binary_loader
 from superghidra.lifters import arm_thumb_decode, x86_decode
@@ -62,7 +59,7 @@ class MemoryAccess:
         }
 
 
-def decode_arm64_memory_access(pc: int, insn: int) -> Optional[MemoryAccess]:
+def decode_arm64_memory_access(pc: int, insn: int) -> MemoryAccess | None:
     """
     Decodes ARM64 memory instructions with immediate displacement:
     - LDR / STR (unsigned immediate, V==0 general-purpose 8/16/32/64-bit, V==1 SIMD/FP 8/16/32/64/128-bit)
@@ -275,7 +272,7 @@ _SSE_ARITH = {0x51: "SQRT", 0x58: "ADD", 0x59: "MUL", 0x5C: "SUB", 0x5D: "MIN", 
               0x54: "AND", 0x55: "ANDN", 0x56: "OR", 0x57: "XOR"}
 
 
-def _x86_mem_mnemonic(insn: "x86_decode.X86Insn") -> Optional[str]:
+def _x86_mem_mnemonic(insn: x86_decode.X86Insn) -> str | None:
     """Mnemonic for an instruction whose ModRM memory operand is a data access we track."""
     op, mp = insn.opcode, insn.map
     if mp == 0 and not insn.vex:
@@ -390,7 +387,7 @@ def decode_x86_64_memory_accesses(
     return accesses
 
 
-def parse_disassembly_line(line: str, default_pc: int = 0) -> Optional[MemoryAccess]:
+def parse_disassembly_line(line: str, default_pc: int = 0) -> MemoryAccess | None:
     """
     Parses a single textual disassembly line (from Ghidra, objdump, IDA, etc.):
     e.g. "0x00010040: LDR W0, [X19, #0x24]" or "MOV [RDI + 0x28], EAX"
@@ -601,8 +598,8 @@ class StructShiftMigrator:
 
     def load_functions_from_instructions(
         self,
-        v1_data: Dict[str, List[Union[str, MemoryAccess, int]]],
-        v2_data: Dict[str, List[Union[str, MemoryAccess, int]]],
+        v1_data: Dict[str, List[str | MemoryAccess | int]],
+        v2_data: Dict[str, List[str | MemoryAccess | int]],
     ) -> None:
         """Loads function memory accesses from text disassembly or pre-decoded accesses."""
         self._v1_functions = self._normalize_function_data(v1_data)
@@ -610,7 +607,7 @@ class StructShiftMigrator:
 
     def _normalize_function_data(
         self,
-        data: Dict[str, Union[bytes, bytearray, List[Union[str, MemoryAccess, int, bytes, bytearray]]]],
+        data: Dict[str, bytes | bytearray | List[str | MemoryAccess | int | bytes | bytearray]],
     ) -> Dict[str, List[MemoryAccess]]:
         normalized: Dict[str, List[MemoryAccess]] = {}
         for func_name, items in data.items():
@@ -800,7 +797,7 @@ class StructShiftMigrator:
 
         return {f"func_{idx}": accs for idx, accs in enumerate(functions_list)}
 
-    def _extract_image_accesses(self, image: "binary_loader.BinaryImage") -> Dict[str, List[MemoryAccess]]:
+    def _extract_image_accesses(self, image: binary_loader.BinaryImage) -> Dict[str, List[MemoryAccess]]:
         """Per-function struct accesses for a loaded ELF / PE / Mach-O image.
 
         Functions are delimited by the image's known function starts (PE .pdata, exports,
@@ -977,7 +974,7 @@ class StructShiftMigrator:
     def analyze_shifts(
         self,
         struct_name: str = "TargetStruct",
-        original_header: Optional[str] = None,
+        original_header: str | None = None,
         old_binary_name: str = "binary_v1.so",
         new_binary_name: str = "binary_v2.so",
     ) -> MigrationReport:
@@ -1234,7 +1231,7 @@ class StructShiftMigrator:
     def _generate_cpp_patch_and_header(
         self,
         struct_name: str,
-        original_header: Optional[str],
+        original_header: str | None,
         field_migrations: List[FieldMigration],
         insertions: List[StructInsertion],
     ) -> Tuple[str, str]:
@@ -1342,8 +1339,8 @@ class StructShiftMigrator:
 def migrate_struct_shifts(
     old_binary_path: str,
     new_binary_path: str,
-    struct_name: Optional[str] = None,
-    original_header: Optional[str] = None,
+    struct_name: str | None = None,
+    original_header: str | None = None,
 ) -> MigrationReport:
     """
     Analyzes two binary versions to discover struct displacement shifts and generate C++ header patches.
@@ -1360,7 +1357,7 @@ def migrate_struct_shifts(
     if os.path.exists(old_binary_path) and os.path.exists(new_binary_path):
         is_old_text = False
         try:
-            with open(old_binary_path, "r", encoding="utf-8") as f:
+            with open(old_binary_path, encoding="utf-8") as f:
                 content = f.read(2048)
                 if any(x in content for x in ("LDR", "STR", "MOV", "struct", "void")):
                     is_old_text = True
@@ -1368,7 +1365,7 @@ def migrate_struct_shifts(
             pass
 
         if is_old_text:
-            with open(old_binary_path, "r", encoding="utf-8") as f1, open(new_binary_path, "r", encoding="utf-8") as f2:
+            with open(old_binary_path, encoding="utf-8") as f1, open(new_binary_path, encoding="utf-8") as f2:
                 v1_lines = f1.readlines()
                 v2_lines = f2.readlines()
             migrator.load_functions_from_instructions(

@@ -22,10 +22,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger("SuperGhidra.OverlaySync")
 
@@ -63,7 +62,7 @@ def normalize_address_key(addr_val: Any) -> str:
         return s
 
 
-def is_default_ghidra_symbol(name: Optional[str]) -> bool:
+def is_default_ghidra_symbol(name: str | None) -> bool:
     """Return True if symbol name matches an auto-generated Ghidra/disassembler prefix."""
     if not name or not isinstance(name, str):
         return True
@@ -87,9 +86,9 @@ class OverlaySyncBridge:
 
     def __init__(
         self,
-        overlay_source: Optional[Union[str, Path, Dict[str, Any], List[Dict[str, Any]]]] = None,
+        overlay_source: str | Path | Dict[str, Any] | List[Dict[str, Any]] | None = None,
     ):
-        self.source_path: Optional[Path] = None
+        self.source_path: Path | None = None
         self.overlay_data: Dict[str, Any] = {
             "renames": {},
             "comments": {},
@@ -107,7 +106,7 @@ class OverlaySyncBridge:
             self.load(overlay_source)
 
     def load(
-        self, source: Union[str, Path, Dict[str, Any], List[Dict[str, Any]]]
+        self, source: str | Path | Dict[str, Any] | List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
         Load overlay definitions from a filepath (JSON or JSONL), an in-memory dict,
@@ -302,7 +301,7 @@ class OverlaySyncBridge:
 
             addr_key = normalize_address_key(target_addr) if target_addr is not None else None
 
-            def _extract_before(*keys: str) -> Optional[str]:
+            def _extract_before(*keys: str) -> str | None:
                 for key in ("before", "expected_before", *keys):
                     if key in payload and payload[key] is not None:
                         return str(payload[key])
@@ -693,7 +692,7 @@ class OverlaySyncBridge:
         }
         return accepted_overlay_data, conflicts
 
-    def generate_diff_report(self, overlay_data: Optional[Dict[str, Any]] = None) -> str:
+    def generate_diff_report(self, overlay_data: Dict[str, Any] | None = None) -> str:
         """
         Generates a summary diff report showing pending changes grouped by RVA/Address.
         """
@@ -768,7 +767,7 @@ class OverlaySyncBridge:
 
     def generate_ghidra_python_script(
         self,
-        overlay_data: Optional[Dict[str, Any]] = None,
+        overlay_data: Dict[str, Any] | None = None,
         dry_run: bool = False,
     ) -> str:
         """
@@ -967,7 +966,7 @@ if __name__ == "__main__" or "currentProgram" in globals():
         poll_interval_ms: int = 1000,
         dry_run: bool = False,
         verify_conflicts: bool = True,
-        overlay_path: Optional[Union[str, Path]] = None,
+        overlay_path: str | Path | None = None,
     ) -> str:
         """
         Generates a self-contained Ghidra Python/Jython/PyGhidra script that monitors
@@ -1555,8 +1554,8 @@ if __name__ == "__main__" or "currentProgram" in globals():
 
     def sync_to_script(
         self,
-        overlay_path: Optional[str] = None,
-        out_path: Optional[str] = None,
+        overlay_path: str | None = None,
+        out_path: str | None = None,
         dry_run: bool = False,
         watch: bool = False,
         poll_interval_ms: int = 1000,
@@ -1600,7 +1599,7 @@ def generate_ghidra_python_script(overlay_data: Dict[str, Any], dry_run: bool = 
 
 
 def generate_ghidra_watcher_script(
-    overlay_source: Union[str, Path, Dict[str, Any], List[Dict[str, Any]]],
+    overlay_source: str | Path | Dict[str, Any] | List[Dict[str, Any]],
     poll_interval_ms: int = 1000,
     dry_run: bool = False,
     verify_conflicts: bool = True,
@@ -1622,7 +1621,7 @@ def generate_diff_report(overlay_data: Dict[str, Any]) -> str:
 
 def sync_to_script(
     overlay_path: str,
-    out_path: Optional[str] = None,
+    out_path: str | None = None,
     dry_run: bool = False,
     watch: bool = False,
     poll_interval_ms: int = 1000,
@@ -1688,7 +1687,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: List[str] | None = None) -> int:
     """CLI entry point for `ghidra_gui_overlay_sync`."""
     parser = build_arg_parser()
     args = parser.parse_args(argv)

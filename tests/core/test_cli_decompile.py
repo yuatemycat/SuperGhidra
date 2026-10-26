@@ -7,7 +7,6 @@ Subprocess tests checking argument parsing, address translation, and exit codes.
 """
 
 import os
-import platform
 import subprocess
 import sys
 import tempfile

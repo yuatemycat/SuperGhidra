@@ -27,11 +27,8 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import random
-import re
-import struct
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import List
 
 from superghidra.core.native_compiler import compile_and_run
 

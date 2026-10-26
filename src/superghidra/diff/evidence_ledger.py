@@ -28,7 +28,7 @@ import os
 import re
 import struct
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple
 
 
 class ObligationStatus(str, enum.Enum):
@@ -61,7 +61,7 @@ class CheckResult:
         check_name: str,
         passed: bool,
         message: str,
-        details: Optional[Dict[str, Any]] = None,
+        details: Dict[str, Any] | None = None,
         proven: bool = True,
     ):
         self.check_name = check_name
@@ -284,11 +284,11 @@ class AllocationSizeVerifier:
             return CheckResult("AllocationSizeCheck", False, "Empty ARM64 instruction stream")
 
         insns = [struct.unpack_from("<I", code_bytes, i * 4)[0] for i in range(num_insns)]
-        alloc_size: Optional[int] = None
+        alloc_size: int | None = None
 
         for i in range(num_insns):
             insn = insns[i]
-            candidate_imm: Optional[int] = None
+            candidate_imm: int | None = None
 
             # 1. MOVZ W0/X0, #imm16
             if (insn & 0x7F80001F) == 0x52800000 or (insn & 0xFF80001F) == 0xD2800000:
@@ -348,7 +348,7 @@ class FieldDisplacementVerifier:
     DISPLACEMENT_PATTERN = re.compile(r"\[\s*(\w+)\s*,\s*#?(0x[0-9a-fA-F]+|[0-9]+)\s*\]")
 
     @classmethod
-    def parse_instruction_displacement(cls, insn_text: str) -> Optional[Tuple[str, int]]:
+    def parse_instruction_displacement(cls, insn_text: str) -> Tuple[str, int] | None:
         """Parses base register and displacement integer from assembly string."""
         m = cls.DISPLACEMENT_PATTERN.search(insn_text)
         if not m:
@@ -569,17 +569,17 @@ class ProofObligation:
     def __init__(
         self,
         obligation_id: str,
-        obligation_type: Union[ObligationType, str],
+        obligation_type: ObligationType | str,
         target_name: str,
         proposed_name: str,
-        target_address: Optional[int] = None,
-        evidence: Optional[Dict[str, Any]] = None,
-        status: Union[ObligationStatus, str] = ObligationStatus.PENDING,
-        created_at: Optional[str] = None,
-        verified_at: Optional[str] = None,
-        committed_at: Optional[str] = None,
-        verification_results: Optional[List[Dict[str, Any]]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        target_address: int | None = None,
+        evidence: Dict[str, Any] | None = None,
+        status: ObligationStatus | str = ObligationStatus.PENDING,
+        created_at: str | None = None,
+        verified_at: str | None = None,
+        committed_at: str | None = None,
+        verification_results: List[Dict[str, Any]] | None = None,
+        metadata: Dict[str, Any] | None = None,
     ):
         self.obligation_id = obligation_id
         self.obligation_type = ObligationType(obligation_type)
@@ -645,7 +645,7 @@ class ReconstructionObligationLedger:
     behind structural and invariant verification.
     """
 
-    def __init__(self, ledger_file: Optional[str] = None):
+    def __init__(self, ledger_file: str | None = None):
         if ledger_file is None:
             _here = os.path.dirname(os.path.abspath(__file__))
             _repo_root = os.path.abspath(os.path.join(_here, "..", ".."))
@@ -658,13 +658,13 @@ class ReconstructionObligationLedger:
 
     def propose(
         self,
-        obligation_type: Union[ObligationType, str],
+        obligation_type: ObligationType | str,
         target_name: str,
         proposed_name: str,
-        target_address: Optional[int] = None,
-        evidence: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        obligation_id: Optional[str] = None,
+        target_address: int | None = None,
+        evidence: Dict[str, Any] | None = None,
+        metadata: Dict[str, Any] | None = None,
+        obligation_id: str | None = None,
     ) -> ProofObligation:
         """Proposes a new reconstruction obligation in PENDING state."""
         if obligation_id is None:
@@ -798,7 +798,7 @@ class ReconstructionObligationLedger:
     def commit(
         self,
         obligation_id: str,
-        action_callback: Optional[Callable[[ProofObligation], Any]] = None,
+        action_callback: Callable[[ProofObligation], Any] | None = None,
     ) -> Any:
         """
         Commits a verified obligation to the project.
@@ -843,12 +843,12 @@ class ReconstructionObligationLedger:
         })
         self.save()
 
-    def get(self, obligation_id: str) -> Optional[ProofObligation]:
+    def get(self, obligation_id: str) -> ProofObligation | None:
         return self.obligations.get(obligation_id)
 
     def list_obligations(
         self,
-        status: Optional[Union[ObligationStatus, str]] = None,
+        status: ObligationStatus | str | None = None,
     ) -> List[ProofObligation]:
         if status is None:
             return list(self.obligations.values())
@@ -866,7 +866,7 @@ class ReconstructionObligationLedger:
             "ledger_path": self.ledger_file,
         }
 
-    def save(self, file_path: Optional[str] = None) -> None:
+    def save(self, file_path: str | None = None) -> None:
         target = file_path or self.ledger_file
         data = {
             "version": "1.0.0",
@@ -877,11 +877,11 @@ class ReconstructionObligationLedger:
         with open(target, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
-    def load(self, file_path: Optional[str] = None) -> None:
+    def load(self, file_path: str | None = None) -> None:
         target = file_path or self.ledger_file
         if not os.path.exists(target):
             return
-        with open(target, "r", encoding="utf-8") as f:
+        with open(target, encoding="utf-8") as f:
             data = json.load(f)
         self.obligations = {}
         for item in data.get("obligations", []):

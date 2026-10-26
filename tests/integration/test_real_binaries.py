@@ -7,16 +7,14 @@ from __future__ import annotations
 
 import os
 import unittest
+from pathlib import Path
+
 import pytest
 
-from superghidra.formats.binary_loader import load_binary, BinaryImage
 from superghidra.acceleration.gpu_adrp_scanner import GPUAdrpScanner
-from superghidra.lifters.x86_decode import iter_decode, X86Insn
-from superghidra.storage.storage_compression_prototype import StorageCompressionBenchmark
 from superghidra.core.compilable_filter import CompilableDecompilerFilter
-
-
-from pathlib import Path
+from superghidra.formats.binary_loader import load_binary
+from superghidra.lifters.x86_decode import iter_decode
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "binaries"
 SAMPLE_ARM64 = str(FIXTURES_DIR / "sample_arm64.so")

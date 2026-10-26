@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+
 from superghidra.schemas import (
     SCHEMA_FILES,
     load_schema,

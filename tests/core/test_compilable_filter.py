@@ -3,6 +3,7 @@ Unit tests for CompilableDecompilerFilter (U1, U2, U3).
 """
 
 import unittest
+
 from superghidra.core.compilable_filter import CompilableDecompilerFilter
 
 

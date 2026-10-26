@@ -18,10 +18,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 class AnalyzerProfileName(str, Enum):
@@ -378,7 +377,7 @@ class HeadlessCommandBuilder:
         script_dir: str = "",
         timeout_seconds: int = 600,
         max_cpu: int = 4,
-        read_only: Optional[bool] = None,
+        read_only: bool | None = None,
         delete_project: bool = False,
         jvm_max_mem: str = "8G",
     ):

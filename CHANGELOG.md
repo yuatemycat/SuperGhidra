@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0-dev] - Unreleased
+
+### Added
+- **Deprecation Policy**: Authored `DEPRECATION.md` codifying the SemVer stability contract, 3-tier API classification (Tier 1 Frozen Core, Tier 2 Experimental, Tier 3 Legacy Compatibility), deprecation notice timelines (`DeprecationWarning`), and versioned JSON schema evolution rules.
+- **CI Quality Gates (Ruff & Mypy)**: Added dedicated `lint-and-typecheck` job to GitHub Actions running `ruff check src tests` and `mypy` against the public core API surface.
+- **Push-Level DCO Verification**: Extended DCO sign-off validation in CI to verify commits on push as well as pull requests.
+- **SHA-256 Binary Hash Validation**: Extended daemon server binary mismatch protection to compare file SHA-256 hashes against Ghidra project metadata.
+
+### Fixed
+- **Undefined Name Elimination**: Resolved 5 `F821` runtime name errors across `compilable_filter.py`, `cross_platform_headless_harness.py`, `parity_engine.py`, `arm_thumb_decode.py`, and `egraph_mlir_pipeline.py`.
+- **Ruff Lint Modernization**: Cleared over 1,130 lint warnings and formatting issues across `src/` and `tests/`, enforcing automated `ruff` and `isort` rules.
+- **Core Public Type Safety**: Brought all public core modules (`__init__.py`, `__main__.py`, `binary_loader.py`, `msvc_class_recovery.py`, `synthetic_symbol_exporter.py`, `compilable_filter.py`, `validator.py`) to zero mypy errors.
+
 ## [0.4.0] - 2026-10-26
 
 ### Fixed

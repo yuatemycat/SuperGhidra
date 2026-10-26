@@ -15,11 +15,12 @@ from __future__ import annotations
 import os
 import struct
 import tempfile
-from typing import Dict, List
 
 import numpy as np
 import pytest
 
+import superghidra.core as core_pkg
+from superghidra.core import mitigation_roadmap_engine as root_shim
 from superghidra.core.mitigation_roadmap_engine import (
     ABIShimAndStructShiftAdapter,
     DWARFTypeDIE,
@@ -32,7 +33,6 @@ from superghidra.core.mitigation_roadmap_engine import (
     LiftedBasicBlock,
     MFCRuntimeClassRecord,
     MSVCAndMFCRecoveryEngine,
-    MSVCRecoveredClass,
     NeuralDecompilerSkinningPipeline,
     OffHeapDWARF5SQLiteIndexer,
     RelocationOrLeafXRef,
@@ -40,9 +40,6 @@ from superghidra.core.mitigation_roadmap_engine import (
     run_section5_mitigation_demonstration,
     run_section5_verification,
 )
-import superghidra.core as core_pkg
-from superghidra.core import mitigation_roadmap_engine as root_shim
-
 
 # =============================================================================
 # M1: ZERO-JVM P-CODE LIFTER + GNN ADJACENCY TENSOR ENCODER

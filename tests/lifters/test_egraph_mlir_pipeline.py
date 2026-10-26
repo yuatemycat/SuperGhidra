@@ -10,29 +10,22 @@ Unit and integration tests for Section 1 of SuperGhidra:
 """
 
 import unittest
-import pytest
 
 from superghidra.lifters.egraph_mlir_pipeline import (
+    HAS_Z3,
     AddressSpace,
-    BlockRegion,
-    EClassData,
     EGraph,
     EGraphMBADeobfuscatorPass,
     ENode,
     EquivalenceProver,
     ExprTree,
-    HAS_Z3,
-    IfElseRegion,
     MLIRGotoFreeRestructurer,
-    RellicGotoFreeRestructurer,
     PCodeBasicBlock,
     PCodeFunction,
     PCodeMaturityStage,
     PCodeOp,
     PCodeOpCode,
-    RegionNode,
-    SeqRegion,
-    ShmVarnodeRecord,
+    RellicGotoFreeRestructurer,
     StagedPCodePassManager,
     SymbolicCFFDeflattenerPass,
     Varnode,

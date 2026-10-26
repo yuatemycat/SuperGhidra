@@ -27,15 +27,13 @@ prototypes used to test Section 5 gap-mitigation ideas in isolation:
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass, field
 import enum
 import hashlib
 import json
-import os
 import sqlite3
 import struct
-import time
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -252,7 +250,7 @@ class IPCCommandEnvelope:
         return struct.pack("<4sIQI", self.magic, self.command_id, self.target_rva, len(self.payload)) + self.payload
 
     @classmethod
-    def unpack(cls, raw: bytes) -> "IPCCommandEnvelope":
+    def unpack(cls, raw: bytes) -> IPCCommandEnvelope:
         magic, cmd_id, rva, plen = struct.unpack_from("<4sIQI", raw, 0)
         if magic != b"SGIP":
             raise ValueError(f"Invalid IPC envelope magic: {magic!r}")
@@ -430,7 +428,7 @@ class MFCRuntimeClassRecord:
     object_byte_size: int
     schema_version: int
     create_object_fn_rva: int
-    base_class_name: Optional[str]
+    base_class_name: str | None
 
 
 class MSVCAndMFCRecoveryEngine:

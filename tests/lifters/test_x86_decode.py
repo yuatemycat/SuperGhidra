@@ -128,6 +128,7 @@ _DLLS = [p for p in (r"C:\Windows\System32\kernel32.dll", r"C:\Windows\SysWOW64\
 class TestAgainstCapstone(unittest.TestCase):
     def test_lengths_match_capstone_on_real_code(self):
         import capstone
+
         from superghidra.formats import binary_loader as B
 
         for path in _DLLS:

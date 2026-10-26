@@ -56,15 +56,11 @@ from superghidra.diff.benchmark_and_nextgen_engine import (
     DLiFTVerificationGate,
     EGraphMBASimplifier,
     ExprNode,
-    FieldTypeFact,
     GlobalTypeLatticeSolver,
     JNINativeMethodEntry,
     LatticeType,
-    MatrixCapabilityRow,
     Section4ComparisonMatrixHarness,
-    SessionForkState,
     TypeConfidenceTier,
-    TypeConstraint,
     compute_matrix_verdicts,
 )
 

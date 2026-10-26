@@ -11,18 +11,13 @@ Unit and integration tests for the 5-Stage P-Code Decompiler Pass Manager:
 """
 
 import unittest
+
+from superghidra.core.live_binary_tools import LiftError, staged_decompile_function
 from superghidra.lifters.egraph_mlir_pipeline import (
-    StagedPCodePassManager,
     StagedDecompileResult,
-    PCodeFunction,
-    PCodeBasicBlock,
-    PCodeOp,
-    PCodeOpCode,
-    Varnode,
-    AddressSpace,
+    StagedPCodePassManager,
     build_obfuscated_test_function,
 )
-from superghidra.core.live_binary_tools import LiftError, staged_decompile_function
 
 
 class TestStagedPCodePipeline(unittest.TestCase):

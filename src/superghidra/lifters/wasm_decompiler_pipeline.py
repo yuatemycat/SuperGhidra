@@ -15,12 +15,10 @@ import http.server
 import json
 import os
 import socketserver
-import struct
 import threading
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum
-from typing import Any, Dict, List, Optional, Tuple
-
+from typing import Any, Dict, List, Tuple
 
 # ==============================================================================
 # 1. WebAssembly Binary Format (Wasm 1.0 / MVP) Emitter & Validator
@@ -114,7 +112,7 @@ class WasmModuleBuilder:
         self.types: List[WasmFuncType] = []
         self.functions: List[WasmFunction] = []
         self.exports: List[Tuple[str, int, int]] = [] # (name, kind, index) kind 0=func
-        self.memories: List[Tuple[int, Optional[int]]] = [] # (min, max)
+        self.memories: List[Tuple[int, int | None]] = [] # (min, max)
         self.custom_sections: List[Tuple[str, bytes]] = []
 
     def add_type(self, params: List[int], results: List[int]) -> int:
@@ -126,8 +124,8 @@ class WasmModuleBuilder:
         self,
         type_index: int,
         code_bytes: bytes,
-        locals_spec: Optional[List[Tuple[int, int]]] = None,
-        export_name: Optional[str] = None,
+        locals_spec: List[Tuple[int, int]] | None = None,
+        export_name: str | None = None,
     ) -> int:
         idx = len(self.functions)
         self.functions.append(
@@ -141,7 +139,7 @@ class WasmModuleBuilder:
             self.exports.append((export_name, 0, idx))
         return idx
 
-    def add_memory(self, min_pages: int, max_pages: Optional[int] = None, export_name: Optional[str] = None) -> int:
+    def add_memory(self, min_pages: int, max_pages: int | None = None, export_name: str | None = None) -> int:
         idx = len(self.memories)
         self.memories.append((min_pages, max_pages))
         if export_name:
@@ -281,8 +279,8 @@ class CfgEdge:
 class DecompiledToken:
     text: str
     token_type: str # "keyword", "type", "ident", "literal", "operator", "comment"
-    rva: Optional[int] = None
-    xref_target: Optional[int] = None
+    rva: int | None = None
+    xref_target: int | None = None
 
 
 @dataclass
@@ -402,8 +400,8 @@ class WasmDecompilerAppGenerator:
         function_name: str,
         decompiled_c: str,
         rva: int,
-        cfg_nodes: Optional[List[Dict[str, Any]]] = None,
-        cfg_edges: Optional[List[Dict[str, Any]]] = None,
+        cfg_nodes: List[Dict[str, Any]] | None = None,
+        cfg_edges: List[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         """
         Creates the complete web application package:
@@ -659,8 +657,8 @@ def export_wasm_decompiler_package(
     decompiled_c: str,
     rva: int,
     output_dir: str,
-    cfg_nodes: Optional[List[Dict[str, Any]]] = None,
-    cfg_edges: Optional[List[Dict[str, Any]]] = None,
+    cfg_nodes: List[Dict[str, Any]] | None = None,
+    cfg_edges: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, str]:
     """
     Exports the complete WebAssembly decompiler application bundle to output_dir:
@@ -704,8 +702,8 @@ class WasmViewerServer:
     def __init__(self, directory: str, port: int = 8080) -> None:
         self.directory = directory
         self.port = port
-        self.httpd: Optional[socketserver.TCPServer] = None
-        self.thread: Optional[threading.Thread] = None
+        self.httpd: socketserver.TCPServer | None = None
+        self.thread: threading.Thread | None = None
 
     def start(self) -> str:
         handler = lambda *args, **kwargs: http.server.SimpleHTTPRequestHandler(

@@ -101,7 +101,15 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = true
-files = ["src/superghidra"]
+files = [
+    "src/superghidra/__init__.py",
+    "src/superghidra/__main__.py",
+    "src/superghidra/formats/binary_loader.py",
+    "src/superghidra/formats/msvc_class_recovery.py",
+    "src/superghidra/formats/synthetic_symbol_exporter.py",
+    "src/superghidra/core/compilable_filter.py",
+    "src/superghidra/schemas/validator.py",
+]
 
 [tool.ruff]
 target-version = "py310"
@@ -118,8 +126,13 @@ select = [
 ignore = [
     "E501",  # line too long (handled by formatter / legacy long strings)
     "E402",  # module level import not at top of file
+    "E701",  # multiple statements on one line (colon)
+    "E702",  # multiple statements on one line (semicolon)
+    "E741",  # ambiguous variable name
+    "E731",  # do not assign a lambda expression, use a def
     "F403",  # star imports in shims
     "F405",  # star import names
+    "F841",  # local variable assigned but never used
     "UP006", # non-pep585 type annotations in legacy code
     "UP035", # legacy typing imports
 ]

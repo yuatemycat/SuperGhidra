@@ -39,12 +39,11 @@ import io
 import json
 import logging
 import os
-from pathlib import Path
 import sqlite3
 import struct
-import sys
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 import zipfile
+from pathlib import Path
+from typing import Any, Dict, List, Sequence, Tuple
 
 logger = logging.getLogger("SuperGhidra.DatabaseMigrator")
 
@@ -188,7 +187,7 @@ class MigratedSegment:
     start_address: int
     end_address: int
     permissions: str = "r-x"
-    data: Optional[bytes] = None
+    data: bytes | None = None
     is_code: bool = False
     is_data: bool = False
     metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -217,11 +216,11 @@ class MigratedFunction:
     address: int
     name: str
     size: int = 0
-    prototype: Optional[str] = None
-    return_type: Optional[str] = None
+    prototype: str | None = None
+    return_type: str | None = None
     parameters: List[Tuple[str, str]] = dataclasses.field(default_factory=list)  # (type, name)
     local_variables: List[Tuple[str, str, int]] = dataclasses.field(default_factory=list)  # (type, name, offset)
-    calling_convention: Optional[str] = None
+    calling_convention: str | None = None
     tags: List[str] = dataclasses.field(default_factory=list)  # LLIL, MLIL, HLIL, auto, user
     is_entry: bool = False
     metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -249,7 +248,7 @@ class MigratedComment:
     address: int
     text: str
     comment_type: str = "user"  # "plate", "line", "user", "repeatable", "auto"
-    function_address: Optional[int] = None
+    function_address: int | None = None
     metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -286,7 +285,7 @@ class MigratedSymbol:
     address: int
     name: str
     symbol_type: str = "FUNC"  # "FUNC", "OBJECT", "LABEL", "EXPORT", "IMPORT"
-    namespace: Optional[str] = None
+    namespace: str | None = None
     metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -347,7 +346,7 @@ class MigratedProject:
     # --------------------------------------------------------------------------
     # SuperGhidra Subsystem Converter: WriteOverlay
     # --------------------------------------------------------------------------
-    def to_write_overlay(self, filepath: Optional[str] = None) -> Any:
+    def to_write_overlay(self, filepath: str | None = None) -> Any:
         """
         Converts functions, symbols, comments, and prototypes into a SuperGhidra WriteOverlay.
         """
@@ -376,14 +375,14 @@ class MigratedProject:
     # --------------------------------------------------------------------------
     # SuperGhidra Subsystem Converter: .ghidra-delta.jsonl Events
     # --------------------------------------------------------------------------
-    def to_ghidra_delta_jsonl(self, output_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    def to_ghidra_delta_jsonl(self, output_path: str | None = None) -> List[Dict[str, Any]]:
         """
         Emits deterministic JSON-Lines event records matching `SemanticDeltaLog`.
         """
         events: List[Dict[str, Any]] = []
         now_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-        def _calc_hash(evt_type: str, addr: Optional[int], sym: Optional[str], payload: Dict[str, Any]) -> str:
+        def _calc_hash(evt_type: str, addr: int | None, sym: str | None, payload: Dict[str, Any]) -> str:
             if compute_event_proof_hash is not None:
                 return compute_event_proof_hash(
                     event_type=evt_type,
@@ -503,7 +502,7 @@ class MigratedProject:
     # --------------------------------------------------------------------------
     # SuperGhidra Subsystem Converter: ReconstructionObligationLedger
     # --------------------------------------------------------------------------
-    def to_evidence_ledger(self, ledger_file: Optional[str] = None) -> Any:
+    def to_evidence_ledger(self, ledger_file: str | None = None) -> Any:
         """
         Bridges into SuperGhidra EvidenceLedger, proposing and verifying
         formal proof obligations for recovered structs, alignments, and sizes.
@@ -696,7 +695,7 @@ class IdaDatabaseMigrator:
     MAGIC_ZIP = b"PK\x03\x04"
 
     @classmethod
-    def can_handle(cls, data: bytes, filepath: Optional[str] = None) -> bool:
+    def can_handle(cls, data: bytes, filepath: str | None = None) -> bool:
         if len(data) >= 4:
             magic4 = data[:4]
             if magic4 in (cls.MAGIC_IDB32, cls.MAGIC_IDB64, cls.MAGIC_IDB2, cls.MAGIC_IDAS, b"IDB0", b"I640", b"IDB1", b"I641"):
@@ -1117,7 +1116,7 @@ class BinaryNinjaDatabaseMigrator:
     MAGIC_SQLITE = b"SQLite format 3\000"
 
     @classmethod
-    def can_handle(cls, data: bytes, filepath: Optional[str] = None) -> bool:
+    def can_handle(cls, data: bytes, filepath: str | None = None) -> bool:
         if len(data) >= 16 and data[:16] == cls.MAGIC_SQLITE:
             return True
         if filepath:
@@ -1125,7 +1124,7 @@ class BinaryNinjaDatabaseMigrator:
         return False
 
     @classmethod
-    def parse_file(cls, filepath: Union[str, Path]) -> MigratedProject:
+    def parse_file(cls, filepath: str | Path) -> MigratedProject:
         """Parses a Binary Ninja .bndb file on disk via sqlite3."""
         path = str(Path(filepath).resolve())
         conn = sqlite3.connect(path)
@@ -1536,7 +1535,7 @@ class BinaryNinjaDatabaseMigrator:
     @classmethod
     def _parse_snapshots(cls, cursor: sqlite3.Cursor, project: MigratedProject) -> None:
         cols = cls._get_columns(cursor, "snapshots")
-        cursor.execute(f"SELECT count(*) FROM snapshots;")
+        cursor.execute("SELECT count(*) FROM snapshots;")
         count = cursor.fetchone()[0]
         project.metadata["snapshot_count"] = count
 
@@ -1563,7 +1562,7 @@ class DatabaseMigrator:
     """
 
     @classmethod
-    def load(cls, filepath: Union[str, Path]) -> MigratedProject:
+    def load(cls, filepath: str | Path) -> MigratedProject:
         """
         Automatically detects file format and migrates either IDA Pro (.idb/.i64)
         or Binary Ninja (.bndb) databases into a unified `MigratedProject`.
@@ -1591,7 +1590,7 @@ class DatabaseMigrator:
         )
 
     @classmethod
-    def migrate_ida(cls, filepath: Union[str, Path]) -> MigratedProject:
+    def migrate_ida(cls, filepath: str | Path) -> MigratedProject:
         """Explicitly migrates an IDA Pro .idb or .i64 database."""
         path = Path(filepath).resolve()
         with open(path, "rb") as f:
@@ -1599,12 +1598,12 @@ class DatabaseMigrator:
         return IdaDatabaseMigrator.parse_bytes(data, filename=path.name)
 
     @classmethod
-    def migrate_binary_ninja(cls, filepath: Union[str, Path]) -> MigratedProject:
+    def migrate_binary_ninja(cls, filepath: str | Path) -> MigratedProject:
         """Explicitly migrates a Binary Ninja .bndb database."""
         return BinaryNinjaDatabaseMigrator.parse_file(filepath)
 
     @classmethod
-    def migrate_bndb(cls, filepath: Union[str, Path]) -> MigratedProject:
+    def migrate_bndb(cls, filepath: str | Path) -> MigratedProject:
         """Alias for migrate_binary_ninja."""
         return cls.migrate_binary_ninja(filepath)
 
@@ -1612,7 +1611,7 @@ class DatabaseMigrator:
     def export_to_all(
         cls,
         project: MigratedProject,
-        output_dir: Union[str, Path],
+        output_dir: str | Path,
         base_name: str,
     ) -> Dict[str, Any]:
         """
@@ -1677,15 +1676,15 @@ class DatabaseMigrator:
 # ==============================================================================
 
 def create_synthetic_ida_database(
-    filepath: Union[str, Path],
+    filepath: str | Path,
     bitness: int = 64,
     architecture: str = "x86_64",
-    segments: Optional[List[Dict[str, Any]]] = None,
-    functions: Optional[List[Dict[str, Any]]] = None,
-    symbols: Optional[List[Dict[str, Any]]] = None,
-    comments: Optional[List[Dict[str, Any]]] = None,
-    structs: Optional[List[Dict[str, Any]]] = None,
-    xrefs: Optional[List[Dict[str, Any]]] = None,
+    segments: List[Dict[str, Any]] | None = None,
+    functions: List[Dict[str, Any]] | None = None,
+    symbols: List[Dict[str, Any]] | None = None,
+    comments: List[Dict[str, Any]] | None = None,
+    structs: List[Dict[str, Any]] | None = None,
+    xrefs: List[Dict[str, Any]] | None = None,
 ) -> Path:
     """
     Constructs a byte-valid IDA Pro database (.idb for 32-bit, .i64 for 64-bit)
@@ -1890,15 +1889,15 @@ def create_synthetic_ida_database(
 
 
 def create_synthetic_bndb_database(
-    filepath: Union[str, Path],
+    filepath: str | Path,
     bitness: int = 64,
     architecture: str = "x86_64",
-    segments: Optional[List[Dict[str, Any]]] = None,
-    functions: Optional[List[Dict[str, Any]]] = None,
-    symbols: Optional[List[Dict[str, Any]]] = None,
-    comments: Optional[List[Dict[str, Any]]] = None,
-    types: Optional[List[Dict[str, Any]]] = None,
-    xrefs: Optional[List[Dict[str, Any]]] = None,
+    segments: List[Dict[str, Any]] | None = None,
+    functions: List[Dict[str, Any]] | None = None,
+    symbols: List[Dict[str, Any]] | None = None,
+    comments: List[Dict[str, Any]] | None = None,
+    types: List[Dict[str, Any]] | None = None,
+    xrefs: List[Dict[str, Any]] | None = None,
 ) -> Path:
     """
     Constructs a byte-valid Binary Ninja project database (.bndb) using genuine SQLite 3

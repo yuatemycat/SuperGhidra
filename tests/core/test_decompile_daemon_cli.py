@@ -5,9 +5,7 @@ Unit and integration tests for 'superghidra decompile' daemon routing (Issue #25
 from __future__ import annotations
 
 import io
-import os
 import socket
-import sys
 import tempfile
 import threading
 import time
@@ -147,6 +145,31 @@ class TestDecompileDaemonRouting(unittest.TestCase):
             self.assertIn("different_app.dll", err)
         finally:
             self.mock_session.program_name = orig_name
+
+    def test_decompile_binary_hash_mismatch_refused_by_daemon(self):
+        """Verifies daemon refuses decompile when binary SHA-256 mismatches loaded program hash."""
+        stderr_buf = io.StringIO()
+        try:
+            self.mock_session.program_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+            args = [
+                "decompile",
+                str(SAMPLE_X64),
+                "--rva",
+                "0x1000",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self.port),
+                "--daemon",
+            ]
+            with patch("sys.stderr", stderr_buf):
+                ret = main(args)
+
+            self.assertEqual(ret, 2)
+            err = stderr_buf.getvalue()
+            self.assertIn("Daemon binary mismatch", err)
+        finally:
+            self.mock_session.program_sha256 = None
 
     def test_decompile_defaults_to_standalone_without_daemon_flag(self):
         """Verifies CLI runs standalone lifter by default when --daemon is omitted."""

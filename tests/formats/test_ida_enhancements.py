@@ -9,38 +9,26 @@ Unit and integration tests for:
 """
 
 import os
-from pathlib import Path
 import struct
 import tempfile
 import unittest
+from pathlib import Path
 
-from superghidra.formats.msvc_class_recovery import (
-    RttiClass,
-    VTable,
-    _View,
-    _scan_rtti,
-    demangle_rtti_name,
-    recover_classes,
+from superghidra.formats.ida_flirt_bridge import (
+    FlirtPattern,
+    FlirtSignatureIndex,
+    parse_flirt_pattern_string,
 )
 from superghidra.formats.ida_til_importer import (
     find_ida_install,
-    find_tilib,
-    list_available_tils,
-    sanitize_ida_c_declarations,
-    parse_til_declarations,
-    TilReport,
     import_til,
-    export_clean_header,
+    parse_til_declarations,
+    sanitize_ida_c_declarations,
 )
-from superghidra.formats.ida_flirt_bridge import (
-    find_dumpsig,
-    list_available_sigs,
-    parse_flirt_pattern_string,
-    parse_flirt_dump,
-    FlirtPattern,
-    FlirtSignatureIndex,
+from superghidra.formats.msvc_class_recovery import (
+    recover_classes,
 )
-from tests.formats.test_msvc_class_recovery import build_pe_sections, BASE
+from tests.formats.test_msvc_class_recovery import BASE, build_pe_sections
 
 _IDA_DIR = os.environ.get("IDA_DIR") or os.environ.get("IDADIR")
 _IDA_ROOT = Path(_IDA_DIR) if _IDA_DIR else find_ida_install()

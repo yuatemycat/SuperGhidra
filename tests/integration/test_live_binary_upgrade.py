@@ -6,7 +6,6 @@ These tests do not build edge lists, constraint lists, or block JSON.
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -20,8 +19,6 @@ from superghidra.core.live_binary_tools import (
     solve_global_type_lattice,
 )
 from superghidra.formats.binary_loader import BinaryImage, load_binary
-
-from pathlib import Path
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "binaries"
 SAMPLE_ARM64 = str(FIXTURES_DIR / "sample_arm64.so")

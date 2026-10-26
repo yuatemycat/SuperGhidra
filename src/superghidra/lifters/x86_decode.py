@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Iterator
 
 __all__ = ["MemOperand", "X86Insn", "decode", "iter_decode", "REG64", "REG32", "REG16", "REG8"]
 
@@ -39,15 +39,15 @@ _PREFIXES = {0xF0, 0xF2, 0xF3, 0x2E, 0x36, 0x3E, 0x26, 0x64, 0x65, 0x66, 0x67}
 
 @dataclass
 class MemOperand:
-    base: Optional[str]
-    index: Optional[str]
+    base: str | None
+    index: str | None
     scale: int
     disp: int
     rip_relative: bool = False
-    segment: Optional[str] = None
+    segment: str | None = None
     addr_bits: int = 64
 
-    def effective_address(self, next_ip: int) -> Optional[int]:
+    def effective_address(self, next_ip: int) -> int | None:
         """Absolute address for RIP-relative or base-less operands, else None."""
         if self.rip_relative:
             return (next_ip + self.disp) & ((1 << self.addr_bits) - 1)
@@ -65,21 +65,21 @@ class X86Insn:
     opcode: int
     prefix66: bool = False
     prefix67: bool = False
-    rep: Optional[int] = None  # 0xF2 / 0xF3 (also SSE mandatory prefixes)
+    rep: int | None = None  # 0xF2 / 0xF3 (also SSE mandatory prefixes)
     lock: bool = False
     rex: int = 0
-    vex: Optional[str] = None  # "vex" | "evex" | "xop"
+    vex: str | None = None  # "vex" | "evex" | "xop"
     vex_l: int = 0
     vex_w: bool = False
     vex_pp: int = 0
-    modrm: Optional[int] = None
+    modrm: int | None = None
     reg: int = 0  # ModRM.reg with REX.R/VEX.R extension
     rm: int = 0  # ModRM.rm with REX.B extension (register form)
-    mem: Optional[MemOperand] = None
-    imm: Optional[int] = None
+    mem: MemOperand | None = None
+    imm: int | None = None
     imm_size: int = 0
-    flow: Optional[str] = None  # ret | jmp | jcc | call | jmp_ind | call_ind | int | loop | halt
-    target: Optional[int] = None
+    flow: str | None = None  # ret | jmp | jcc | call | jmp_ind | call_ind | int | loop | halt
+    target: int | None = None
     invalid: bool = False
 
     # ---- derived helpers ----
@@ -93,7 +93,7 @@ class X86Insn:
         return bool(self.rex & 8) or (self.vex is not None and self.vex_w)
 
     @property
-    def mandatory_prefix(self) -> Optional[int]:
+    def mandatory_prefix(self) -> int | None:
         """SSE mandatory prefix: 0x66, 0xF3, 0xF2 (VEX pp encodes the same)."""
         if self.vex:
             return {0: None, 1: 0x66, 2: 0xF3, 3: 0xF2}[self.vex_pp]
@@ -128,7 +128,7 @@ class X86Insn:
         return op in (0x80, 0x82, 0x84, 0x86, 0x88, 0x8A, 0xA0, 0xA2, 0xA4, 0xA6, 0xA8, 0xAA, 0xAC, 0xAE,
                       0xC0, 0xC6, 0xD0, 0xD2, 0xF6, 0xFE) or 0xB0 <= op <= 0xB7
 
-    def memory_access_size(self) -> Optional[int]:
+    def memory_access_size(self) -> int | None:
         """Bytes read/written through `mem`, or None when not a data access / unknown."""
         if self.mem is None:
             return None
@@ -455,8 +455,8 @@ def decode(code: bytes, offset: int = 0, address: int = 0, mode: int = 64) -> X8
                 insn.mem = MemOperand(base, index, 1, disp, False, segment, 16)
             else:
                 regs = REG64 if addr_bits == 64 else REG32
-                base_i: Optional[int] = rm | (b_ext << 3)
-                index_i: Optional[int] = None
+                base_i: int | None = rm | (b_ext << 3)
+                index_i: int | None = None
                 scale = 1
                 rip = False
                 disp_size = 1 if mod == 1 else (4 if mod == 2 else 0)
@@ -520,7 +520,7 @@ def decode(code: bytes, offset: int = 0, address: int = 0, mode: int = 64) -> X8
 
 
 def iter_decode(code: bytes, address: int = 0, mode: int = 64, start: int = 0,
-                end: Optional[int] = None) -> Iterator[X86Insn]:
+                end: int | None = None) -> Iterator[X86Insn]:
     """Linear sweep over code[start:end]. `address` is the VA of code[0].
 
     Invalid bytes are emitted as 1-byte invalid instructions so the sweep always advances.

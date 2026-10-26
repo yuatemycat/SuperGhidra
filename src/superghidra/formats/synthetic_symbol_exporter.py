@@ -20,21 +20,18 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
-import enum
-import io
 import json
 import os
 import struct
 import sys
 import uuid
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Sequence, Set, Tuple
 
 # Attempt to import from local workspace
 try:
     from superghidra.diff.evidence_ledger import (
         ObligationStatus,
         ObligationType,
-        ProofObligation,
         ReconstructionObligationLedger,
     )
 except ImportError:
@@ -43,7 +40,6 @@ except ImportError:
     from superghidra.diff.evidence_ledger import (  # type: ignore
         ObligationStatus,
         ObligationType,
-        ProofObligation,
         ReconstructionObligationLedger,
     )
 
@@ -60,9 +56,9 @@ class ExportSymbol:
     size: int = 0
     section: str = ".text"
     symbol_type: str = "FUNC"  # "FUNC", "OBJECT", "LABEL"
-    demangled_name: Optional[str] = None
-    source_file: Optional[str] = "reconstructed.cpp"
-    source_line: Optional[int] = 1
+    demangled_name: str | None = None
+    source_file: str | None = "reconstructed.cpp"
+    source_line: int | None = 1
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -198,7 +194,7 @@ class DWARF5Exporter:
         self.base_address = base_address
         self.architecture = (architecture or "arm64").lower()
 
-    def build_elf(self, architecture: Optional[str] = None) -> bytes:
+    def build_elf(self, architecture: str | None = None) -> bytes:
         """Constructs and returns the full binary ELF64 container with DWARF 5 sections."""
         arch = (architecture or self.architecture or "arm64").lower()
         # 1. Build .debug_str (string pool)
@@ -680,8 +676,8 @@ class PDBExporter:
         symbols: List[ExportSymbol],
         structs: List[ExportStruct],
         base_address: int = 0x140000000,
-        type_records: Optional[List[bytes]] = None,
-        function_prototypes: Optional[List[Dict[str, Any]]] = None,
+        type_records: List[bytes] | None = None,
+        function_prototypes: List[Dict[str, Any]] | None = None,
     ):
         self.symbols = sorted(symbols, key=lambda s: s.address)
         self.structs = structs
@@ -690,7 +686,7 @@ class PDBExporter:
         self.function_prototypes = list(function_prototypes or [])
         self.function_type_map: Dict[str, int] = {}
 
-    def export_pdb(self, output_path: Optional[str] = None) -> bytes:
+    def export_pdb(self, output_path: str | None = None) -> bytes:
         """
         Constructs an MSF 7.0 container with TPI type records, DBI stream, and Public symbols,
         optionally writing the resulting bytes to disk at output_path.
@@ -940,7 +936,7 @@ class PDBExporter:
     @classmethod
     def serialize_lf_fieldlist(
         cls,
-        members: List[Union[ExportField, bytes, Tuple[str, int, int]]],
+        members: Sequence[ExportField | bytes | Tuple[str, int, int]],
         include_length: bool = True,
     ) -> bytes:
         """
@@ -1305,11 +1301,11 @@ class PDBExporter:
         # Write Directory into blocks
         dir_block_nums: List[int] = []
         for off in range(0, len(dir_bytes), bs):
-            chunk = dir_bytes[off:off + bs]
-            if len(chunk) < bs:
-                chunk += b"\x00" * (bs - len(chunk))
+            dir_chunk = bytes(dir_bytes[off:off + bs])
+            if len(dir_chunk) < bs:
+                dir_chunk += b"\x00" * (bs - len(dir_chunk))
             dir_block_nums.append(len(blocks))
-            blocks.append(chunk)
+            blocks.append(dir_chunk)
 
         # Write Block Map (holds the block numbers of the directory blocks)
         map_bytes = bytearray()
@@ -1353,7 +1349,7 @@ class MapFileExporter:
     def export(self) -> str:
         """Formats symbols and struct layouts into a standard MAP file text."""
         lines: List[str] = []
-        lines.append(f" SuperGhidra Reconstructed Map File")
+        lines.append(" SuperGhidra Reconstructed Map File")
         lines.append(f" Timestamp: {datetime.datetime.now(datetime.timezone.utc).isoformat()}")
         lines.append(f" Preferred load address is {self.base_address:016X}")
         lines.append("")
@@ -1447,7 +1443,7 @@ class SymbolLedgerIngestor:
     def from_ledger(
         cls,
         ledger: ReconstructionObligationLedger,
-        status_filter: Optional[Set[ObligationStatus]] = None,
+        status_filter: Set[ObligationStatus] | None = None,
     ) -> Tuple[List[ExportSymbol], List[ExportStruct]]:
         """Extracts verified symbols and structs from ReconstructionObligationLedger."""
         if status_filter is None:
@@ -1496,7 +1492,7 @@ class SymbolLedgerIngestor:
     @classmethod
     def from_dict(
         cls,
-        raw_symbols: Union[Dict[str, Any], List[Dict[str, Any]]],
+        raw_symbols: Dict[str, Any] | List[Dict[str, Any]],
     ) -> List[ExportSymbol]:
         """Parses symbols from flexible dictionary formats (e.g. _ghidra_names.json)."""
         symbols: List[ExportSymbol] = []
@@ -1536,11 +1532,11 @@ class SymbolLedgerIngestor:
 # ==============================================================================
 
 def export_from_ledger(
-    ledger_source: Union[str, ReconstructionObligationLedger],
+    ledger_source: str | ReconstructionObligationLedger,
     output_base: str,
-    formats: Optional[List[str]] = None,
-    additional_symbols: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
-    additional_structs: Optional[List[Dict[str, Any]]] = None,
+    formats: List[str] | None = None,
+    additional_symbols: Dict[str, Any] | List[Dict[str, Any]] | None = None,
+    additional_structs: List[Dict[str, Any]] | None = None,
     base_address: int = 0x100400000,
 ) -> Dict[str, str]:
     """
@@ -1624,8 +1620,8 @@ def export_from_ledger(
         map_path = f"{output_base}.map"
         map_gen = MapFileExporter(symbols=symbols, structs=structs, base_address=base_address)
         map_text = map_gen.export()
-        with open(map_path, "w", encoding="utf-8") as f:
-            f.write(map_text)
+        with open(map_path, "w", encoding="utf-8") as f_map:
+            f_map.write(map_text)
         exported_files["map"] = os.path.abspath(map_path)
 
     # Format 4: Breakpad / x64dbg / Cheat Engine .sym File (.sym)
@@ -1633,8 +1629,8 @@ def export_from_ledger(
         sym_path = f"{output_base}.sym"
         sym_gen = SymFileExporter(symbols=symbols, module_name=os.path.basename(output_base) + ".exe")
         sym_text = sym_gen.export()
-        with open(sym_path, "w", encoding="utf-8") as f:
-            f.write(sym_text)
+        with open(sym_path, "w", encoding="utf-8") as f_sym:
+            f_sym.write(sym_text)
         exported_files["sym"] = os.path.abspath(sym_path)
 
     return exported_files
@@ -1664,7 +1660,7 @@ def main() -> None:
 
     extra_symbols = None
     if args.names_json and os.path.exists(args.names_json):
-        with open(args.names_json, "r", encoding="utf-8") as f:
+        with open(args.names_json, encoding="utf-8") as f:
             extra_symbols = json.load(f)
 
     print(f"Exporting symbols from '{args.ledger}' -> '{args.output}.*' (formats: {args.formats})...")

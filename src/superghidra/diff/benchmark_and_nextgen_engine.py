@@ -27,14 +27,13 @@ and comparison scorecard harnesses in isolation:
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass, field
 import enum
 import hashlib
 import json
-import math
 import re
 import time
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -343,7 +342,7 @@ class CrossVersionDiffEngine:
             if len(acc1) != len(acc2) or not acc1:
                 continue
             field_migrations: List[Dict[str, Any]] = []
-            insertion_pivot: Optional[int] = None
+            insertion_pivot: int | None = None
             insertion_delta: int = 0
             for (d1, k1, sz1), (d2, k2, sz2) in zip(acc1, acc2):
                 if k1 == k2 and sz1 == sz2:
@@ -405,10 +404,10 @@ class LatticeType(enum.IntEnum):
 class TypeConstraint:
     """Inter-procedural constraint extracted from P-Code operations and call edges."""
     lhs_var: str
-    rhs_var: Optional[str] = None
-    inferred_base: Optional[LatticeType] = None
-    field_offset: Optional[int] = None
-    field_type: Optional[LatticeType] = None
+    rhs_var: str | None = None
+    inferred_base: LatticeType | None = None
+    field_offset: int | None = None
+    field_type: LatticeType | None = None
 
 
 class GlobalTypeLatticeSolver:
@@ -605,7 +604,7 @@ AndroidJNIFusionEngine = AndroidJNIFusionGraph
 class ExprNode:
     """Immutable expression node for Mixed Boolean-Arithmetic (MBA) rewrite rules."""
     op: str                                    # 'var', 'const', '+', '-', '*', '&', '|', '^', '~'
-    args: Tuple[Union[str, int, "ExprNode"], ...]
+    args: Tuple[str | int | ExprNode, ...]
 
     def render(self) -> str:
         if self.op == "var":
@@ -782,8 +781,8 @@ class DLiFTVerificationGate:
     ) -> Dict[str, Any]:
         from superghidra.integrations.d_lift_verifier import (
             ClangSyntaxGate,
-            SemanticEquivalenceGate,
             ReadabilityGate,
+            SemanticEquivalenceGate,
         )
 
         syn_gate = ClangSyntaxGate()
@@ -794,7 +793,7 @@ class DLiFTVerificationGate:
             syn_issues.append(f"ClangSyntaxGate errors: {syn_res.error_count}")
 
         # Gate 2: Differential execution over test vectors
-        def _diff_oracle(orig: str, cand: str) -> Tuple[bool, float, Optional[str]]:
+        def _diff_oracle(orig: str, cand: str) -> Tuple[bool, float, str | None]:
             is_equiv = cls._prove_2arg_equivalence(reference_fn, candidate_fn)
             ratio = 1.0 if is_equiv else 0.0
             cex = None if is_equiv else "Differential execution output divergence detected"
@@ -936,10 +935,12 @@ class Section4ComparisonMatrixHarness:
     @classmethod
     def run_full_matrix_benchmark(cls) -> Dict[str, Any]:
         import struct
+
         import numpy as np
+
         from superghidra.core.parity_engine import (
-            ARM64ADRPScanner,
             AppcallMarshaller,
+            ARM64ADRPScanner,
             BasicBlock,
             CFGSignatureIndex,
             PCodeCFG,

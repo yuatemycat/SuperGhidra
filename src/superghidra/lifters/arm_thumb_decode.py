@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import enum
 import struct
-from dataclasses import dataclass, field
-from typing import Iterator, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Iterator, List
 
 __all__ = [
     "InsnCategory",
@@ -68,13 +68,13 @@ class ArmMemOperand:
     """Represents a decoded memory address operand [base, #displacement]."""
     base: str
     disp: int
-    index: Optional[str] = None
+    index: str | None = None
     scale: int = 1
     wback: bool = False
     is_post_index: bool = False
     is_literal: bool = False
 
-    def effective_address(self, pc: int) -> Optional[int]:
+    def effective_address(self, pc: int) -> int | None:
         if self.base == "pc" or self.is_literal:
             return (pc + self.disp) & 0xFFFFFFFF
         return None
@@ -89,16 +89,16 @@ class ArmInsn:
     mnemonic: str
     op_str: str = ""
     category: InsnCategory = InsnCategory.OTHER
-    mem: Optional[ArmMemOperand] = None
-    target_reg: Optional[str] = None
-    imm: Optional[int] = None
-    flow: Optional[str] = None  # "call" | "ret" | "jmp" | "jcc" | "call_ind" | "jmp_ind" | None
-    target: Optional[int] = None
+    mem: ArmMemOperand | None = None
+    target_reg: str | None = None
+    imm: int | None = None
+    flow: str | None = None  # "call" | "ret" | "jmp" | "jcc" | "call_ind" | "jmp_ind" | None
+    target: int | None = None
     is_cond: bool = False
-    cond: Optional[str] = None
+    cond: str | None = None
     is_prologue: bool = False
     is_epilogue: bool = False
-    access_size: Optional[int] = None
+    access_size: int | None = None
     is_write: bool = False
     raw_bytes: bytes = b""
     invalid: bool = False
@@ -110,7 +110,7 @@ class ArmInsn:
     def is_memory_write(self) -> bool:
         return self.is_write
 
-    def memory_access_size(self) -> Optional[int]:
+    def memory_access_size(self) -> int | None:
         return self.access_size
 
 
@@ -552,7 +552,7 @@ def _decode_thumb16(hw: int, raw: bytes, address: int) -> ArmInsn:
             length=2,
             thumb=True,
             mnemonic="push",
-            op_str=f"{{r0-r7, lr}}" if has_lr else "{r0-r7}",
+            op_str="{r0-r7, lr}" if has_lr else "{r0-r7}",
             category=InsnCategory.MEMORY_STORE,
             is_prologue=has_lr,
             raw_bytes=raw,
@@ -565,7 +565,7 @@ def _decode_thumb16(hw: int, raw: bytes, address: int) -> ArmInsn:
             length=2,
             thumb=True,
             mnemonic="pop",
-            op_str=f"{{r0-r7, pc}}" if has_pc else "{r0-r7}",
+            op_str="{r0-r7, pc}" if has_pc else "{r0-r7}",
             category=InsnCategory.RETURN if has_pc else InsnCategory.MEMORY_LOAD,
             flow="ret" if has_pc else None,
             is_epilogue=has_pc,
@@ -1132,7 +1132,7 @@ def iter_decode(
     address: int = 0,
     thumb: bool = False,
     start: int = 0,
-    end: Optional[int] = None,
+    end: int | None = None,
 ) -> Iterator[ArmInsn]:
     """
     Linear sweep over code[start:end].

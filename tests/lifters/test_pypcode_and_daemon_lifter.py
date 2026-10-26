@@ -18,29 +18,24 @@ import struct
 import threading
 import types
 import unittest
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from unittest import mock
 
 import superghidra.lifters.pcode_lifter_bridge as pcode_bridge
 from superghidra.lifters.pcode_lifter_bridge import (
-    ARM64PcodeLifter,
-    AddrSpace,
-    AddressSpace,
     CANONICAL_REG_OFFSETS,
+    AddressSpace,
+    AddrSpace,
     DaemonPcodeBackend,
-    PcodeOp,
     PcodeOpcode,
     PypcodeSleighBackend,
     UnifiedPcodeLifter,
-    Varnode,
     X86_64PcodeLifter,
 )
 from superghidra.lifters.smt_pcode_verifier import (
     EquivalenceResult,
     SMTPcodeVerifier,
-    VerificationResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Stub pypcode classes for deterministic testing without C++ wheel dependency
@@ -52,7 +47,7 @@ class _StubSpace:
 
 
 class _StubVarnode:
-    def __init__(self, space_name: str, offset: int, size: int, reg_name: Optional[str] = None):
+    def __init__(self, space_name: str, offset: int, size: int, reg_name: str | None = None):
         self.space = _StubSpace(space_name)
         self.offset = offset
         self.size = size
@@ -78,7 +73,7 @@ class _StubPcodeOp:
         self,
         opcode_name: str,
         inputs: List[_StubVarnode],
-        output: Optional[_StubVarnode] = None,
+        output: _StubVarnode | None = None,
         pc: int = 0x1000,
     ):
         self.opcode = _StubOpCode(opcode_name)
@@ -243,7 +238,7 @@ class TestPypcodeAndDaemonLifter(unittest.TestCase):
             while not stop_event.is_set():
                 try:
                     conn, _ = server_sock.accept()
-                except socket.timeout:
+                except TimeoutError:
                     continue
                 except OSError:
                     break

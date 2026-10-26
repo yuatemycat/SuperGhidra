@@ -10,7 +10,6 @@ Provides resilient gRPC-based worker distribution cluster for SuperGhidra daemon
 
 from __future__ import annotations
 
-import collections
 import concurrent.futures
 import dataclasses
 import enum
@@ -21,7 +20,7 @@ import socket
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 logger = logging.getLogger("superghidra.core.cluster_daemon")
 
@@ -70,12 +69,12 @@ class TaskEnvelope:
     task_type: ClusterTaskType
     payload: Dict[str, Any] = dataclasses.field(default_factory=dict)
     state: TaskState = TaskState.PENDING
-    assigned_worker_id: Optional[str] = None
+    assigned_worker_id: str | None = None
     created_at: float = dataclasses.field(default_factory=time.time)
-    dispatched_at: Optional[float] = None
-    completed_at: Optional[float] = None
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    dispatched_at: float | None = None
+    completed_at: float | None = None
+    result: Dict[str, Any] | None = None
+    error: str | None = None
     retry_count: int = 0
     max_retries: int = 3
     priority: int = 0
@@ -266,10 +265,10 @@ class ClusterCoordinator:
         self._round_robin_idx = 0
 
         self._dispatcher = RPCDispatcher(self)
-        self._grpc_server: Optional[Any] = None
-        self._grpc_port: Optional[int] = None
+        self._grpc_server: Any | None = None
+        self._grpc_port: int | None = None
         self._stop_event = threading.Event()
-        self._reaper_thread: Optional[threading.Thread] = None
+        self._reaper_thread: threading.Thread | None = None
 
     def start_grpc_server(self, host: str = "127.0.0.1", port: int = 0) -> int:
         """Starts real gRPC server with generic binary RPC handler."""
@@ -377,7 +376,7 @@ class ClusterCoordinator:
         with self._lock:
             return list(self._workers.values())
 
-    def get_worker(self, worker_id: str) -> Optional[WorkerDescriptor]:
+    def get_worker(self, worker_id: str) -> WorkerDescriptor | None:
         with self._lock:
             return self._workers.get(worker_id)
 
@@ -386,8 +385,8 @@ class ClusterCoordinator:
     def submit_task(
         self,
         task_type: ClusterTaskType,
-        payload: Optional[Dict[str, Any]] = None,
-        task_id: Optional[str] = None,
+        payload: Dict[str, Any] | None = None,
+        task_id: str | None = None,
         priority: int = 0,
         max_retries: int = 3,
     ) -> TaskEnvelope:
@@ -407,11 +406,11 @@ class ClusterCoordinator:
             self._schedule_pending_tasks()
             return envelope
 
-    def get_task(self, task_id: str) -> Optional[TaskEnvelope]:
+    def get_task(self, task_id: str) -> TaskEnvelope | None:
         with self._lock:
             return self._tasks.get(task_id)
 
-    def _select_worker_for_task(self, task: TaskEnvelope) -> Optional[str]:
+    def _select_worker_for_task(self, task: TaskEnvelope) -> str | None:
         """Selects suitable worker using round-robin or load-aware scheduling."""
         eligible: List[WorkerDescriptor] = []
         for w in self._workers.values():
@@ -447,7 +446,7 @@ class ClusterCoordinator:
                 remaining_tasks.append(task)
         self._pending_tasks = remaining_tasks
 
-    def poll_task_for_worker(self, worker_id: str, timeout: float = 0.05) -> Optional[TaskEnvelope]:
+    def poll_task_for_worker(self, worker_id: str, timeout: float = 0.05) -> TaskEnvelope | None:
         """Called by a worker node to poll for an assigned task."""
         wqueue = None
         with self._lock:
@@ -467,8 +466,8 @@ class ClusterCoordinator:
         self,
         worker_id: str,
         task_id: str,
-        result: Optional[Dict[str, Any]] = None,
-        error: Optional[str] = None,
+        result: Dict[str, Any] | None = None,
+        error: str | None = None,
     ) -> bool:
         """Called when a worker completes task execution."""
         with self._lock:
@@ -540,11 +539,11 @@ class ClusterWorkerNode:
 
     def __init__(
         self,
-        worker_id: Optional[str] = None,
-        coordinator_endpoint: Optional[str] = None,
-        capabilities: Optional[List[ClusterTaskType]] = None,
+        worker_id: str | None = None,
+        coordinator_endpoint: str | None = None,
+        capabilities: List[ClusterTaskType] | None = None,
         max_concurrency: int = 4,
-        local_coordinator: Optional[ClusterCoordinator] = None,
+        local_coordinator: ClusterCoordinator | None = None,
     ) -> None:
         self.worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
         self.coordinator_endpoint = coordinator_endpoint
@@ -552,12 +551,12 @@ class ClusterWorkerNode:
         self.max_concurrency = max_concurrency
         self.local_coordinator = local_coordinator
 
-        self._grpc_channel: Optional[Any] = None
+        self._grpc_channel: Any | None = None
         self._running = False
         self._active_tasks = 0
         self._lock = threading.Lock()
-        self._poll_thread: Optional[threading.Thread] = None
-        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._poll_thread: threading.Thread | None = None
+        self._heartbeat_thread: threading.Thread | None = None
 
         self._handlers: Dict[ClusterTaskType, Callable[[Dict[str, Any]], Dict[str, Any]]] = {}
         self._setup_default_handlers()

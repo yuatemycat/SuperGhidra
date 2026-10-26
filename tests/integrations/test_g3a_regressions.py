@@ -31,12 +31,9 @@ import json
 import os
 import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
-from superghidra.integrations import colab_cloud_orchestrator
 from superghidra.integrations.colab_cloud_orchestrator import CloudConfig, ColabCloudOrchestrator
-from superghidra.integrations import emulator_memory_sidecar
 from superghidra.integrations.emulator_memory_sidecar import (
     EmulatorFleetGuard,
     FleetSafetyViolationError,
@@ -45,12 +42,10 @@ from superghidra.integrations.emulator_memory_sidecar import (
     Win32ProcessMemoryReader,
     extract_dynamic_encryption_keys,
 )
-from superghidra.integrations import neural_decompiler_pipeline
 from superghidra.integrations.neural_decompiler_pipeline import (
     DecompiledSkeleton,
     LLMDecompilerClient,
     NeuralDecompilerPipeline,
-    NeuralPrediction,
 )
 
 
@@ -282,7 +277,7 @@ class TestG3aColabCloudRegressions(unittest.TestCase):
             self.assertEqual(res["stages"]["evidence_ledger"], "not_implemented")
 
             # Check symbols file is empty dict, not canned GameWorld::tick
-            with open(res["symbols_path"], "r", encoding="utf-8") as f:
+            with open(res["symbols_path"], encoding="utf-8") as f:
                 symbols = json.load(f)
             self.assertEqual(symbols, {})
 

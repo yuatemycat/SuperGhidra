@@ -4,19 +4,17 @@ Unit test suite for WebAssembly Decompiler Pipeline & Browser UI Generator.
 
 import os
 import tempfile
-import pytest
 
+from superghidra.lifters import wasm_decompiler_pipeline as root_wasm
 from superghidra.lifters.wasm_decompiler_pipeline import (
-    WasmModuleBuilder,
-    WasmValType,
-    WasmSection,
-    create_token_accelerator_wasm,
     CSourceTokenizer,
     WasmDecompilerAppGenerator,
-    export_wasm_decompiler_package,
+    WasmModuleBuilder,
+    WasmValType,
     WasmViewerServer,
+    create_token_accelerator_wasm,
+    export_wasm_decompiler_package,
 )
-from superghidra.lifters import wasm_decompiler_pipeline as root_wasm
 
 
 def test_wasm_module_builder_valid_binary():

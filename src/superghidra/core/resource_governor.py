@@ -34,11 +34,10 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger("resource_governor")
 
@@ -275,7 +274,7 @@ class JVMResourceConfigurator:
     def generate_launch_properties(
         cls,
         policy: ModePolicy,
-        output_path: Optional[str] = None
+        output_path: str | None = None
     ) -> str:
         """Generates Ghidra support/launch.properties text."""
         vmargs_list = list(cls.generate_launch_vmargs(policy))
@@ -310,7 +309,7 @@ class DecompileProcessPoolReaper:
         self._instances: Dict[int, Dict[str, Any]] = {}
         self._counter = 0
 
-    def register_instance(self, pid: int, process_handle: Any = None, created_at: Optional[float] = None) -> int:
+    def register_instance(self, pid: int, process_handle: Any = None, created_at: float | None = None) -> int:
         """Registers a spawned decompile.exe subprocess."""
         self._counter += 1
         inst_id = self._counter
@@ -333,7 +332,7 @@ class DecompileProcessPoolReaper:
         if inst_id in self._instances:
             self._instances[inst_id]["is_busy"] = True
 
-    def scan_and_reap(self, now: Optional[float] = None) -> List[int]:
+    def scan_and_reap(self, now: float | None = None) -> List[int]:
         """
         Kills idle decompile subprocesses that have exceeded the idle timeout.
         Returns list of reaped instance IDs.
@@ -416,7 +415,7 @@ class PersistentDecompilerDBCache:
         self.hits = 0
         self.misses = 0
 
-    def put(self, func_addr: int, c_code: str, token_tree: Optional[Dict[str, Any]] = None) -> None:
+    def put(self, func_addr: int, c_code: str, token_tree: Dict[str, Any] | None = None) -> None:
         """Persists decompilation result to cache."""
         self._cache[func_addr] = {
             "address": func_addr,
@@ -425,7 +424,7 @@ class PersistentDecompilerDBCache:
             "timestamp": time.time(),
         }
 
-    def get(self, func_addr: int) -> Optional[Dict[str, Any]]:
+    def get(self, func_addr: int) -> Dict[str, Any] | None:
         """Retrieves decompiled result in < 1 ms without spawning decompile.exe."""
         if func_addr in self._cache:
             self.hits += 1

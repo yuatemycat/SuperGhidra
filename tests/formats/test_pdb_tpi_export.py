@@ -21,22 +21,21 @@ import tempfile
 import unittest
 from typing import List, Tuple
 
+from superghidra.formats.dwarf_pdb_preindexer import (
+    OffHeapTypeStore,
+    TypeDeduplicator,
+)
 from superghidra.formats.synthetic_symbol_exporter import (
-    ExportField,
-    ExportStruct,
-    ExportSymbol,
     LF_ARGLIST,
     LF_FIELDLIST,
     LF_MEMBER,
     LF_POINTER,
     LF_PROCEDURE,
     LF_STRUCTURE,
+    ExportField,
+    ExportStruct,
+    ExportSymbol,
     PDBExporter,
-)
-from superghidra.formats.dwarf_pdb_preindexer import (
-    OffHeapTypeStore,
-    TypeDeduplicator,
-    TypeKind,
 )
 
 

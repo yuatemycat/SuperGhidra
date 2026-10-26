@@ -16,16 +16,14 @@ from __future__ import annotations
 import collections
 import dataclasses
 import enum
-import json
+import logging
 import math
 import os
 import struct
 import time
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Set, Tuple
 
 import numpy as np
-
-import logging
 
 from superghidra.formats import binary_loader
 from superghidra.lifters import arm_thumb_decode, x86_decode
@@ -97,9 +95,9 @@ OPCODE_MAP = {
     "nop": InsnCategory.OTHER, "hint": InsnCategory.OTHER,
     "svc": InsnCategory.SYSTEM, "brk": InsnCategory.SYSTEM,
     "mrs": InsnCategory.SYSTEM, "msr": InsnCategory.SYSTEM,
-    
+
     # x86_64
-    "mov": InsnCategory.MEMORY_LOAD, "lea": InsnCategory.ARITHMETIC,
+    "lea": InsnCategory.ARITHMETIC,
     "push": InsnCategory.MEMORY_STORE, "pop": InsnCategory.MEMORY_LOAD,
     "jmp": InsnCategory.BRANCH_UNCOND, "je": InsnCategory.BRANCH_COND,
     "jne": InsnCategory.BRANCH_COND, "jz": InsnCategory.BRANCH_COND,
@@ -316,7 +314,7 @@ def decode_arm64_instruction(pc: int, insn: int) -> InstructionInfo:
     return InstructionInfo(address=pc, mnemonic="unknown", op_str="", category=InsnCategory.OTHER)
 
 
-def get_arm64_branch_info(pc: int, insn: int) -> Tuple[str, Optional[int], bool]:
+def get_arm64_branch_info(pc: int, insn: int) -> Tuple[str, int | None, bool]:
     """
     Returns (branch_type, target_address, is_conditional) for an ARM64 instruction.
     branch_type is one of: 'ret', 'b', 'b.cond', 'cbz', 'tbz', 'bl', 'blr', 'br', 'none'.
@@ -604,7 +602,7 @@ class BatchedBinaryMatcher:
     ) -> DiffResult:
         """
         Pairs functions between Binary A and Binary B.
-        
+
         Args:
             funcs_a: Functions in Binary A.
             funcs_b: Functions in Binary B.
@@ -898,7 +896,7 @@ _X86_GRP1 = {
 }
 
 
-def _classify_x86(insn: "x86_decode.X86Insn") -> Tuple[str, InsnCategory, Optional[int]]:
+def _classify_x86(insn: x86_decode.X86Insn) -> Tuple[str, InsnCategory, int | None]:
     """Coarse (mnemonic, category, immediate) for CFG feature vectors."""
     op, mp, imm = insn.opcode, insn.map, insn.imm
     mem = insn.mem is not None
@@ -998,7 +996,7 @@ def decode_x86_64_instruction(
     offset: int,
     base_vaddr: int = 0x401000,
     mode: int = 64,
-) -> Tuple[InstructionInfo, int, str, Optional[int], bool, Optional[int]]:
+) -> Tuple[InstructionInfo, int, str, int | None, bool, int | None]:
     """
     Decodes a single x86 instruction (mode 64, 32 or 16) at `offset` in `code_bytes`.
     Returns (insn_info, byte_length, branch_type, branch_target, is_cond, immediate_const).
@@ -1036,7 +1034,7 @@ def extract_cfgs_from_x86_64_bytes(
     code_bytes: bytes,
     base_vaddr: int = 0x401000,
     mode: int = 64,
-    function_starts: Optional[Iterable[int]] = None,
+    function_starts: Iterable[int] | None = None,
 ) -> List[FunctionCFG]:
     """
     Directly extracts FunctionCFGs from raw x86 machine bytes (mode 64 or 32).
@@ -1051,7 +1049,7 @@ def extract_cfgs_from_x86_64_bytes(
         return []
 
     # 1. Decode linear instruction stream
-    decoded_stream: List[Tuple[int, int, InstructionInfo, str, Optional[int], bool, Optional[int]]] = []
+    decoded_stream: List[Tuple[int, int, InstructionInfo, str, int | None, bool, int | None]] = []
     valid_addrs: Set[int] = set()
     off = 0
     while off < n:
@@ -1149,7 +1147,7 @@ def extract_cfgs_from_x86_64_bytes(
         sorted_leaders = sorted(list(leaders))
 
         # 4. Construct BasicBlocks
-        last_branch_map: Dict[int, Tuple[str, Optional[int], bool, int]] = {}
+        last_branch_map: Dict[int, Tuple[str, int | None, bool, int]] = {}
         func_addrs = [item[2].address for item in func_insns]
         for idx, leader_pc in enumerate(sorted_leaders):
             limit_bb_pc = sorted_leaders[idx + 1] if idx + 1 < len(sorted_leaders) else actual_end_pc
@@ -1204,7 +1202,7 @@ def extract_cfgs_from_arm32_bytes(
     code_bytes: bytes,
     base_vaddr: int = 0x10000,
     thumb_mode: bool = False,
-    function_starts: Optional[Iterable[int]] = None,
+    function_starts: Iterable[int] | None = None,
 ) -> List[FunctionCFG]:
     """
     Directly extracts FunctionCFGs from raw ARM32 or Thumb/Thumb-2 machine bytes.
@@ -1220,7 +1218,7 @@ def extract_cfgs_from_arm32_bytes(
         return []
 
     # 1. Decode linear instruction stream
-    decoded_stream: List[Tuple[int, int, InstructionInfo, str, Optional[int], bool, Optional[int], bool, bool]] = []
+    decoded_stream: List[Tuple[int, int, InstructionInfo, str, int | None, bool, int | None, bool, bool]] = []
     valid_addrs: Set[int] = set()
     off = 0
     while off < n:
@@ -1419,7 +1417,7 @@ def extract_cfgs_from_arm32_bytes(
 CFG_SUPPORTED_ARCHES = ("x86_64", "x86", "arm64", "arm")
 
 
-def extract_cfgs_from_image(image: "binary_loader.BinaryImage") -> List[FunctionCFG]:
+def extract_cfgs_from_image(image: binary_loader.BinaryImage) -> List[FunctionCFG]:
     """FunctionCFGs for every executable region of a loaded ELF / PE / Mach-O image.
 
     Known function starts (PE .pdata, exports, ELF/Mach-O symbols, LC_FUNCTION_STARTS)
@@ -1468,7 +1466,7 @@ def extract_cfgs_from_image(image: "binary_loader.BinaryImage") -> List[Function
 
 
 def extract_cfgs_from_binary(
-    path_or_bytes: Union[str, bytes],
+    path_or_bytes: str | bytes,
     base_vaddr: int = 0x100000,
 ) -> List[FunctionCFG]:
     """
@@ -1585,7 +1583,7 @@ def create_synthetic_function(
     address: int,
     num_blocks: int = 5,
     instruction_profile: str = "balanced",
-    seed: Optional[int] = None,
+    seed: int | None = None,
     name: str = "",
 ) -> FunctionCFG:
     """Constructs a deterministic synthetic function CFG for diff validation."""

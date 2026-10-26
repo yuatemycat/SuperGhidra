@@ -10,10 +10,8 @@ All binaries are self-contained and generated synthetically without external too
 
 from __future__ import annotations
 
-import os
 import struct
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 BASE_DIR = Path(__file__).resolve().parent
 OUT_DIR = BASE_DIR / "binaries"

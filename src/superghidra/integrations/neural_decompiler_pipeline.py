@@ -29,7 +29,7 @@ import logging
 import re
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
 logger = logging.getLogger("neural_decompiler_pipeline")
 
@@ -58,7 +58,7 @@ class NeuralPrediction:
     confidence: float
     model_identifier: str
     source: str = "llm"  # "llm" or "heuristic"
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclasses.dataclass
@@ -225,7 +225,7 @@ class LLMDecompilerClient:
     def __init__(
         self,
         endpoint_url: str = "http://localhost:11434/v1/chat/completions",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model_name: str = "llm4decompile-9b-v2",
         timeout_sec: float = 10.0,
     ):
@@ -382,7 +382,7 @@ class NeuralDecompilerPipeline:
     def predict_skin(
         self,
         skeleton: DecompiledSkeleton,
-        llm_client: Optional[LLMDecompilerClient] = None,
+        llm_client: LLMDecompilerClient | None = None,
     ) -> NeuralPrediction:
         """
         Predicts function name, signature, and struct member names.
@@ -390,7 +390,7 @@ class NeuralDecompilerPipeline:
         falling back cleanly to mock_neural_inference.
         Surfaces errors if the LLM client call fails.
         """
-        error_reason: Optional[str] = None
+        error_reason: str | None = None
         if llm_client is not None:
             try:
                 pred = llm_client.predict(skeleton)
@@ -410,7 +410,7 @@ class NeuralDecompilerPipeline:
     def mock_neural_inference(
         self,
         skeleton: DecompiledSkeleton,
-        model_name: Optional[str] = None,
+        model_name: str | None = None,
     ) -> NeuralPrediction:
         """
         Simulates Phase-B Neural Prediction with an honest generic heuristic.
@@ -488,8 +488,8 @@ class NeuralDecompilerPipeline:
         self,
         skeleton: DecompiledSkeleton,
         prediction: NeuralPrediction,
-        arm64_bytes: Optional[bytes] = None,
-        c_code_snippet: Optional[str] = None,
+        arm64_bytes: bytes | None = None,
+        c_code_snippet: str | None = None,
     ) -> VerifiedNeuralCommit:
         """
         Gates neural predictions through EvidenceLedger invariant checks.

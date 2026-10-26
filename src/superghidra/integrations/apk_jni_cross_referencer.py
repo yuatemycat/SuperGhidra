@@ -30,7 +30,7 @@ import re
 import struct
 import zipfile
 import zlib
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 logger = logging.getLogger("apk_jni_cross_referencer")
 
@@ -72,7 +72,7 @@ def mangle_jni_identifier(ident: str) -> str:
 def construct_static_jni_symbol(
     package_class: str,
     method_name: str,
-    signature: Optional[str] = None,
+    signature: str | None = None,
     is_overloaded: bool = False
 ) -> str:
     """
@@ -105,8 +105,8 @@ class JavaNativeMethod:
     signature: str          # e.g. "(ILjava/lang/String;)V"
     is_static: bool = True
     is_overloaded: bool = False
-    source_file: Optional[str] = None
-    line_number: Optional[int] = None
+    source_file: str | None = None
+    line_number: int | None = None
 
     @property
     def static_symbol_short(self) -> str:
@@ -125,7 +125,7 @@ class JNIRegisteredNative:
     method_name: str        # Method name string
     signature: str          # Signature string
     fn_ptr: int             # Target native function address in .text
-    class_context: Optional[str] = None
+    class_context: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -231,7 +231,7 @@ class APKJNICrossReferencer:
         string_table: Dict[int, str],
         text_vaddr_start: int,
         text_vaddr_end: int,
-        class_context: Optional[str] = None
+        class_context: str | None = None
     ) -> List[JNIRegisteredNative]:
         """
         Scans a memory buffer (.rodata or .data.rel.ro) for arrays of JNINativeMethod.
@@ -276,7 +276,7 @@ class APKJNICrossReferencer:
 
         return discovered
 
-    def load_from_elf_bytes(self, elf_bytes: bytes, class_context: Optional[str] = None) -> Dict[str, Any]:
+    def load_from_elf_bytes(self, elf_bytes: bytes, class_context: str | None = None) -> Dict[str, Any]:
         """
         Zero-dependency binary ELF parser supporting 64-bit and 32-bit ELF binaries.
         Extracts dynamic exports (.dynsym) and scans .rodata/.data.rel.ro/.data for JNINativeMethod tables.
@@ -466,7 +466,7 @@ class APKJNICrossReferencer:
             "registered_natives_found": total_discovered,
         }
 
-    def load_from_elf_file(self, elf_path: str, class_context: Optional[str] = None) -> Dict[str, Any]:
+    def load_from_elf_file(self, elf_path: str, class_context: str | None = None) -> Dict[str, Any]:
         """Loads an ELF binary from disk and extracts exports and RegisterNatives tables."""
         with open(elf_path, "rb") as f:
             elf_bytes = f.read()
@@ -929,7 +929,7 @@ class APKJNICrossReferencer:
     @staticmethod
     def build_synthetic_jni_elf_bytes(
         exports: Dict[str, int],
-        registered_natives: Optional[List[Tuple[str, str, int]]] = None,
+        registered_natives: List[Tuple[str, str, int]] | None = None,
         image_base: int = 0x100000,
         is_64bit: bool = True
     ) -> bytes:
@@ -1142,7 +1142,7 @@ class APKJNICrossReferencer:
             clean_name = f"JNI_{m.java_method.class_name.split('.')[-1]}_{m.java_method.method_name}"
             comment = f"JNI [{m.binding_type}] {m.java_method.class_name}.{m.java_method.method_name}{m.java_method.signature} (RVA: {hex(m.target_rva)})"
             lines.append(f"    addr = toAddr({target_va_hex})")
-            lines.append(f"    if addr is not None:")
+            lines.append("    if addr is not None:")
             lines.append(f"        createLabel(addr, '{clean_name}', True, SourceType.USER_DEFINED)")
             lines.append(f"        setPlateComment(addr, '{comment}')")
 

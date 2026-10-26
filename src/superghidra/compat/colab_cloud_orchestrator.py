@@ -4,8 +4,8 @@ Canonical location: `superghidra.<domain>.colab_cloud_orchestrator`.
 """
 from __future__ import annotations
 
-import sys as _sys
 import importlib as _importlib
+import sys as _sys
 
 _DOMAINS = ["core", "formats", "diff", "acceleration", "lifters", "integrations", "storage"]
 _mod = None
@@ -18,7 +18,7 @@ for _d in _DOMAINS:
 
 if _mod is None:
     try:
-        _mod = _importlib.import_module(f"superghidra.colab_cloud_orchestrator")
+        _mod = _importlib.import_module("superghidra.colab_cloud_orchestrator")
     except Exception:
         pass
 

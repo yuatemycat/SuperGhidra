@@ -1,7 +1,6 @@
 """Verifies that published benchmark numbers in documentation match committed summaries."""
 
 import json
-import re
 import unittest
 from pathlib import Path
 

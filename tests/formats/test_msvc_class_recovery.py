@@ -113,9 +113,10 @@ class TestForwardingDll(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "mfc140u.exports"), "w", encoding="utf-8") as f:
-                f.write('<LIBRARY NAME="mfc140u.dll">\n<EXPORT ORDINAL="%d" '
-                        'NAME="?GetThisClass@CObject@@SAPEAUCRuntimeClass@@XZ" />\n</LIBRARY>\n'
-                        % MFC_GETTHISCLASS_ORDINAL)
+                f.write(
+                    f'<LIBRARY NAME="mfc140u.dll">\n<EXPORT ORDINAL="{MFC_GETTHISCLASS_ORDINAL}" '
+                    'NAME="?GetThisClass@CObject@@SAPEAUCRuntimeClass@@XZ" />\n</LIBRARY>\n'
+                )
             rep = R.recover_classes(build_forwarding_dll(), symbol_dirs=[d])
         self.assertEqual(rep.mfc_by_name()["moFeature_c"].base_name, "CObject")
 

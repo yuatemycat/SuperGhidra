@@ -17,12 +17,12 @@ Verifies:
 """
 
 import unittest
+
 from superghidra.lifters.pcode_lifter_bridge import (
+    AddressSpace,
     ARM64PcodeLifter,
     PcodeOpcode,
-    AddressSpace,
     Varnode,
-    PcodeOp,
 )
 from superghidra.lifters.smt_pcode_verifier import (
     PcodeSymbolicSimulator,

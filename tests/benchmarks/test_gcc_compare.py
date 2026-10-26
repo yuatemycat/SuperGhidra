@@ -13,7 +13,6 @@ from benchmarks.humaneval_decompile.gcc_compare import (
     score_gcc_sample,
 )
 from benchmarks.humaneval_decompile.harness import (
-    PINNED_REVISION,
     load_humaneval_rows,
 )
 

@@ -6,6 +6,7 @@ import unittest
 
 from superghidra.formats import mfc_archive as MA
 from superghidra.formats import serialize_trace as ST
+
 try:
     from tests.formats.test_msvc_class_recovery import BASE, build_pe_sections
 except ImportError:

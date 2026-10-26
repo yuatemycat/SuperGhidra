@@ -9,8 +9,7 @@ it back. None of these functions open a Ghidra ``.rep``.
 from __future__ import annotations
 
 from pathlib import Path
-import struct
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Sequence, Tuple
 
 from superghidra.core.ghidra_oracle import WriteOverlay
 from superghidra.core.parity_engine import (
@@ -29,8 +28,6 @@ from superghidra.diff.benchmark_and_nextgen_engine import (
 from superghidra.formats.binary_loader import BinaryImage, load_binary
 from superghidra.formats.ida_flirt_bridge import (
     FlirtSignatureIndex,
-    find_dumpsig,
-    list_available_sigs,
 )
 from superghidra.formats.ida_til_importer import (
     TilReport,
@@ -63,7 +60,7 @@ __all__ = [
 class LiftError(ValueError):
     """Raised when the staged P-Code lifter cannot lift binary machine code."""
 
-    def __init__(self, message: str, unhandled: Optional[List[Tuple[int, str]]] = None):
+    def __init__(self, message: str, unhandled: List[Tuple[int, str]] | None = None):
         super().__init__(message)
         self.message = message
         self.unhandled: List[Tuple[int, str]] = unhandled or []
@@ -84,7 +81,7 @@ def _addr_in_image(img: BinaryImage, addr: int) -> bool:
     return img.image_base <= addr < img.image_base + len(img.data)
 
 
-def _node_addr(node: str) -> Optional[int]:
+def _node_addr(node: str) -> int | None:
     marker = "@0x"
     if marker not in node:
         return None
@@ -370,7 +367,7 @@ def deflatten_control_flow(binary_path: str) -> Dict[str, Any]:
             "binary_path": str(img.path or binary_path),
             "reason": "no cmp/jcc state dispatcher in executable bytes",
         }
-    first_report: Optional[Dict[str, Any]] = None
+    first_report: Dict[str, Any] | None = None
     for chain in chains:
         report = _deflatten_chain(insns, chain)
         report["binary_path"] = str(img.path or binary_path)
@@ -440,13 +437,13 @@ def _find_cmp_chains(insns: Sequence[X86Insn]) -> List[List[X86Insn]]:
     return chains
 
 
-def _find_cmp_chain(insns: Sequence[X86Insn]) -> Optional[List[X86Insn]]:
+def _find_cmp_chain(insns: Sequence[X86Insn]) -> List[X86Insn] | None:
     """Return the first candidate 3-long state dispatcher chain."""
     chains = _find_cmp_chains(insns)
     return chains[0] if chains else None
 
 
-def _direct_jmp_target(insn: X86Insn) -> Optional[int]:
+def _direct_jmp_target(insn: X86Insn) -> int | None:
     if insn.flow == "jmp" and insn.target is not None:
         return insn.target
     return None
@@ -662,7 +659,7 @@ def get_struct_catalog() -> Dict[str, StructLayoutSpec]:
     return STRUCT_CATALOG
 
 
-def _field_c_type_to_layout(c_type: str, array_dim: Optional[str] = None) -> Tuple[str, int, int]:
+def _field_c_type_to_layout(c_type: str, array_dim: str | None = None) -> Tuple[str, int, int]:
     """Returns (struct_format, byte_size, alignment) for a native C declaration."""
     clean = c_type.strip()
     if "*" in clean:
@@ -754,7 +751,7 @@ def _til_struct_to_spec(ts: TilStruct) -> StructLayoutSpec:
 
 def import_type_library(
     til_path: str,
-    output_header: Optional[str] = None,
+    output_header: str | None = None,
 ) -> Dict[str, Any]:
     """Ingest IDA Type Information Library (.til) or C declarations into StructLayoutSpec catalog.
 
@@ -806,7 +803,7 @@ def import_type_library(
         spec = _til_struct_to_spec(ts)
         STRUCT_CATALOG[spec.name] = spec
 
-    exported_header_len: Optional[int] = None
+    exported_header_len: int | None = None
     if output_header and Path(resolved_til).is_file() and resolved_til.lower().endswith(".til"):
         exported_header_len = export_clean_header(resolved_til, output_header)
 
@@ -828,7 +825,7 @@ def import_type_library(
 
 def match_flirt_signatures(
     binary_path: str,
-    sig_path: Optional[str] = None,
+    sig_path: str | None = None,
 ) -> Dict[str, Any]:
     """Match binary functions against Hex-Rays IDA FLIRT signatures (.sig).
 
@@ -976,13 +973,13 @@ def staged_decompile_function(
         raise LiftError(f"architecture '{arch}' is not supported by this lifter")
 
     from superghidra.lifters.egraph_mlir_pipeline import (
-        StagedPCodePassManager,
-        PCodeFunction,
+        AddressSpace,
         PCodeBasicBlock,
+        PCodeFunction,
         PCodeOp,
         PCodeOpCode,
+        StagedPCodePassManager,
         Varnode,
-        AddressSpace,
     )
 
     gpr_names = (

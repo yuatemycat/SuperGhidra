@@ -34,7 +34,6 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from typing import List
 
 import numpy as np
 
@@ -43,19 +42,10 @@ SUPERGHIDRA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(_
 if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
-from superghidra.core.shm_decompiler_bridge import (
-    CACHELINE_SIZE,
-    RING_MODE_MPMC,
-    RING_MODE_SPSC,
-    SEC_EXEC,
-    SEC_READ,
-    SEC_WRITE,
-    SectionInfo,
-    ShmBinaryView,
-    ShmChannel,
-    ShmMessage,
-    ShmRingBuffer,
-    benchmark_shm_bridge,
+from superghidra.acceleration.gpu_adrp_scanner import (
+    GPUAdrpScanner,
+    pack_gpu_match,
+    unpack_gpu_match,
 )
 from superghidra.acceleration.gpu_function_seeder import (
     HAS_CUDA,
@@ -66,16 +56,18 @@ from superghidra.acceleration.gpu_function_seeder import (
     KIND_RET,
     KIND_STP_FP_LR,
     KIND_SUB_SP,
-    FunctionSeed,
     GPUFunctionSeeder,
     NumPyFunctionSeederEngine,
     pack_seeder_match,
     unpack_seeder_match,
 )
-from superghidra.acceleration.gpu_adrp_scanner import (
-    GPUAdrpScanner,
-    pack_gpu_match,
-    unpack_gpu_match,
+from superghidra.core.shm_decompiler_bridge import (
+    RING_MODE_MPMC,
+    RING_MODE_SPSC,
+    ShmBinaryView,
+    ShmChannel,
+    ShmRingBuffer,
+    benchmark_shm_bridge,
 )
 
 
@@ -373,7 +365,7 @@ class TestShmRingBuffer(unittest.TestCase):
         def producer_worker(thread_id: int):
             for i in range(messages_per_thread):
                 req_id = thread_id * 10000 + i
-                payload = f"THREAD_{thread_id}_MSG_{i}".encode("utf-8")
+                payload = f"THREAD_{thread_id}_MSG_{i}".encode()
                 while not ring.push_message(msg_type=300, req_id=req_id, payload=payload, timeout=0.01):
                     time.sleep(0.0001)
 
@@ -638,7 +630,7 @@ class TestGPUFunctionSeeder(unittest.TestCase):
                 binary_name="libtest.so",
                 text_base_vaddr=text_base,
             )
-            with open(json_path, "r", encoding="utf-8") as f:
+            with open(json_path, encoding="utf-8") as f:
                 loaded = json.load(f)
             self.assertEqual(loaded["total_seeds"], len(seeds))
             self.assertEqual(loaded["binary_name"], "libtest.so")
@@ -657,7 +649,7 @@ class TestGPUFunctionSeeder(unittest.TestCase):
                 filepath=java_path,
                 script_name="TestRegistrarScript",
             )
-            with open(java_path, "r", encoding="utf-8") as f:
+            with open(java_path, encoding="utf-8") as f:
                 content = f.read()
             self.assertIn("public class TestRegistrarScript extends GhidraScript", content)
             self.assertIn("0x100000000L", content)

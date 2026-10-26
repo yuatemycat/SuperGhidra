@@ -11,10 +11,9 @@ import numpy as np
 from superghidra.acceleration.gpu_adrp_scanner import (
     ADAPTIVE_GPU_THRESHOLD_BYTES,
     GPU_SCAN_SIZE_THRESHOLD_BYTES,
-    GPUAdrpScanner,
     HAS_WGPU,
+    GPUAdrpScanner,
     NumPyAdrpEngine,
-    WGPUAdrpEngine,
     generate_synthetic_stream,
 )
 

@@ -32,7 +32,7 @@ import math
 import re
 import struct
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 __all__ = [
     "ArchiveError",
@@ -69,7 +69,7 @@ class Field:
     offset: int
     kind: str
     value: object
-    member: Optional[str] = None
+    member: str | None = None
     size: int = 0
 
     def to_dict(self) -> Dict[str, object]:
@@ -93,16 +93,16 @@ class Field:
 @dataclass
 class ArchiveObject:
     offset: int  # tag offset
-    class_name: Optional[str]
-    schema: Optional[int]
-    map_index: Optional[int]  # this object's index in the load map
+    class_name: str | None
+    schema: int | None
+    map_index: int | None  # this object's index in the load map
     kind: str = "object"  # object | null | reference
-    ref_index: Optional[int] = None  # for references
-    payload_offset: Optional[int] = None
-    end: Optional[int] = None  # payload end when fully decoded
+    ref_index: int | None = None  # for references
+    payload_offset: int | None = None
+    end: int | None = None  # payload end when fully decoded
     status: str = "decoded"  # decoded | partial | opaque | reference | null
     fields: List[Field] = field(default_factory=list)
-    note: Optional[str] = None
+    note: str | None = None
     assumed: List[str] = field(default_factory=list)  # gates decided by policy, not data
 
     def to_dict(self) -> Dict[str, object]:
@@ -123,10 +123,10 @@ class ArchiveObject:
 @dataclass
 class LayoutOp:
     kind: str
-    size: Optional[int] = None
+    size: int | None = None
     repeat: bool = False
-    member: Optional[str] = None
-    callee: Optional[str] = None  # class for `serialize`
+    member: str | None = None
+    callee: str | None = None  # class for `serialize`
     conditions: List = field(default_factory=list)
 
 
@@ -141,7 +141,7 @@ class NewClassTag:
         return self.offset + 6 + len(self.name)
 
 
-def _as_double(bits: int) -> Optional[float]:
+def _as_double(bits: int) -> float | None:
     """Interpret a u64 as an IEEE double when that looks like a real-world number."""
     f = struct.unpack("<d", struct.pack("<Q", bits & 0xFFFFFFFFFFFFFFFF))[0]
     if bits == 0 or not math.isfinite(f):
@@ -150,7 +150,7 @@ def _as_double(bits: int) -> Optional[float]:
     return f if 0x3B0 <= exp <= 0x450 else None  # roughly 1e-20 .. 1e21
 
 
-def scan_class_tags(data: bytes, start: int = 0, end: Optional[int] = None) -> List[NewClassTag]:
+def scan_class_tags(data: bytes, start: int = 0, end: int | None = None) -> List[NewClassTag]:
     """Every plausible `0xFFFF schema len name` new-class tag (identifier names only)."""
     out = []
     end = len(data) if end is None else end
@@ -265,7 +265,7 @@ class ArchiveReader:
 
     # ---------------- objects ----------------
 
-    def read_tag(self, expected: Optional[str] = None) -> Tuple[str, Optional[int], Optional[str], Optional[int]]:
+    def read_tag(self, expected: str | None = None) -> Tuple[str, int | None, str | None, int | None]:
         """Read an object tag: ("null"|"ref"|"new_class"|"class_ref", index, class, schema).
 
         `expected` is the class the caller's code statically writes at this point (from
@@ -328,7 +328,7 @@ def layouts_from_traces(traces: Iterable, path: str = "storing") -> Dict[str, Li
     return out
 
 
-def _layout_callee(op) -> Optional[str]:
+def _layout_callee(op) -> str | None:
     """Base class for `serialize`; the statically expected class for `object` ops written by
     `operator<<(CArchive&, X*)` (e.g. moNodeName_c), so an unseen class index can be learned."""
     if op.kind == "serialize":
@@ -349,7 +349,7 @@ def _desc_value(desc: str, env: Dict[str, object], fields: Dict[str, object]):
     return fields.get(desc)
 
 
-def evaluate_condition(cond, env: Dict[str, object], fields: Optional[Dict[str, object]] = None) -> Optional[bool]:
+def evaluate_condition(cond, env: Dict[str, object], fields: Dict[str, object] | None = None) -> bool | None:
     """True/False for a structured gate, or None when an operand value is unknown."""
     fields = fields or {}
     if cond[0] == "mode":
@@ -413,7 +413,7 @@ class _Stop(Exception):
 
 class _Decoder:
     def __init__(self, reader: ArchiveReader, layouts: Dict[str, List[LayoutOp]], env: Dict[str, object],
-                 unknown_gates: str, max_depth: int = 64, parent_classes: Optional[List[str]] = None):
+                 unknown_gates: str, max_depth: int = 64, parent_classes: List[str] | None = None):
         self.r = reader
         self.layouts = layouts
         self.env = env
@@ -421,7 +421,7 @@ class _Decoder:
         self.max_depth = max_depth
         self.parent_classes = list(parent_classes or [])
 
-    def read_object(self, depth: int = 0, expected: Optional[str] = None) -> ArchiveObject:
+    def read_object(self, depth: int = 0, expected: str | None = None) -> ArchiveObject:
         r = self.r
         start = r.pos
         kind, idx, name, schema = r.read_tag(expected)
@@ -484,7 +484,7 @@ class _Decoder:
         return obj
 
     @staticmethod
-    def _assumed(c, decided) -> Optional[bool]:
+    def _assumed(c, decided) -> bool | None:
         """Value of condition `c` from earlier assumptions (directly or by negation)."""
         if isinstance(c, (list, tuple)) and c and c[0] == "or":
             results = []
@@ -540,7 +540,7 @@ class _Decoder:
     def _run(self, layout: List[LayoutOp], obj: ArchiveObject, depth: int, values: Dict[str, object]) -> None:
         r = self.r
         i = 0
-        last_count: Optional[int] = None
+        last_count: int | None = None
         while i < len(layout):
             op = layout[i]
             if op.repeat:
@@ -606,17 +606,17 @@ class _Decoder:
 
 
 class _StopWith(Exception):
-    def __init__(self, obj: ArchiveObject, note: Optional[str] = None):
+    def __init__(self, obj: ArchiveObject, note: str | None = None):
         super().__init__(note or obj.note)
         self.obj = obj
         if note and not obj.note:
             obj.note = note
 
 
-def decode_stream(data: bytes, layouts: Optional[Dict[str, List[LayoutOp]]] = None, *, start: int = 0,
-                  env: Optional[Dict[str, object]] = None, unknown_gates: str = "true",
+def decode_stream(data: bytes, layouts: Dict[str, List[LayoutOp]] | None = None, *, start: int = 0,
+                  env: Dict[str, object] | None = None, unknown_gates: str = "true",
                   map_count: int = 1, max_objects: int = 100000,
-                  parent_classes: Optional[List[str]] = None) -> Dict[str, object]:
+                  parent_classes: List[str] | None = None) -> Dict[str, object]:
     """Decode a stream of top-level CArchive objects.
 
     `layouts` maps class names to LayoutOps (see layouts_from_traces). Objects of classes
@@ -637,7 +637,7 @@ def decode_stream(data: bytes, layouts: Optional[Dict[str, List[LayoutOp]]] = No
     objects: List[ArchiveObject] = []
     gaps: List[Dict[str, int]] = []
 
-    def resync(after: int) -> Optional[int]:
+    def resync(after: int) -> int | None:
         import bisect
 
         k = bisect.bisect_right(tag_offsets, after)
@@ -729,7 +729,7 @@ def _gate_operands(conds, out: Dict[str, set]) -> None:
 
 
 def calibrate(data: bytes, layouts: Dict[str, List[LayoutOp]], *, start: int = 0,
-              variable: Optional[str] = None, max_candidates: int = 64) -> Dict[str, object]:
+              variable: str | None = None, max_candidates: int = 64) -> Dict[str, object]:
     """Infer the value of a gate operand (typically the file-format version) from the data.
 
     Files written by older application versions skip fields that newer code writes behind

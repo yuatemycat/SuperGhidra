@@ -36,7 +36,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Set, Tuple
 
 logger = logging.getLogger("SuperGhidra.SemanticDelta")
 
@@ -45,9 +45,6 @@ try:
     from superghidra.diff.evidence_ledger import (
         AllocationSizeVerifier,
         FieldDisplacementVerifier,
-        ObligationStatus,
-        ObligationType,
-        ProofObligation,
         ReconstructionObligationLedger,
         VTableSlotVerifier,
     )
@@ -57,9 +54,6 @@ except ImportError:
     from superghidra.diff.evidence_ledger import (
         AllocationSizeVerifier,
         FieldDisplacementVerifier,
-        ObligationStatus,
-        ObligationType,
-        ProofObligation,
         ReconstructionObligationLedger,
         VTableSlotVerifier,
     )
@@ -111,11 +105,11 @@ class CommentType(str, enum.Enum):
 
 def compute_event_proof_hash(
     event_type: str,
-    target_address: Optional[int],
-    target_symbol: Optional[str],
+    target_address: int | None,
+    target_symbol: str | None,
     payload: Dict[str, Any],
-    evidence: Optional[Dict[str, Any]] = None,
-    obligation_id: Optional[str] = None,
+    evidence: Dict[str, Any] | None = None,
+    obligation_id: str | None = None,
 ) -> str:
     """
     Computes a deterministic, canonical SHA-256 proof hash over an event's data.
@@ -143,11 +137,11 @@ class SemanticEvent:
     event_type: DeltaEventType
     timestamp: str  # ISO-8601 UTC
     author: str = "superghidra"
-    target_address: Optional[int] = None
-    target_symbol: Optional[str] = None
+    target_address: int | None = None
+    target_symbol: str | None = None
     payload: Dict[str, Any] = dataclasses.field(default_factory=dict)
-    obligation_id: Optional[str] = None
-    evidence: Optional[Dict[str, Any]] = None
+    obligation_id: str | None = None
+    evidence: Dict[str, Any] | None = None
     proof_hash: str = ""
     verified: bool = False
     metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -156,7 +150,7 @@ class SemanticEvent:
         if not self.proof_hash:
             self.proof_hash = self.compute_proof_hash()
         if not self.event_id:
-            h = hashlib.sha256(f"{self.proof_hash}:{self.timestamp}".encode("utf-8")).hexdigest()
+            h = hashlib.sha256(f"{self.proof_hash}:{self.timestamp}".encode()).hexdigest()
             self.event_id = f"EVT-{h[:12].upper()}"
 
     def compute_proof_hash(self) -> str:
@@ -262,7 +256,7 @@ class SemanticEvent:
         )
 
     @classmethod
-    def from_json_line(cls, line: str) -> Optional[SemanticEvent]:
+    def from_json_line(cls, line: str) -> SemanticEvent | None:
         cleaned = line.strip()
         if not cleaned or cleaned.startswith("#"):
             return None
@@ -278,12 +272,12 @@ class SemanticEvent:
         cls,
         old_name: str,
         new_name: str,
-        target_address: Optional[int] = None,
+        target_address: int | None = None,
         symbol_type: str = "FUNCTION",
         author: str = "superghidra",
-        evidence: Optional[Dict[str, Any]] = None,
-        obligation_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        evidence: Dict[str, Any] | None = None,
+        obligation_id: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> SemanticEvent:
         payload = {
             "old_name": old_name,
@@ -315,11 +309,11 @@ class SemanticEvent:
         offset: int,
         size: int,
         type_name: str = "uint32_t",
-        instruction: Optional[str] = None,
+        instruction: str | None = None,
         author: str = "superghidra",
-        evidence: Optional[Dict[str, Any]] = None,
-        obligation_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        evidence: Dict[str, Any] | None = None,
+        obligation_id: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> SemanticEvent:
         payload = {
             "struct_name": struct_name,
@@ -361,13 +355,13 @@ class SemanticEvent:
         struct_name: str,
         slot_index: int,
         function_name: str,
-        slot_offset: Optional[int] = None,
-        function_address: Optional[int] = None,
+        slot_offset: int | None = None,
+        function_address: int | None = None,
         pointer_size: int = 8,
         author: str = "superghidra",
-        evidence: Optional[Dict[str, Any]] = None,
-        obligation_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        evidence: Dict[str, Any] | None = None,
+        obligation_id: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> SemanticEvent:
         if slot_offset is None:
             slot_offset = slot_index * pointer_size
@@ -407,12 +401,12 @@ class SemanticEvent:
         function_name: str,
         return_type: str,
         parameters: List[Tuple[str, str]],  # (type, name)
-        function_address: Optional[int] = None,
+        function_address: int | None = None,
         calling_convention: str = "__cdecl",
         author: str = "superghidra",
-        evidence: Optional[Dict[str, Any]] = None,
-        obligation_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        evidence: Dict[str, Any] | None = None,
+        obligation_id: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> SemanticEvent:
         param_dicts = [{"type": p[0], "name": p[1]} for p in parameters]
         param_strs = [f"{p[0]} {p[1]}" if p[1] else p[0] for p in parameters]
@@ -446,13 +440,13 @@ class SemanticEvent:
     def create_set_comment(
         cls,
         comment_text: str,
-        target_address: Optional[int] = None,
-        target_symbol: Optional[str] = None,
-        comment_type: Union[CommentType, str] = CommentType.EOL,
+        target_address: int | None = None,
+        target_symbol: str | None = None,
+        comment_type: CommentType | str = CommentType.EOL,
         author: str = "superghidra",
-        evidence: Optional[Dict[str, Any]] = None,
-        obligation_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        evidence: Dict[str, Any] | None = None,
+        obligation_id: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> SemanticEvent:
         ctype_val = CommentType(comment_type).value if isinstance(comment_type, (CommentType, str)) else "EOL"
         payload = {
@@ -490,7 +484,7 @@ class SemanticDeltaLog:
 
     DEFAULT_LOG_NAME = ".ghidra-delta.jsonl"
 
-    def __init__(self, file_path: Optional[str] = None):
+    def __init__(self, file_path: str | None = None):
         if file_path is None:
             file_path = os.path.join(os.getcwd(), self.DEFAULT_LOG_NAME)
         self.file_path = os.path.abspath(file_path)
@@ -541,9 +535,9 @@ class SemanticDeltaLog:
 
     def record_function_rename(
         self,
-        target_address: Optional[int],
+        target_address: int | None,
         new_name: str,
-        old_name: Optional[str] = None,
+        old_name: str | None = None,
         symbol_type: str = "FUNCTION",
         author: str = "superghidra",
     ) -> SemanticEvent:
@@ -561,9 +555,9 @@ class SemanticDeltaLog:
 
     def record_comment(
         self,
-        target_address: Optional[int],
+        target_address: int | None,
         comment_text: str,
-        comment_type: Union[CommentType, str] = CommentType.EOL,
+        comment_type: CommentType | str = CommentType.EOL,
         author: str = "superghidra",
     ) -> SemanticEvent:
         """Helper to create and append a SetComment event."""
@@ -585,7 +579,7 @@ class SemanticDeltaLog:
         self._seen_ids.clear()
         self._seen_exact.clear()
 
-        with open(self.file_path, "r", encoding="utf-8") as f:
+        with open(self.file_path, encoding="utf-8") as f:
             for line in f:
                 evt = SemanticEvent.from_json_line(line)
                 if evt is None:
@@ -621,9 +615,9 @@ class SemanticDeltaLog:
 
     def filter(
         self,
-        event_type: Optional[Union[DeltaEventType, str]] = None,
-        target_symbol: Optional[str] = None,
-        target_address: Optional[int] = None,
+        event_type: DeltaEventType | str | None = None,
+        target_symbol: str | None = None,
+        target_address: int | None = None,
     ) -> List[SemanticEvent]:
         """Filters events by type, symbol, or address."""
         res = self.events
@@ -717,7 +711,7 @@ class MigrationStatus(str, enum.Enum):
 class MigratedEventRecord:
     """Individual record of a migrated event from Binary A -> Binary B."""
     original_event: SemanticEvent
-    migrated_event: Optional[SemanticEvent]
+    migrated_event: SemanticEvent | None
     status: MigrationStatus
     similarity: float
     confidence: str
@@ -783,8 +777,8 @@ class DeltaMigrationEngine:
 
     def __init__(
         self,
-        diff_result: Optional[DiffResult] = None,
-        ledger: Optional[ReconstructionObligationLedger] = None,
+        diff_result: DiffResult | None = None,
+        ledger: ReconstructionObligationLedger | None = None,
         similarity_threshold: float = 0.75,
     ):
         self.diff_result = diff_result
@@ -813,7 +807,7 @@ class DeltaMigrationEngine:
         self,
         funcs_a: List[FunctionCFG],
         funcs_b: List[FunctionCFG],
-        matcher: Optional[BatchedBinaryMatcher] = None,
+        matcher: BatchedBinaryMatcher | None = None,
     ) -> DiffResult:
         """Runs batched binary diffing to pair functions across binaries A and B."""
         if matcher is None:
@@ -827,7 +821,7 @@ class DeltaMigrationEngine:
         baseline_events: Any,
         old_binary: Any,
         new_binary: Any,
-        target_log_path: Optional[str] = None,
+        target_log_path: str | None = None,
     ) -> Tuple[DeltaMigrationReport, List[SemanticEvent]]:
         """
         Executes end-to-end binary diff pairing and struct shift migration:
@@ -878,7 +872,7 @@ class DeltaMigrationEngine:
     def migrate_events(
         self,
         baseline_events: List[SemanticEvent],
-        target_log_path: Optional[str] = None,
+        target_log_path: str | None = None,
     ) -> Tuple[DeltaMigrationReport, List[SemanticEvent]]:
         """
         Replays baseline events, translating addresses and function names to target binary,
@@ -960,7 +954,7 @@ class DeltaMigrationEngine:
                 continue
 
             # 2. Address / Function specific events (RenameSymbol, SetSignature, SetComment, BindVTableSlot)
-            match: Optional[FunctionMatch] = None
+            match: FunctionMatch | None = None
             if evt.target_address is not None and evt.target_address in self.addr_a_to_match:
                 match = self.addr_a_to_match[evt.target_address]
             elif evt.target_symbol and evt.target_symbol in self.name_a_to_match:

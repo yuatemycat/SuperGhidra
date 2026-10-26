@@ -13,18 +13,16 @@ Solves Ghidra's DataTypeManagerDB scaling bottleneck:
 
 from __future__ import annotations
 
-import collections
 import dataclasses
 import enum
 import hashlib
 import json
 import logging
-import os
 import re
 import sqlite3
 import struct
 import time
-from typing import Any, Dict, Generator, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Set, Tuple
 
 logger = logging.getLogger("dwarf_pdb_preindexer")
 
@@ -52,8 +50,8 @@ class StructMember:
     type_id: str
     offset: int  # Byte offset from base
     size: int    # Byte size
-    bit_size: Optional[int] = None
-    bit_offset: Optional[int] = None
+    bit_size: int | None = None
+    bit_offset: int | None = None
     access: str = "public"  # public, protected, private
 
     def to_dict(self) -> Dict[str, Any]:
@@ -145,10 +143,10 @@ class NormalizedType:
     kind: TypeKind
     byte_size: int
     alignment: int = 1
-    parent_type_id: Optional[str] = None
+    parent_type_id: str | None = None
     members: List[StructMember] = dataclasses.field(default_factory=list)
     variants: List[EnumVariant] = dataclasses.field(default_factory=list)
-    function_proto: Optional[FunctionPrototype] = None
+    function_proto: FunctionPrototype | None = None
     metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
     fingerprint: str = ""
 
@@ -191,7 +189,7 @@ class SymbolRecord:
     name: str
     address: int  # Virtual Address (VA)
     size: int
-    type_id: Optional[str] = None  # Reference to NormalizedType if typed
+    type_id: str | None = None  # Reference to NormalizedType if typed
     linkage: str = "global"       # global, local, weak, export, import
     section: str = ".text"        # .text, .data, .rodata, .bss
     source_unit: str = ""         # Compilation unit / source file
@@ -283,10 +281,10 @@ class TypeDeduplicator:
         name: str,
         byte_size: int,
         alignment: int = 1,
-        parent_fp: Optional[str] = None,
-        members: Optional[List[StructMember]] = None,
-        variants: Optional[List[EnumVariant]] = None,
-        proto: Optional[FunctionPrototype] = None,
+        parent_fp: str | None = None,
+        members: List[StructMember] | None = None,
+        variants: List[EnumVariant] | None = None,
+        proto: FunctionPrototype | None = None,
     ) -> str:
         """
         Calculates a unique, collision-resistant 64-bit structural fingerprint hex string.
@@ -369,12 +367,12 @@ class TypeDeduplicator:
         kind: TypeKind,
         byte_size: int,
         alignment: int = 1,
-        local_id: Optional[str] = None,
-        parent_type_id: Optional[str] = None,
-        members: Optional[List[StructMember]] = None,
-        variants: Optional[List[EnumVariant]] = None,
-        function_proto: Optional[FunctionPrototype] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        local_id: str | None = None,
+        parent_type_id: str | None = None,
+        members: List[StructMember] | None = None,
+        variants: List[EnumVariant] | None = None,
+        function_proto: FunctionPrototype | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> NormalizedType:
         """
         Registers an off-heap type candidate. If an identical structural type already
@@ -402,7 +400,7 @@ class TypeDeduplicator:
                 )
 
         # Resolve function proto param type_ids
-        resolved_proto: Optional[FunctionPrototype] = None
+        resolved_proto: FunctionPrototype | None = None
         if function_proto:
             res_ret = self.resolve_type_id(function_proto.return_type_id)
             res_params = [
@@ -456,11 +454,11 @@ class TypeDeduplicator:
         name: str,
         address: int,
         size: int,
-        type_id: Optional[str] = None,
+        type_id: str | None = None,
         linkage: str = "global",
         section: str = ".text",
         source_unit: str = "",
-        symbol_id: Optional[str] = None,
+        symbol_id: str | None = None,
     ) -> SymbolRecord:
         """Registers a binary symbol with resolved canonical type reference."""
         self.symbols_ingested += 1
@@ -630,7 +628,7 @@ class TypeDeduplicator:
 
             die_offset = cu_offset + 12
 
-            def parse_die(off: int) -> Tuple[Optional[Dict[str, Any]], int]:
+            def parse_die(off: int) -> Tuple[Dict[str, Any] | None, int]:
                 if off >= cu_end:
                     return None, off
                 code, next_off = decode_uleb128(debug_info, off)
@@ -1465,7 +1463,7 @@ class OffHeapTypeStore:
 
         self._conn.commit()
 
-    def ingest_dwarf5_elf(self, elf_bytes: bytes, dedup: Optional[TypeDeduplicator] = None) -> Dict[str, int]:
+    def ingest_dwarf5_elf(self, elf_bytes: bytes, dedup: TypeDeduplicator | None = None) -> Dict[str, int]:
         """
         Parses a 64-bit ELF container with DWARF 5 sections directly into the off-heap store.
         Uses structural deduplication to eliminate redundant types before SQLite insertion.
@@ -1479,7 +1477,7 @@ class OffHeapTypeStore:
     def ingest_pdb(
         self,
         pdb_bytes: bytes,
-        dedup: Optional[TypeDeduplicator] = None,
+        dedup: TypeDeduplicator | None = None,
         base_address: int = 0x140000000,
     ) -> Dict[str, int]:
         """
@@ -1494,7 +1492,7 @@ class OffHeapTypeStore:
 
     # --- Query Methods ---
 
-    def get_type_by_id(self, type_id: str) -> Optional[NormalizedType]:
+    def get_type_by_id(self, type_id: str) -> NormalizedType | None:
         """Retrieves a normalized type by canonical type_id."""
         if type_id in self._type_cache:
             return self._type_cache[type_id]
@@ -1558,7 +1556,7 @@ class OffHeapTypeStore:
         self._name_to_id[nt.name] = type_id
         return nt
 
-    def find_type_by_name(self, name: str) -> Optional[NormalizedType]:
+    def find_type_by_name(self, name: str) -> NormalizedType | None:
         """Finds the primary normalized type matching name."""
         if name in self._name_to_id:
             return self.get_type_by_id(self._name_to_id[name])
@@ -1591,7 +1589,7 @@ class OffHeapTypeStore:
         self._layout_cache[type_name_or_id] = layout
         return layout
 
-    def lookup_symbol_by_address(self, address: int) -> Optional[SymbolRecord]:
+    def lookup_symbol_by_address(self, address: int) -> SymbolRecord | None:
         """Sub-millisecond binary symbol lookup by virtual address."""
         cursor = self._conn.cursor()
         cursor.execute("SELECT * FROM symbols WHERE address = ? LIMIT 1", (address,))
@@ -1729,7 +1727,7 @@ class OffHeapTypeStore:
 
     def load_json(self, path: str):
         """Loads types and symbols from a JSON export into SQLite."""
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
         dedup = TypeDeduplicator()

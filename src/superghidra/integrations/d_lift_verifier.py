@@ -28,16 +28,15 @@ Covers:
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass, field
 import math
 import os
-import random
 import re
 import shutil
 import subprocess
 import tempfile
 import time
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 try:
     import z3
@@ -221,7 +220,7 @@ class SemanticCheckResult:
     reward: float
     method: str
     path_match_ratio: float
-    counterexample: Optional[str] = None
+    counterexample: str | None = None
     elapsed_ms: float = 0.0
 
 
@@ -281,7 +280,7 @@ class SemanticEquivalenceGate:
         original_c: str,
         candidate_c: str,
         func_name: str = "",
-        oracle_runner: Optional[Callable[[str, str], Tuple[bool, float, Optional[str]]]] = None,
+        oracle_runner: Callable[[str, str], Tuple[bool, float, str | None]] | None = None,
     ) -> SemanticCheckResult:
         t0 = time.perf_counter()
         if oracle_runner is not None:
@@ -315,7 +314,7 @@ class SemanticEquivalenceGate:
         overlap = len(orig_meta["constants"] & cand_meta["constants"]) / total
 
         # Z3 SMT counterexample generation for constant/errno drift
-        cex: Optional[str] = None
+        cex: str | None = None
         if HAS_Z3 and (missing or extra):
             try:
                 solver = z3.Solver()
@@ -594,8 +593,8 @@ class DScoreReport:
     candidate_name: str
     code: str
     syntax: SyntaxCheckResult
-    semantics: Optional[SemanticCheckResult]
-    readability: Optional[ReadabilityMetrics]
+    semantics: SemanticCheckResult | None
+    readability: ReadabilityMetrics | None
     d_score: float
     grpo_advantage: float = 0.0
 
@@ -655,7 +654,7 @@ class DLiFTPipeline:
         candidate_c: str,
         original_c: str,
         func_name: str = "",
-        oracle_runner: Optional[Callable[[str, str], Tuple[bool, float, Optional[str]]]] = None,
+        oracle_runner: Callable[[str, str], Tuple[bool, float, str | None]] | None = None,
     ) -> DScoreReport:
         # Gate 1: Syntax Check (cond_syn)
         syn_res = self.syn_gate.verify_syntax(candidate_c)
@@ -967,7 +966,7 @@ def differential_execution_oracle(
     return False, 0.0, f"compile failure: {detail[:500]}"
 
 
-def symbolic_write_retry_oracle(original_c: str, candidate_c: str) -> Tuple[bool, float, Optional[str]]:
+def symbolic_write_retry_oracle(original_c: str, candidate_c: str) -> Tuple[bool, float, str | None]:
     """
     Symbolic & Concolic Co-Execution Oracle for `safe_rw` / `FUN_0011c6ec`:
     Simulates all symbolic paths across `(initial_count, write_ret_seq, errno_seq)`
@@ -1004,7 +1003,7 @@ def symbolic_write_retry_oracle(original_c: str, candidate_c: str) -> Tuple[bool
     ]
 
     matches = 0
-    first_cex: Optional[str] = None
+    first_cex: str | None = None
     for init_cnt, step_trace in test_vectors:
         expected_out = model_sim(orig_consts, init_cnt, step_trace)
         actual_out = model_sim(cand_consts, init_cnt, step_trace)

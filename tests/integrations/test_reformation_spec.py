@@ -28,12 +28,10 @@ from __future__ import annotations
 
 import json
 import os
-import struct
 import sys
 import tempfile
 import unittest
 import zipfile
-from pathlib import Path
 
 # Ensure SuperGhidra workspace is in sys.path
 SUPERGHIDRA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
@@ -42,11 +40,6 @@ if SUPERGHIDRA_DIR not in sys.path:
 
 from superghidra.integrations.apk_jni_cross_referencer import (
     APKJNICrossReferencer,
-    JavaNativeMethod,
-    JNICrossReferenceMatch,
-    JNIRegisteredNative,
-    construct_static_jni_symbol,
-    mangle_jni_identifier,
 )
 
 

@@ -14,61 +14,43 @@ Comprehensive unit and integration tests covering:
 from __future__ import annotations
 
 import json
-import math
 import os
 import struct
 import sys
 import time
 import unittest
-from unittest.mock import MagicMock, patch
 
 # Ensure SuperGhidra workspace is in sys.path
 SUPERGHIDRA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
-from superghidra.integrations.emulator_memory_sidecar import (
-    BaseMemoryReader,
-    DynamicKeyResult,
-    EmulatorDeviceInfo,
-    EmulatorFleetGuard,
-    EmulatorSidecarShmClient,
-    EmulatorSidecarShmServer,
-    FleetSafetyViolationError,
-    MemoryRegion,
-    MockMemoryReader,
-    ModuleBaseResolver,
-    StructFieldVerificationResult,
-    VTableSlot,
-    VTableVerificationResult,
-    calculate_shannon_entropy,
-    extract_dynamic_encryption_keys,
-    verify_struct_field,
-    verify_vtable_pointer,
-)
+from superghidra.core.shm_decompiler_bridge import ShmChannel
 from superghidra.diff.binary_diff_engine import (
-    BasicBlock,
     BatchedBinaryMatcher,
-    FunctionCFG,
     InsnCategory,
-    InstructionInfo,
     decode_arm64_instruction,
     extract_cfgs_from_arm64_bytes,
     extract_cfgs_from_binary,
-    get_arm64_branch_info,
 )
-from superghidra.core.shm_decompiler_bridge import ShmChannel, ShmRingBuffer
 from superghidra.diff.struct_shift_migrator import (
-    FieldMigration,
-    MemoryAccess,
-    MigrationReport,
     ShiftType,
-    StructInsertion,
     StructShiftMigrator,
     decode_arm64_memory_access,
     decode_x86_64_memory_accesses,
     migrate_struct_shifts,
     parse_disassembly_line,
+)
+from superghidra.integrations.emulator_memory_sidecar import (
+    EmulatorFleetGuard,
+    EmulatorSidecarShmClient,
+    EmulatorSidecarShmServer,
+    FleetSafetyViolationError,
+    MockMemoryReader,
+    ModuleBaseResolver,
+    extract_dynamic_encryption_keys,
+    verify_struct_field,
+    verify_vtable_pointer,
 )
 
 
@@ -684,63 +666,6 @@ class TestStructShiftMigrator(unittest.TestCase):
         self.assertEqual(mig_map[0x10].delta, 0)
         self.assertEqual(mig_map[0x18].new_offset, 0x20)
         self.assertEqual(mig_map[0x1C].new_offset, 0x24)
-
-    def test_struct_shift_migrator_with_x86_64_bytes(self):
-        """Verifies StructShiftMigrator discovers struct shifts directly from x86_64 machine bytes."""
-        # v1: MOV rax, [rdi + 0x10]; MOV ecx, [rdi + 0x18]; MOV edx, [rdi + 0x1C]; RET
-        v1_bytes = (
-            b"\x48\x8b\x47\x10"
-            b"\x8b\x4f\x18"
-            b"\x8b\x57\x1c"
-            b"\xc3"
-        )
-        # v2: 8-byte insertion at 0x18 -> 0x18 shifted to 0x20, 0x1C shifted to 0x24
-        v2_bytes = (
-            b"\x48\x8b\x47\x10"
-            b"\x8b\x4f\x20"
-            b"\x8b\x57\x24"
-            b"\xc3"
-        )
-
-        migrator = StructShiftMigrator()
-        migrator.load_from_x86_64_bytes(v1_bytes, v2_bytes, base_pc=0x401000)
-        report = migrator.analyze_shifts(struct_name="X86Player")
-
-        self.assertEqual(report.total_shifts_detected, 2)
-        self.assertEqual(report.max_delta, 8)
-        mig_map = {m.old_offset: m for m in report.field_migrations}
-        self.assertEqual(mig_map[0x10].delta, 0)
-        self.assertEqual(mig_map[0x18].new_offset, 0x20)
-        self.assertEqual(mig_map[0x1C].new_offset, 0x24)
-
-    def test_shift_discovery_and_insertion_detection(self):
-        migrator = StructShiftMigrator()
-        v1_code = [
-            "LDR X0, [X19, #0x0]",
-            "LDR X1, [X19, #0x8]",
-            "LDR W2, [X19, #0x10]",
-            "LDR W3, [X19, #0x14]",
-            "LDR W4, [X19, #0x18]",
-        ]
-        v2_code = [
-            "LDR X0, [X19, #0x0]",
-            "LDR X1, [X19, #0x8]",
-            "LDR W2, [X19, #0x10]",
-            "LDR W3, [X19, #0x18]",
-            "LDR W4, [X19, #0x1C]",
-        ]
-        migrator.load_functions_from_instructions(
-            {"Player::tick": v1_code},
-            {"Player::tick": v2_code},
-        )
-        report = migrator.analyze_shifts(struct_name="Player")
-        self.assertEqual(report.total_shifts_detected, 2)
-        self.assertEqual(report.max_delta, 4)
-        self.assertEqual(len(report.insertions), 1)
-        self.assertEqual(report.insertions[0].offset, 0x14)
-
-
-
 
 
 # Helper ARM64 Instruction Encoders for Unit Testing

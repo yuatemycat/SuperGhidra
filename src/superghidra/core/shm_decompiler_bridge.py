@@ -24,11 +24,10 @@ from __future__ import annotations
 import dataclasses
 import os
 import struct
-import sys
 import threading
 import time
 from multiprocessing import shared_memory
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -149,10 +148,10 @@ class ShmBinaryView:
     @classmethod
     def create(
         cls,
-        name: Optional[str],
+        name: str | None,
         base_vaddr: int,
-        sections_data: Dict[str, Union[bytes, bytearray, np.ndarray, Tuple[int, Union[bytes, bytearray, np.ndarray]]]],
-        section_flags: Optional[Dict[str, int]] = None,
+        sections_data: Dict[str, bytes | bytearray | np.ndarray | Tuple[int, bytes | bytearray | np.ndarray]],
+        section_flags: Dict[str, int] | None = None,
     ) -> ShmBinaryView:
         """
         Creates a new shared memory block containing the structured binary view.
@@ -327,7 +326,7 @@ class ShmBinaryView:
     @classmethod
     def from_elf_bytes(
         cls,
-        name: Optional[str],
+        name: str | None,
         elf_bytes: bytes,
         default_base_vaddr: int = 0x100000,
     ) -> ShmBinaryView:
@@ -472,7 +471,7 @@ class ShmBinaryView:
     @classmethod
     def from_elf_file(
         cls,
-        name: Optional[str],
+        name: str | None,
         elf_path: str,
         default_base_vaddr: int = 0x100000,
     ) -> ShmBinaryView:
@@ -483,7 +482,7 @@ class ShmBinaryView:
             elf_bytes = f.read()
         return cls.from_elf_bytes(name=name, elf_bytes=elf_bytes, default_base_vaddr=default_base_vaddr)
 
-    def vaddr_to_section(self, vaddr: int) -> Optional[SectionInfo]:
+    def vaddr_to_section(self, vaddr: int) -> SectionInfo | None:
         """Finds the section containing the given virtual address."""
         vaddr_int = int(vaddr)
         for sec in self.sections.values():
@@ -491,7 +490,7 @@ class ShmBinaryView:
                 return sec
         return None
 
-    def vaddr_to_shm_offset(self, vaddr: int) -> Optional[int]:
+    def vaddr_to_shm_offset(self, vaddr: int) -> int | None:
         """Translates a virtual address to the exact byte offset in shared memory."""
         vaddr_int = int(vaddr)
         sec = self.vaddr_to_section(vaddr_int)
@@ -636,7 +635,7 @@ class ShmRingBuffer:
     @classmethod
     def create(
         cls,
-        name: Optional[str] = None,
+        name: str | None = None,
         capacity: int = 1024 * 1024,
         mode: int = RING_MODE_SPSC,
     ) -> ShmRingBuffer:
@@ -823,7 +822,7 @@ class ShmRingBuffer:
             if spin_count > 200:
                 time.sleep(0.000005)
 
-    def pop_message(self, timeout: float = 0.0) -> Optional[ShmMessage]:
+    def pop_message(self, timeout: float = 0.0) -> ShmMessage | None:
         """
         Pops and decodes the next message from the ring buffer.
         Returns ShmMessage or None if empty / timeout.
@@ -1000,7 +999,7 @@ class ShmChannel:
         self,
         msg_type: int,
         payload: bytes,
-        req_id: Optional[int] = None,
+        req_id: int | None = None,
         timeout: float = 0.5,
     ) -> int:
         """Sends a query packet and returns the assigned request id."""
@@ -1018,7 +1017,7 @@ class ShmChannel:
             raise TimeoutError("Failed to send query: tx_ring is full or timed out")
         return req_id
 
-    def recv_query(self, timeout: float = 0.0) -> Optional[ShmMessage]:
+    def recv_query(self, timeout: float = 0.0) -> ShmMessage | None:
         """Receives an incoming query from the rx_ring."""
         return self.rx_ring.pop_message(timeout=timeout)
 
@@ -1037,7 +1036,7 @@ class ShmChannel:
             timeout=timeout,
         )
 
-    def recv_reply(self, expected_req_id: Optional[int] = None, timeout: float = 0.5) -> Optional[ShmMessage]:
+    def recv_reply(self, expected_req_id: int | None = None, timeout: float = 0.5) -> ShmMessage | None:
         """Waits for and receives a reply packet matching expected_req_id."""
         start = time.perf_counter()
         while True:
@@ -1054,7 +1053,7 @@ class ShmChannel:
         msg_type: int,
         payload: bytes,
         timeout: float = 0.5,
-    ) -> Optional[ShmMessage]:
+    ) -> ShmMessage | None:
         """Pushes a query and awaits reply synchronously."""
         req_id = self.send_query(msg_type, payload, timeout=timeout)
         return self.recv_reply(expected_req_id=req_id, timeout=timeout)

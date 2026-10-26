@@ -12,7 +12,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Tuple
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -108,6 +108,7 @@ def create_parser() -> argparse.ArgumentParser:
 
 def cmd_version() -> int:
     import platform
+
     from superghidra import __version__
     print(f"SuperGhidra v{__version__}")
     print(f"Platform: {platform.system()} {platform.machine()} ({platform.platform()})")
@@ -116,25 +117,25 @@ def cmd_version() -> int:
     # Check optional acceleration backends
     features = []
     try:
-        import z3  # type: ignore
+        import z3  # type: ignore # noqa: F401
         features.append("SMT (z3)")
     except ImportError:
         pass
 
     try:
-        import wgpu  # type: ignore
+        import wgpu  # type: ignore # noqa: F401
         features.append("GPU Acceleration (wgpu)")
     except ImportError:
         pass
 
     try:
-        import lz4  # type: ignore
+        import lz4  # type: ignore # noqa: F401
         features.append("LZ4 Compression")
     except ImportError:
         pass
 
     try:
-        import zstandard  # type: ignore
+        import zstandard  # type: ignore # noqa: F401
         features.append("Zstandard Compression")
     except ImportError:
         pass
@@ -145,9 +146,9 @@ def cmd_version() -> int:
 
 def _function_bytes(
     path: Path | str,
-    arch: Optional[str] = None,
-    rva: Optional[int] = None,
-    va: Optional[int] = None,
+    arch: str | None = None,
+    rva: int | None = None,
+    va: int | None = None,
     length: int = 128,
 ) -> Tuple[bytes, int]:
     from superghidra.formats.binary_loader import load_binary
@@ -193,7 +194,7 @@ def cmd_decompile(args: argparse.Namespace) -> int:
 
     # Route through active Ghidra daemon if explicitly requested via --daemon (#25)
     if getattr(args, "daemon", False) and not getattr(args, "standalone", False):
-        from superghidra.core.ghidra_oracle import is_daemon_online, client_send_request
+        from superghidra.core.ghidra_oracle import client_send_request, is_daemon_online
 
         daemon_up = is_daemon_online(host=args.host, port=args.port)
         if not daemon_up:
@@ -312,7 +313,7 @@ def cmd_flirt_match(args: argparse.Namespace) -> int:
         length=64,
     )
 
-    matches = match_flirt_signatures(str(args.sig_file), chunk, candidate_rva=target_rva)
+    matches = match_flirt_signatures(str(args.binary), sig_path=str(args.sig_file))
     if matches:
         print(f"Found {len(matches)} signature match(es):")
         for m in matches:
@@ -330,13 +331,13 @@ def cmd_rtti_recover(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        report = recover_classes(str(args.binary)).to_dict()
+        report: dict[str, Any] = recover_classes(str(args.binary)).to_dict()
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    counts = report["counts"]
-    print(f"Recovered {counts['rtti']} RTTI classes and {counts['mfc']} MFC runtime classes "
-          f"({counts['mfc_serializable']} serializable).")
+    counts: dict[str, Any] = report.get("counts", {})
+    print(f"Recovered {counts.get('rtti', 0)} RTTI classes and {counts.get('mfc', 0)} MFC runtime classes "
+          f"({counts.get('mfc_serializable', 0)} serializable).")
 
     if args.output:
         args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -422,7 +423,7 @@ def cmd_smt_verify(args: argparse.Namespace) -> int:
 
     # Default / demo mode
     print("=== SuperGhidra SMT P-Code Equivalence Verifier ===")
-    from superghidra.lifters.pcode_lifter_bridge import PcodeOp, PcodeOpcode, Varnode, AddressSpace
+    from superghidra.lifters.pcode_lifter_bridge import AddressSpace, PcodeOp, PcodeOpcode, Varnode
     ops = [
         PcodeOp(PcodeOpcode.INT_ADD, [Varnode(AddressSpace.REGISTER, 0, 8), Varnode(AddressSpace.CONST, 0x24, 8)], Varnode(AddressSpace.UNIQUE, 0, 8)),
         PcodeOp(PcodeOpcode.LOAD, [Varnode(AddressSpace.RAM, 0, 4), Varnode(AddressSpace.UNIQUE, 0, 8)], Varnode(AddressSpace.REGISTER, 8, 4)),

@@ -8,6 +8,7 @@ Tests for Roadmap U20:
 """
 
 import unittest
+
 from superghidra.core.compilable_filter import CompilableDecompilerFilter
 
 

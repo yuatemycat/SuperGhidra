@@ -27,7 +27,7 @@ import os
 import re
 import struct
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from superghidra.formats import binary_loader
 from superghidra.lifters import x86_decode
@@ -57,7 +57,7 @@ _IDENT = re.compile(rb"[A-Za-z_][A-Za-z0-9_:<>]{1,200}\x00")
 @dataclass
 class VTable:
     address: int
-    col_address: Optional[int]
+    col_address: int | None
     offset_in_class: int  # COL.offset: this pointer adjustment of the sub-object
     functions: List[int] = field(default_factory=list)
 
@@ -71,7 +71,7 @@ class RttiClass:
     bases: List[str] = field(default_factory=list)  # direct and indirect, nearest first
     multiple_inheritance: bool = False
     virtual_inheritance: bool = False
-    object_size: Optional[int] = None
+    object_size: int | None = None
 
 
 @dataclass
@@ -81,14 +81,14 @@ class MfcRuntimeClass:
     object_size: int
     schema: int  # 0xFFFF => not serializable; low 16 bits otherwise
     versionable: bool
-    create_object: Optional[int]
-    base_class: Optional[int]  # base CRuntimeClass VA (resolved through GetBaseClass stubs)
-    base_name: Optional[str] = None
-    vtable: Optional[int] = None
-    get_runtime_class: Optional[int] = None
-    serialize: Optional[int] = None  # body of Serialize(CArchive&), thunks/forwarders resolved
-    serialize_slot: Optional[int] = None  # vtable slot holding that body (2 for plain MFC)
-    serialize_external: Optional[str] = None  # imported Serialize the class inherits, if any
+    create_object: int | None
+    base_class: int | None  # base CRuntimeClass VA (resolved through GetBaseClass stubs)
+    base_name: str | None = None
+    vtable: int | None = None
+    get_runtime_class: int | None = None
+    serialize: int | None = None  # body of Serialize(CArchive&), thunks/forwarders resolved
+    serialize_slot: int | None = None  # vtable slot holding that body (2 for plain MFC)
+    serialize_external: str | None = None  # imported Serialize the class inherits, if any
 
     @property
     def serializable(self) -> bool:
@@ -97,7 +97,7 @@ class MfcRuntimeClass:
 
 @dataclass
 class ClassRecoveryReport:
-    binary: Optional[str]
+    binary: str | None
     arch: str
     rtti_classes: List[RttiClass]
     mfc_classes: List[MfcRuntimeClass]
@@ -120,13 +120,13 @@ class ClassRecoveryReport:
             d["serializable"] = c.serializable
             mfc.append(d)
         rtti = []
-        for c in self.rtti_classes:
+        for rc in self.rtti_classes:
             rtti.append({
-                "name": c.name, "mangled": c.mangled, "type_descriptor": hx(c.type_descriptor),
-                "bases": c.bases, "multiple_inheritance": c.multiple_inheritance,
-                "virtual_inheritance": c.virtual_inheritance, "object_size": c.object_size,
+                "name": rc.name, "mangled": rc.mangled, "type_descriptor": hx(rc.type_descriptor),
+                "bases": rc.bases, "multiple_inheritance": rc.multiple_inheritance,
+                "virtual_inheritance": rc.virtual_inheritance, "object_size": rc.object_size,
                 "vtables": [{"address": hx(v.address), "offset_in_class": v.offset_in_class,
-                             "functions": [hx(f) for f in v.functions]} for v in c.vtables],
+                             "functions": [hx(f) for f in v.functions]} for v in rc.vtables],
             })
         return {"binary": self.binary, "arch": self.arch, "mfc_classes": mfc, "rtti_classes": rtti,
                 "counts": {"mfc": len(mfc), "mfc_serializable": sum(1 for c in self.mfc_classes if c.serializable),
@@ -183,25 +183,25 @@ class _View:
                           and s.name.lower() not in (".rsrc", ".reloc", ".pdata", ".idata")]
         self.iat = {imp.address: imp for imp in img.imports if imp.address}
 
-    def is_code(self, va: Optional[int]) -> bool:
+    def is_code(self, va: int | None) -> bool:
         return va is not None and any(a <= va < b for a, b in self.code)
 
-    def is_mapped(self, va: Optional[int]) -> bool:
+    def is_mapped(self, va: int | None) -> bool:
         return va is not None and self.img.section_for_va(va) is not None
 
-    def u32(self, va: int) -> Optional[int]:
+    def u32(self, va: int) -> int | None:
         raw = self.img.read_va(va, 4)
         return struct.unpack("<I", raw)[0] if len(raw) == 4 else None
 
-    def i32(self, va: int) -> Optional[int]:
+    def i32(self, va: int) -> int | None:
         raw = self.img.read_va(va, 4)
         return struct.unpack("<i", raw)[0] if len(raw) == 4 else None
 
-    def pointer(self, va: int) -> Optional[int]:
+    def pointer(self, va: int) -> int | None:
         raw = self.img.read_va(va, self.ptr)
         return struct.unpack(self.pfmt, raw)[0] if len(raw) == self.ptr else None
 
-    def ref(self, va: int) -> Optional[int]:
+    def ref(self, va: int) -> int | None:
         """RTTI reference: image-relative RVA on x64, absolute VA on x86."""
         if self.ptr == 8:
             rva = self.i32(va)
@@ -218,7 +218,7 @@ class _View:
                 yield sec.vaddr + off, struct.unpack_from(fmt, blob, off)[0]
 
 
-def _decode_at(view: _View, va: int) -> Optional[x86_decode.X86Insn]:
+def _decode_at(view: _View, va: int) -> x86_decode.X86Insn | None:
     code = view.img.read_va(va, 16)
     if not code:
         return None
@@ -236,7 +236,7 @@ def _follow_thunks(view: _View, va: int, max_hops: int = 8) -> int:
     return va
 
 
-def _import_slot(view: _View, insn: x86_decode.X86Insn) -> Optional[str]:
+def _import_slot(view: _View, insn: x86_decode.X86Insn) -> str | None:
     """Import name when `insn` reads an IAT slot (`mov rax,[rip+iat]` / `jmp [iat]`)."""
     if insn.mem is None:
         return None
@@ -247,7 +247,7 @@ def _import_slot(view: _View, insn: x86_decode.X86Insn) -> Optional[str]:
     return imp.name or f"{imp.library or '?'}#{imp.ordinal}"
 
 
-def _stub_value(view: _View, func_va: int) -> Tuple[Optional[int], Optional[str]]:
+def _stub_value(view: _View, func_va: int) -> Tuple[int | None, str | None]:
     """What a `return &classX;` stub returns: (address, None) or (None, imported symbol).
 
     Recognises `lea rax,[rip+X]; ret`, `mov eax, X; ret`, `mov rax,[rip+__imp_X]; ret`
@@ -276,12 +276,12 @@ def _stub_value(view: _View, func_va: int) -> Tuple[Optional[int], Optional[str]
     return value, imported
 
 
-def _returned_address(view: _View, func_va: int) -> Optional[int]:
+def _returned_address(view: _View, func_va: int) -> int | None:
     """Address returned by a `lea rax,[rip+X]; ret` / `mov eax, X; ret` style stub."""
     return _stub_value(view, func_va)[0]
 
 
-def _virtual_forward_slot(view: _View, func_va: int) -> Optional[int]:
+def _virtual_forward_slot(view: _View, func_va: int) -> int | None:
     """Slot index K when the function is `mov rax,[rcx]; jmp [rax+K*ptr]` (a virtual forwarder).
 
     Frameworks layered on MFC (e.g. SolidWorks' su_CObject) implement Serialize(CArchive&)
@@ -300,7 +300,7 @@ def _virtual_forward_slot(view: _View, func_va: int) -> Optional[int]:
     return second.mem.disp // view.ptr
 
 
-def _demangle_mfc_import(name: Optional[str]) -> Optional[str]:
+def _demangle_mfc_import(name: str | None) -> str | None:
     """`?classCObject@CObject@@2UCRuntimeClass@@B` / `?GetThisClass@CDocument@@SA...` -> class."""
     if not name or not name.startswith("?"):
         return None
@@ -361,12 +361,12 @@ def _scan_rtti(view: _View) -> List[RttiClass]:
             continue
         td_va, offset, chd_va = cols[value]
         vt_va = slot_va + ptr
-        funcs = []
+        funcs: List[int] = []
         for k in range(4096):
             fn = view.pointer(vt_va + k * ptr)
             if k and fn in cols:
                 break
-            if not view.is_code(fn):
+            if fn is None or not view.is_code(fn):
                 break
             funcs.append(fn)
         if funcs:
@@ -435,9 +435,9 @@ def _scan_rtti(view: _View) -> List[RttiClass]:
 def _scan_mfc(view: _View) -> List[MfcRuntimeClass]:
     img, ptr = view.img, view.ptr
     rec = 8 + 5 * ptr if ptr == 8 else 28  # x64: name, size+schema, 4 pointers / x86: 7 dwords
-    name_cache: Dict[int, Optional[str]] = {}
+    name_cache: Dict[int, str | None] = {}
 
-    def class_name(va: int) -> Optional[str]:
+    def class_name(va: int) -> str | None:
         if va not in name_cache:
             raw = img.read_va(va, 202)
             m = _IDENT.match(raw) if raw else None
@@ -514,10 +514,10 @@ def _scan_mfc(view: _View) -> List[MfcRuntimeClass]:
     return sorted(valid_classes, key=lambda c: c.name)
 
 
-_SIBLING_VIEWS: Dict[str, Optional[Tuple[_View, Dict[str, int]]]] = {}
+_SIBLING_VIEWS: Dict[str, Tuple[_View, Dict[str, int]] | None] = {}
 
 
-def _sibling_view(view: _View, library: Optional[str]) -> Optional[Tuple[_View, Dict[str, int]]]:
+def _sibling_view(view: _View, library: str | None) -> Tuple[_View, Dict[str, int]] | None:
     """(view, export map) of `library` loaded from the same folder as the image, or None."""
     if not library or not view.img.path:
         return None
@@ -535,7 +535,7 @@ def _sibling_view(view: _View, library: Optional[str]) -> Optional[Tuple[_View, 
     return _SIBLING_VIEWS[key]
 
 
-def _imported_forward_slot(view: _View, insn: x86_decode.X86Insn) -> Optional[int]:
+def _imported_forward_slot(view: _View, insn: x86_decode.X86Insn) -> int | None:
     """Slot K when an imported function (in a DLL next to the image) is a virtual forwarder.
 
     SolidWorks' main modules inherit `su_CObject::Serialize(CArchive&)` from swccu.dll,
@@ -543,7 +543,10 @@ def _imported_forward_slot(view: _View, insn: x86_decode.X86Insn) -> Optional[in
     """
     if insn.mem is None:
         return None
-    imp = view.iat.get(insn.mem.effective_address(insn.end))
+    eff_addr = insn.mem.effective_address(insn.end)
+    if eff_addr is None:
+        return None
+    imp = view.iat.get(eff_addr)
     if imp is None or not imp.name:
         return None
     sibling = _sibling_view(view, imp.library)
@@ -556,7 +559,7 @@ def _imported_forward_slot(view: _View, insn: x86_decode.X86Insn) -> Optional[in
     return _virtual_forward_slot(other, _follow_thunks(other, target))
 
 
-def _resolve_serialize(view: _View, funcs: List[int]) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+def _resolve_serialize(view: _View, funcs: List[int]) -> Tuple[int | None, int | None, str | None]:
     """(body VA, slot, imported name) for the Serialize virtual of a vftable."""
     slot = MFC_SLOT_SERIALIZE
     for _ in range(4):
@@ -582,14 +585,14 @@ def _resolve_serialize(view: _View, funcs: List[int]) -> Tuple[Optional[int], Op
 def _link_mfc_to_vtables(view: _View, mfc: List[MfcRuntimeClass], rtti: List[RttiClass]) -> None:
     """Find each CRuntimeClass's vftable through its GetRuntimeClass() stub."""
     by_addr = {c.address: c for c in mfc}
-    candidates: List[Tuple[int, List[int], Optional[str]]] = []
+    candidates: List[Tuple[int, List[int], str | None]] = []
     for cls in rtti:
         for vt in cls.vtables:
             if vt.offset_in_class == 0:
                 candidates.append((vt.address, vt.functions, cls.name))
-    stub_cache: Dict[int, Optional[int]] = {}
+    stub_cache: Dict[int, int | None] = {}
 
-    def runtime_class_of(fn: int) -> Optional[int]:
+    def runtime_class_of(fn: int) -> int | None:
         if fn not in stub_cache:
             stub_cache[fn] = _returned_address(view, fn)
         return stub_cache[fn]
@@ -597,12 +600,13 @@ def _link_mfc_to_vtables(view: _View, mfc: List[MfcRuntimeClass], rtti: List[Rtt
     # Without RTTI (/GR-), fall back to scanning data for pointer runs into code whose
     # first entry is a GetRuntimeClass stub.
     if not candidates:
-        prev_va, run = None, []
+        prev_va: int | None = None
+        run: List[int] = []
         for slot_va, value in view.pointer_slots():
             if view.is_code(value) and prev_va is not None and slot_va == prev_va + view.ptr:
                 run.append(value)
             else:
-                if len(run) > MFC_SLOT_SERIALIZE:
+                if prev_va is not None and len(run) > MFC_SLOT_SERIALIZE:
                     candidates.append((prev_va - (len(run) - 1) * view.ptr, run, None))
                 run = [value] if view.is_code(value) else []
             prev_va = slot_va
@@ -610,7 +614,7 @@ def _link_mfc_to_vtables(view: _View, mfc: List[MfcRuntimeClass], rtti: List[Rtt
     # A class without its own DECLARE_DYNAMIC inherits its base's GetRuntimeClass, so
     # several vftables can report the same CRuntimeClass. Prefer the one whose RTTI name
     # matches; otherwise take the first.
-    matches: Dict[int, List[Tuple[int, List[int], Optional[str]]]] = {}
+    matches: Dict[int, List[Tuple[int, List[int], str | None]]] = {}
     for vt_va, funcs, rtti_name in candidates:
         if len(funcs) <= MFC_SLOT_SERIALIZE:
             continue
@@ -618,17 +622,17 @@ def _link_mfc_to_vtables(view: _View, mfc: List[MfcRuntimeClass], rtti: List[Rtt
         if rc in by_addr:
             matches.setdefault(rc, []).append((vt_va, funcs, rtti_name))
     for rc, options in matches.items():
-        cls = by_addr[rc]
-        exact = [o for o in options if o[2] == cls.name]
+        mfc_cls = by_addr[rc]
+        exact = [o for o in options if o[2] == mfc_cls.name]
         vt_va, funcs, _ = (exact or options)[0]
-        cls.vtable = vt_va
-        cls.get_runtime_class = _follow_thunks(view, funcs[MFC_SLOT_GET_RUNTIME_CLASS])
-        if cls.serializable:
-            cls.serialize, cls.serialize_slot, cls.serialize_external = _resolve_serialize(view, funcs)
+        mfc_cls.vtable = vt_va
+        mfc_cls.get_runtime_class = _follow_thunks(view, funcs[MFC_SLOT_GET_RUNTIME_CLASS])
+        if mfc_cls.serializable:
+            mfc_cls.serialize, mfc_cls.serialize_slot, mfc_cls.serialize_external = _resolve_serialize(view, funcs)
 
 
 def recover_classes(source, *, rtti: bool = True, mfc: bool = True,
-                    symbol_dirs: Optional[List[str]] = None) -> ClassRecoveryReport:
+                    symbol_dirs: List[str] | None = None) -> ClassRecoveryReport:
     """Recover MSVC RTTI classes and MFC CRuntimeClass records from a PE file/bytes/image.
 
     ``symbol_dirs`` overrides where ordinal-name tables (``mfc140u.exports`` ...) are looked
@@ -653,7 +657,7 @@ if __name__ == "__main__":  # pragma: no cover
     rep = recover_classes(sys.argv[1])
     d = rep.to_dict()
     print(json.dumps(d["counts"], indent=2))
-    for c in d["mfc_classes"][:40]:
+    for c in d["mfc_classes"][:40]:  # type: ignore[index]
         print(f"{c['name']:40} size={c['object_size']:<6} schema={c['schema']:<6} base={c['base_name']} "
               f"vt={c['vtable']} serialize={c['serialize']}")
 

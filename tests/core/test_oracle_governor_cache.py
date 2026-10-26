@@ -28,7 +28,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import sqlite3
 import sys
 import tempfile
 import time
@@ -41,21 +40,16 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 from superghidra.core.ghidra_oracle import (
-    DEFAULT_HOST,
     DEFAULT_IMAGE_BASE,
-    DEFAULT_PORT,
-    GhidraOracleSession,
+    DeltaEventType,
     GhidraDaemonServer,
+    GhidraOracleSession,
     L2SQLiteCache,
+    SemanticDeltaLog,
     WriteOverlay,
     client_send_request,
     main,
-    normalize_address_pair,
-    DependencyCacheDAG,
-    SemanticDeltaLog,
-    DeltaEventType,
 )
-
 
 
 class TestL2SQLiteCache(unittest.TestCase):

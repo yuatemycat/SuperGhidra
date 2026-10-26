@@ -20,7 +20,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 
 class ExtensionValidationError(Exception):
@@ -46,9 +46,9 @@ class GhidraExtensionPackager:
 
     def __init__(
         self,
-        skeleton_dir: Optional[str] = None,
-        ghidra_install_dir: Optional[str] = None,
-        output_dir: Optional[str] = None,
+        skeleton_dir: str | None = None,
+        ghidra_install_dir: str | None = None,
+        output_dir: str | None = None,
     ):
         _here = Path(__file__).resolve().parent
         base_dir = _here.parents[1] if (_here.parents[1] / "ghidra_extension_skeleton").exists() else _here
@@ -69,7 +69,7 @@ class GhidraExtensionPackager:
             raise ExtensionValidationError(f"Missing extension.properties at {prop_path}")
 
         props: Dict[str, str] = {}
-        with open(prop_path, "r", encoding="utf-8") as f:
+        with open(prop_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
@@ -249,7 +249,7 @@ class GhidraExtensionPackager:
 
         return zip_path, verification
 
-    def install_extension(self, target_extensions_dir: Optional[Path | str] = None) -> Path:
+    def install_extension(self, target_extensions_dir: Path | str | None = None) -> Path:
         """
         Installs the packaged extension into Ghidra's Extensions directory.
         Extracts dist/SuperGhidraCodec-1.0.0.zip into <GHIDRA_INSTALL_DIR>/Ghidra/Extensions/SuperGhidraCodec.

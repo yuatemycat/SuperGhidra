@@ -29,12 +29,10 @@ import os
 import platform
 import shutil
 import struct
-import subprocess
-import sys
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 try:
     import numpy as np
@@ -72,11 +70,11 @@ class CloudConfig:
     workspace_dir: str = "/content"
     ram_disk_dir: str = "/dev/shm"
     target_binary_name: str = "libtarget.so"
-    apk_name: Optional[str] = "game.apk"
+    apk_name: str | None = "game.apk"
     jadx_threads: int = 4
     jadx_max_heap_gb: int = 8
-    hf_token: Optional[str] = None
-    hf_repo_id: Optional[str] = None
+    hf_token: str | None = None
+    hf_repo_id: str | None = None
     tensor_matrix_size: int = 128
     use_bfloat16: bool = True
     evidence_ledger_path: str = "/content/evidence_ledger.json"
@@ -163,7 +161,7 @@ class ColabCloudOrchestrator:
         return env_updates
 
     @classmethod
-    def stage_binary_to_ram_disk(cls, src_path: str, ram_disk_dir: Optional[str] = None) -> str:
+    def stage_binary_to_ram_disk(cls, src_path: str, ram_disk_dir: str | None = None) -> str:
         """
         Stages the target binary into /dev/shm (or fallback RAM disk) for zero-I/O execution.
         Raises FileNotFoundError if src_path does not exist.
@@ -501,7 +499,7 @@ class ColabCloudOrchestrator:
         }
 
     @classmethod
-    def generate_notebook(cls, output_path: Optional[str] = None) -> Dict[str, Any]:
+    def generate_notebook(cls, output_path: str | None = None) -> Dict[str, Any]:
         """
         Generates official Google Colab Jupyter Notebook adhering to nbformat v4.
         """

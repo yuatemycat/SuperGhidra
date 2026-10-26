@@ -34,10 +34,6 @@ Includes automated benchmark harness and output generator for PHASE2_BENCHMARK_R
 
 from __future__ import annotations
 
-import collections
-import dataclasses
-import json
-import logging
 import os
 import shutil
 import struct
@@ -45,7 +41,7 @@ import sys
 import tempfile
 import time
 import unittest
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict
 
 import numpy as np
 
@@ -55,81 +51,45 @@ if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
 # 1. SHM Decompiler Bridge
-from superghidra.core.shm_decompiler_bridge import (
-    CACHELINE_SIZE,
-    SEC_EXEC,
-    SEC_READ,
-    SEC_WRITE,
-    SectionInfo,
-    ShmBinaryView,
-    ShmChannel,
-    ShmRingBuffer,
-    benchmark_shm_bridge,
-)
-
 # 2. GPU Function Seeder
 from superghidra.acceleration.gpu_function_seeder import (
-    GPUFunctionSeeder,
-    FunctionSeed,
     KIND_BL,
     KIND_BTI,
     KIND_PACIASP,
     KIND_RET,
     KIND_STP_FP_LR,
     KIND_SUB_SP,
-    NumPyFunctionSeederEngine,
+    GPUFunctionSeeder,
 )
 
 # 3. Dependency Cache DAG
 from superghidra.core.dependency_cache_dag import (
-    DecompilationLRUCache,
     DependencyCacheDAG,
-    FunctionNode,
-    InvalidationImpactReport,
-    StructFieldInfo,
-    StructNode,
     generate_synthetic_dependency_dag,
+)
+from superghidra.core.shm_decompiler_bridge import (
+    ShmBinaryView,
+    ShmChannel,
+    ShmRingBuffer,
+    benchmark_shm_bridge,
 )
 
 # 4. Semantic Delta Log
 from superghidra.diff.semantic_delta_log import (
     CommentType,
-    DeltaEventType,
-    DeltaMigrationEngine,
-    DeltaMigrationReport,
-    MigrationStatus,
     SemanticDeltaLog,
     SemanticEvent,
-    compute_event_proof_hash,
-)
-from superghidra.diff.binary_diff_engine import (
-    BatchedBinaryMatcher,
-    generate_paired_synthetic_binaries,
-)
-from superghidra.diff.evidence_ledger import (
-    ObligationStatus,
-    ObligationType,
-    ReconstructionObligationLedger,
 )
 
 # 5. DWARF/PDB Pre-Indexer
 from superghidra.formats.dwarf_pdb_preindexer import (
-    DWARFTextDumpParser,
-    EnumVariant,
-    FunctionParameter,
-    FunctionPrototype,
-    NormalizedType,
     OffHeapTypeStore,
     OracleTypeStoreAdapter,
-    StructuredTypeDumpParser,
     StructMember,
-    SymbolRecord,
-    SyntheticDebugDataGenerator,
     TypeDeduplicator,
     TypeKind,
     benchmark_preindexer,
 )
-
 from superghidra.formats.synthetic_symbol_exporter import (
     DWARF5Exporter,
     ExportField,
@@ -137,7 +97,6 @@ from superghidra.formats.synthetic_symbol_exporter import (
     ExportSymbol,
     PDBExporter,
 )
-
 
 # ==============================================================================
 # Suite 1: Shared-Memory Decompiler Bridge Tests
@@ -202,7 +161,7 @@ class TestShmDecompilerBridge(unittest.TestCase):
         try:
             # Send 10 messages of varying sizes
             for i in range(10):
-                payload = f"msg_payload_{i}_{'X' * (i * 20)}".encode("utf-8")
+                payload = f"msg_payload_{i}_{'X' * (i * 20)}".encode()
                 success = rb.push_message(msg_type=i, req_id=100 + i, payload=payload, timeout=0.1)
                 self.assertTrue(success)
 
@@ -212,7 +171,7 @@ class TestShmDecompilerBridge(unittest.TestCase):
                 self.assertIsNotNone(frame)
                 self.assertEqual(frame.msg_type, i)
                 self.assertEqual(frame.req_id, 100 + i)
-                expected_payload = f"msg_payload_{i}_{'X' * (i * 20)}".encode("utf-8")
+                expected_payload = f"msg_payload_{i}_{'X' * (i * 20)}".encode()
                 self.assertEqual(frame.payload, expected_payload)
         finally:
             rb.close()

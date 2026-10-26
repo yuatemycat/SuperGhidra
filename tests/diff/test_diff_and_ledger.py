@@ -29,24 +29,14 @@ import sys
 import tempfile
 import unittest
 
-import numpy as np
-
 SUPERGHIDRA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
 from superghidra.diff.binary_diff_engine import (
-    BasicBlock,
     BatchedBinaryMatcher,
-    CFGFeatureExtractor,
-    FunctionCFG,
-    InsnCategory,
-    InstructionInfo,
-    decode_x86_64_instruction,
-    extract_cfgs_from_arm64_bytes,
     extract_cfgs_from_binary,
     extract_cfgs_from_x86_64_bytes,
-    generate_paired_synthetic_binaries,
 )
 from superghidra.diff.evidence_ledger import (
     AllocationSizeVerifier,

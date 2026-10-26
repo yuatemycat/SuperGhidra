@@ -26,25 +26,22 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import sys
 import tempfile
 import unittest
-from unittest import mock
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 # Ensure SuperGhidra workspace is in sys.path
 SUPERGHIDRA_DIR = str(Path(__file__).resolve().parents[2])
 if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
+from superghidra.core.native_decompiler_pgo_builder import DecompilerBuildConfig, NativeDecompilerPGOBuilder
 from superghidra.integrations import colab_cloud_orchestrator
 from superghidra.integrations.colab_cloud_orchestrator import CloudConfig, CloudRuntimeTier, ColabCloudOrchestrator
-from superghidra.storage import ghidra_extension_packager
-from superghidra.storage.ghidra_extension_packager import GhidraExtensionPackager, ExtensionValidationError
-from superghidra.core import native_decompiler_pgo_builder
-from superghidra.core.native_decompiler_pgo_builder import DecompilerBuildConfig, NativeDecompilerPGOBuilder
+from superghidra.storage.ghidra_extension_packager import GhidraExtensionPackager
 
 _GHIDRA_DIR = Path(os.environ.get("GHIDRA_INSTALL_DIR", ""))
 _INSTALLED_JAR = Path("Ghidra", "Extensions", "SuperGhidraCodec", "lib", "SuperGhidraCodec.jar")
@@ -471,7 +468,7 @@ class TestFrontier4ColabCloudOrchestrator(unittest.TestCase):
             nb_path = self.project_root / "colab_cloud_orchestrator.ipynb"
         self.assertTrue(nb_path.is_file(), f"Notebook file not found at {nb_path}")
 
-        with open(nb_path, "r", encoding="utf-8") as f:
+        with open(nb_path, encoding="utf-8") as f:
             nb = json.load(f)
 
         self.assertEqual(nb.get("nbformat"), 4)

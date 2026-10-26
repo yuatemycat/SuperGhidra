@@ -19,16 +19,16 @@ from unittest.mock import patch
 
 import numpy as np
 
+from superghidra.acceleration.gpu_adrp_scanner import (
+    GPUAdrpScanner,
+    decode_ldr_imm,
+)
 from superghidra.diff.evidence_ledger import (
     FieldDisplacementVerifier,
     LedgerVerificationError,
     ObligationStatus,
     ObligationType,
     ReconstructionObligationLedger,
-)
-from superghidra.acceleration.gpu_adrp_scanner import (
-    GPUAdrpScanner,
-    decode_ldr_imm,
 )
 from superghidra.diff.struct_shift_migrator import (
     MemoryAccess,

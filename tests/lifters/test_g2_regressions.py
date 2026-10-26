@@ -5,31 +5,29 @@ Regression tests for ARM64 lifter decoding, register mapping hygiene,
 and SMT soundness verifications (Agent G2a).
 """
 
-import struct
 import unittest
+
 import z3
 
 from superghidra.lifters.pcode_lifter_bridge import (
+    FLAG_C_OFFSET,
+    FLAG_N_OFFSET,
+    FLAG_V_OFFSET,
+    FLAG_Z_OFFSET,
+    AddressSpace,
     ARM64PcodeLifter,
     PcodeOp,
     PcodeOpcode,
-    AddressSpace,
     Varnode,
-    FLAG_N_OFFSET,
-    FLAG_Z_OFFSET,
-    FLAG_C_OFFSET,
-    FLAG_V_OFFSET,
 )
 from superghidra.lifters.smt_pcode_verifier import (
+    CCodeParser,
+    CSymbolicEvaluator,
+    ObligationStatus,
+    ObligationType,
+    ProofObligation,
     SMTPcodeVerifier,
     SymbolicState,
-    PcodeSymbolicSimulator,
-    CSymbolicEvaluator,
-    CCodeParser,
-    ProofObligation,
-    ObligationType,
-    ObligationStatus,
-    ReconstructionObligationLedger,
 )
 
 

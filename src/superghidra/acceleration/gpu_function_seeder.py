@@ -31,11 +31,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-import os
 import struct
-import sys
-import time
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Set, Tuple
 
 import numpy as np
 
@@ -86,7 +83,7 @@ class FunctionSeed:
     entry_vaddr: int
     sources: Set[str] = dataclasses.field(default_factory=set)
     confidence: float = 0.5
-    prologue_type: Optional[str] = None
+    prologue_type: str | None = None
     callers: List[int] = dataclasses.field(default_factory=list)
     data_refs: List[int] = dataclasses.field(default_factory=list)
 
@@ -397,11 +394,11 @@ class GPUFunctionSeeder:
     prologue alignment detection, and data pointer scans to discover function seeds.
     """
 
-    def __init__(self, backend: str = "auto", max_matches: Optional[int] = None):
+    def __init__(self, backend: str = "auto", max_matches: int | None = None):
         self.backend = backend
         self.max_matches = max_matches
-        self._wgpu_engine: Optional[WGPUFunctionSeederEngine] = None
-        self._torch_engine: Optional[TorchFunctionSeederEngine] = None
+        self._wgpu_engine: WGPUFunctionSeederEngine | None = None
+        self._torch_engine: TorchFunctionSeederEngine | None = None
 
         if backend == "auto":
             if HAS_WGPU:
@@ -549,8 +546,8 @@ class GPUFunctionSeeder:
         self,
         text_instructions: np.ndarray,
         text_base_vaddr: int,
-        rodata_bytes: Optional[bytes] = None,
-        rodata_base_vaddr: Optional[int] = None,
+        rodata_bytes: bytes | None = None,
+        rodata_base_vaddr: int | None = None,
     ) -> List[FunctionSeed]:
         """
         Performs full function seeding sweep over .text and optional .rodata.
@@ -697,8 +694,8 @@ class GPUFunctionSeeder:
         self,
         code_bytes: bytes,
         text_base_vaddr: int = 0x401000,
-        rodata_bytes: Optional[bytes] = None,
-        rodata_base_vaddr: Optional[int] = None,
+        rodata_bytes: bytes | None = None,
+        rodata_base_vaddr: int | None = None,
     ) -> List[FunctionSeed]:
         """
         Scans x86_64 .text bytes to discover function entry points from:
@@ -825,7 +822,7 @@ class GPUFunctionSeeder:
         filepath: str,
         binary_name: str = "binary.so",
         text_base_vaddr: int = 0,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> None:
         """Exports function seeds to a structured JSON ledger."""
         data = {

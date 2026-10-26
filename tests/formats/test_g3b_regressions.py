@@ -21,12 +21,18 @@ Focused regression test suite for verified bugs resolved in Agent G3b:
    - Exact prefix/suffix stripping for descriptors ("LLoginManager;" -> "LoginManager")
 """
 
-import os
 import struct
-import tempfile
 import unittest
 from typing import List
 
+from superghidra.core.shm_decompiler_bridge import (
+    FRAME_HDR_FMT,
+    FRAME_MAGIC,
+    ShmRingBuffer,
+)
+from superghidra.formats.dwarf_pdb_preindexer import (
+    OffHeapTypeStore,
+)
 from superghidra.formats.synthetic_symbol_exporter import (
     DWARF5Exporter,
     ExportField,
@@ -35,19 +41,6 @@ from superghidra.formats.synthetic_symbol_exporter import (
     PDBExporter,
     encode_sleb128,
     encode_uleb128,
-)
-from superghidra.formats.dwarf_pdb_preindexer import (
-    OffHeapTypeStore,
-    TypeDeduplicator,
-)
-from superghidra.core.shm_decompiler_bridge import (
-    FRAME_HDR_FMT,
-    FRAME_HDR_SIZE,
-    FRAME_MAGIC,
-    RING_OFFSET_DATA,
-    RING_OFFSET_HEAD,
-    RING_OFFSET_TAIL,
-    ShmRingBuffer,
 )
 from superghidra.integrations.apk_jni_cross_referencer import (
     APKJNICrossReferencer,

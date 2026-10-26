@@ -15,32 +15,26 @@ Covers both synthetic/mock inputs and real IDA Pro artifacts:
 from __future__ import annotations
 
 import os
-from pathlib import Path
-import struct
 import tempfile
 import time
 import unittest
-from typing import Any, Dict, List
+from pathlib import Path
 
+from superghidra.core.live_binary_tools import (
+    _til_struct_to_spec,
+)
 from superghidra.formats.ida_flirt_bridge import (
-    FlirtMatch,
     FlirtPattern,
     FlirtSignatureIndex,
     FlirtSymbol,
-    dump_flirt_file,
     find_dumpsig,
     list_available_sigs,
-    match_flirt_signatures,
     parse_flirt_dump,
     parse_flirt_pattern_string,
 )
 from superghidra.formats.ida_til_importer import (
-    TilEnum,
-    TilEnumMember,
     TilField,
-    TilReport,
     TilStruct,
-    dump_til_c_code,
     export_clean_header,
     find_ida_install,
     find_tilib,
@@ -50,12 +44,6 @@ from superghidra.formats.ida_til_importer import (
     parse_til_declarations,
     sanitize_ida_c_declarations,
 )
-from superghidra.core.live_binary_tools import (
-    STRUCT_CATALOG,
-    _til_struct_to_spec,
-    get_struct_catalog,
-)
-
 
 IDA_ENV = os.environ.get("IDA_DIR") or os.environ.get("IDADIR")
 IDA_ROOT = Path(IDA_ENV) if IDA_ENV else find_ida_install()

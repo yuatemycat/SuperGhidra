@@ -13,7 +13,6 @@ import pytest
 from superghidra.core.native_compiler import c_compiler
 from superghidra.diff.ood_decompiler_benchmark import (
     BENCHMARK_CASES,
-    BenchmarkResultRow,
     OODDecompilerBenchmarkRunner,
     format_markdown_report,
 )

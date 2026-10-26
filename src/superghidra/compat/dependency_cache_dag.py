@@ -4,8 +4,8 @@ Canonical location: `superghidra.<domain>.dependency_cache_dag`.
 """
 from __future__ import annotations
 
-import sys as _sys
 import importlib as _importlib
+import sys as _sys
 
 _DOMAINS = ["core", "formats", "diff", "acceleration", "lifters", "integrations", "storage"]
 _mod = None
@@ -18,7 +18,7 @@ for _d in _DOMAINS:
 
 if _mod is None:
     try:
-        _mod = _importlib.import_module(f"superghidra.dependency_cache_dag")
+        _mod = _importlib.import_module("superghidra.dependency_cache_dag")
     except Exception:
         pass
 

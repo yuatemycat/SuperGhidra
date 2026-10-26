@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from superghidra.integrations.d_lift_verifier import (
-    CFunctionSymbolicLifter,
     ClangSyntaxGate,
     DLiFTPipeline,
     DLiftRewardEngine,

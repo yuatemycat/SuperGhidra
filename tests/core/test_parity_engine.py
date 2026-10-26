@@ -17,29 +17,21 @@ from __future__ import annotations
 import os
 import struct
 import unittest
+
 import numpy as np
 
-from superghidra.core import parity_engine as shim_parity_engine
 from superghidra.core import (
-    ARM64ADRPScanner,
-    AppcallExecutionFrame,
     AppcallMarshaller,
-    ArchitectureRegisterBank,
+    ARM64ADRPScanner,
     BasicBlock,
     CFGSignatureIndex,
     ClangHeaderImporter,
-    CompiledUsercallPrototype,
     FuncdataGraph,
-    FunctionSignatureRecord,
     PCodeCFG,
     PCodeMaturity,
     PCodeOp,
     PCodeOpcode,
-    ParsedCompositeType,
-    ParsedFieldRecord,
-    RegisterDescriptor,
     SGDBBlockStore,
-    SGDBSlotEntry,
     SHMVarnodeBuffer,
     SparseMatrixDatalogEngine,
     StagedPCodePassManager,
@@ -48,11 +40,11 @@ from superghidra.core import (
     SuperGhidraSection3MCPServer,
     SymbolicCFGDeflattener,
     UsercallPrototypeCompiler,
-    VariableStorageBinding,
     Varnode,
     run_self_verification,
 )
 from superghidra.core import parity_engine as canonical_parity_engine
+from superghidra.core import parity_engine as shim_parity_engine
 
 
 class TestBackwardCompatibilityShims(unittest.TestCase):

@@ -28,7 +28,6 @@ Test Coverage:
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import socket
@@ -45,20 +44,14 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from superghidra.core.ghidra_oracle import (
-    DEFAULT_HOST,
     MAX_REQUEST_SIZE,
-    MUTATING_COMMANDS,
-    READ_ONLY_COMMANDS,
-    SUPERGHIDRA_DATA_DIR_ENV,
     SUPERGHIDRA_TOKEN_ENV,
     GhidraDaemonServer,
     is_loopback_host,
-    save_session_token,
     load_session_token,
-    get_default_token_path,
-    query_oracle,
-    client_send_request,
     main,
+    query_oracle,
+    save_session_token,
 )
 
 

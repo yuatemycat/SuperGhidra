@@ -13,12 +13,11 @@ macOS XNU) into SuperGhidra's type analysis pipelines.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import subprocess
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
-
+from pathlib import Path
+from typing import Any, Dict, List
 
 DEFAULT_IDA_PATHS = [
     r"C:\Program Files\IDA Pro 8.4",
@@ -29,7 +28,7 @@ DEFAULT_IDA_PATHS = [
 ]
 
 
-def find_ida_install(custom_path: Optional[str] = None) -> Optional[Path]:
+def find_ida_install(custom_path: str | None = None) -> Path | None:
     """Locate the IDA Pro root directory."""
     candidates = []
     if custom_path:
@@ -55,7 +54,7 @@ def find_ida_install(custom_path: Optional[str] = None) -> Optional[Path]:
     return None
 
 
-def find_tilib(ida_dir: Optional[Path] = None) -> Optional[Path]:
+def find_tilib(ida_dir: Path | None = None) -> Path | None:
     """Locate the Hex-Rays tilib utility."""
     root = ida_dir or find_ida_install()
     if not root:
@@ -72,7 +71,7 @@ def find_tilib(ida_dir: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
-def list_available_tils(ida_dir: Optional[Path] = None) -> Dict[str, List[Path]]:
+def list_available_tils(ida_dir: Path | None = None) -> Dict[str, List[Path]]:
     """Enumerate all .til files grouped by architecture / platform directory."""
     root = ida_dir or find_ida_install()
     if not root:
@@ -89,7 +88,7 @@ def list_available_tils(ida_dir: Optional[Path] = None) -> Dict[str, List[Path]]
     return categorized
 
 
-def dump_til_c_code(til_path: Union[str, Path], tilib_path: Optional[Union[str, Path]] = None) -> str:
+def dump_til_c_code(til_path: str | Path, tilib_path: str | Path | None = None) -> str:
     """Run `tilib.exe -lc` to dump declarations from a .til file as C source."""
     til = Path(til_path)
     if not til.is_file():
@@ -156,7 +155,7 @@ class TilEnum:
 class TilField:
     name: str
     c_type: str
-    array_dim: Optional[str] = None
+    array_dim: str | None = None
 
 
 @dataclass
@@ -252,13 +251,13 @@ def parse_til_declarations(c_code: str, til_path: str = "") -> TilReport:
     return report
 
 
-def import_til(til_path: Union[str, Path], tilib_path: Optional[Union[str, Path]] = None) -> TilReport:
+def import_til(til_path: str | Path, tilib_path: str | Path | None = None) -> TilReport:
     """High-level function: dump and parse an IDA .til file into a TilReport."""
     c_code = dump_til_c_code(til_path, tilib_path=tilib_path)
     return parse_til_declarations(c_code, til_path=str(til_path))
 
 
-def export_clean_header(til_path: Union[str, Path], output_header: Union[str, Path]) -> int:
+def export_clean_header(til_path: str | Path, output_header: str | Path) -> int:
     """Dump a .til file and write out a fully normalized, compilable C header file."""
     c_code = dump_til_c_code(til_path)
     sanitized = sanitize_ida_c_declarations(c_code)
@@ -277,9 +276,9 @@ def export_clean_header(til_path: Union[str, Path], output_header: Union[str, Pa
 
 
 def import_type_library(
-    target: Union[str, Path],
-    output_header: Optional[Union[str, Path]] = None,
-    tilib_path: Optional[Union[str, Path]] = None,
+    target: str | Path,
+    output_header: str | Path | None = None,
+    tilib_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     """Import and sanitize an IDA TIL library, or auto-resolve TIL for a binary target."""
     target_str = str(target)

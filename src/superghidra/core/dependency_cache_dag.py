@@ -24,12 +24,10 @@ from __future__ import annotations
 import collections
 import dataclasses
 import hashlib
-import json
 import logging
-import os
 import threading
 import time
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Set, Tuple
 
 logger = logging.getLogger("SuperGhidra.DependencyDAG")
 
@@ -55,7 +53,7 @@ class StructFieldInfo:
 class StructNode:
     """Represents a reconstructed struct/class definition in the DAG."""
     name: str
-    size: Optional[int] = None
+    size: int | None = None
     fields: Dict[str, StructFieldInfo] = dataclasses.field(default_factory=dict)
     metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
@@ -80,9 +78,9 @@ class FunctionNode:
     Tracks signatures, callers, callees, and type/field usage dependencies.
     """
     func_id: str
-    address: Optional[int] = None
+    address: int | None = None
     name: str = ""
-    signature: Optional[str] = None
+    signature: str | None = None
     return_type: str = "void"
     parameters: List[Tuple[str, str]] = dataclasses.field(default_factory=list)  # (type, name)
     callees: Set[str] = dataclasses.field(default_factory=set)  # functions called by this
@@ -125,7 +123,7 @@ class InvalidationImpactReport:
     """
     target_type: str  # "FUNCTION_SIGNATURE", "STRUCT_FIELD", "STRUCT_DEFINITION", "SYMBOL"
     target_id: str
-    detail: Optional[str] = None
+    detail: str | None = None
     affected_functions: Set[str] = dataclasses.field(default_factory=set)
     evicted_from_cache: List[str] = dataclasses.field(default_factory=list)
     pre_cache_size: int = 0
@@ -174,7 +172,7 @@ class DecompilationLRUCache:
         self.misses = 0
         self.total_evictions = 0
 
-    def get(self, func_id: str) -> Optional[Any]:
+    def get(self, func_id: str) -> Any | None:
         with self._lock:
             if func_id in self._cache:
                 self.hits += 1
@@ -280,12 +278,12 @@ class DependencyCacheDAG:
     def add_function(
         self,
         func_id: str,
-        address: Optional[int] = None,
-        name: Optional[str] = None,
-        signature: Optional[str] = None,
+        address: int | None = None,
+        name: str | None = None,
+        signature: str | None = None,
         return_type: str = "void",
-        parameters: Optional[List[Tuple[str, str]]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        parameters: List[Tuple[str, str]] | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> FunctionNode:
         """Adds or updates a function node in the DAG."""
         with self._lock:
@@ -346,8 +344,8 @@ class DependencyCacheDAG:
     def add_struct(
         self,
         name: str,
-        size: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        size: int | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> StructNode:
         """Registers a struct/type in the DAG."""
         with self._lock:
@@ -382,7 +380,7 @@ class DependencyCacheDAG:
         self,
         func_id: str,
         struct_name: str,
-        field_name: Optional[str] = None,
+        field_name: str | None = None,
     ) -> None:
         """
         Records that a function uses a given struct or specific struct field.
@@ -438,7 +436,7 @@ class DependencyCacheDAG:
     def invalidate_function_signature(
         self,
         func_id: str,
-        new_signature: Optional[str] = None,
+        new_signature: str | None = None,
     ) -> InvalidationImpactReport:
         """
         Selective 1-Hop Invalidation for Function Signature Updates.
@@ -523,7 +521,7 @@ class DependencyCacheDAG:
         self,
         struct_name: str,
         field_name: str,
-        detail: Optional[str] = None,
+        detail: str | None = None,
     ) -> InvalidationImpactReport:
         """
         Selective 1-Hop Invalidation for Struct Field Modifications.
@@ -565,7 +563,7 @@ class DependencyCacheDAG:
     def invalidate_struct(
         self,
         struct_name: str,
-        detail: Optional[str] = None,
+        detail: str | None = None,
     ) -> InvalidationImpactReport:
         """
         Selective 1-Hop Invalidation for Whole Struct Definition / Layout Updates.
@@ -605,7 +603,7 @@ class DependencyCacheDAG:
     def invalidate_symbol(
         self,
         symbol_name: str,
-        detail: Optional[str] = None,
+        detail: str | None = None,
     ) -> InvalidationImpactReport:
         """
         Selective Invalidation for Global Symbol Reassignments / Renames.

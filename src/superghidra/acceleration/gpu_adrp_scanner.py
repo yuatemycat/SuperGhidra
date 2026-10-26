@@ -21,7 +21,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -444,12 +444,12 @@ class GPUAdrpScanner:
     ADAPTIVE_GPU_THRESHOLD_BYTES: int = ADAPTIVE_GPU_THRESHOLD_BYTES
     GPU_SCAN_SIZE_THRESHOLD_BYTES: int = GPU_SCAN_SIZE_THRESHOLD_BYTES
 
-    def __init__(self, backend: str = "auto", max_matches: Optional[int] = None):
+    def __init__(self, backend: str = "auto", max_matches: int | None = None):
         self.backend = backend
         self.max_matches = max_matches
-        self._wgpu_engine: Optional[WGPUAdrpEngine] = None
-        self._torch_engine: Optional[TorchAdrpEngine] = None
-        self.last_dispatched_backend: Optional[str] = None
+        self._wgpu_engine: WGPUAdrpEngine | None = None
+        self._torch_engine: TorchAdrpEngine | None = None
+        self.last_dispatched_backend: str | None = None
 
         if backend == "auto":
             if HAS_WGPU:
@@ -534,14 +534,14 @@ class GPUAdrpScanner:
 
     def scan_matches(
         self,
-        data: Union[bytes, bytearray, np.ndarray],
+        data: bytes | bytearray | np.ndarray,
         base_pc: int = 0x100000000,
         filter_same_register: bool = True,
         force_gpu: bool = False,
     ) -> List[ADRPMatch]:
         """
         Discovers and decodes all ADRP + ADD/LDR reference pairs.
-        
+
         Args:
             data: Instruction buffer (bytes, bytearray, or uint32 array).
             base_pc: Virtual address base for PC calculation.
