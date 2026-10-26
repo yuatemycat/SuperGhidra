@@ -1,15 +1,21 @@
-"""Backward-compatibility shim for `ghidra_gui_overlay_sync`.
+"""Root backward-compatibility shim for `ghidra_gui_overlay_sync`.
 
-Canonical location: `superghidra.integrations.ghidra_gui_overlay_sync`.
+Canonical package location: `superghidra.compat.ghidra_gui_overlay_sync`.
 """
 from __future__ import annotations
 
+import os as _os
 import sys as _sys
-from superghidra.integrations import ghidra_gui_overlay_sync as _mod
-from superghidra.integrations.ghidra_gui_overlay_sync import *  # noqa: F401,F403
+
+_src_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "src")
+if _src_dir not in _sys.path:
+    _sys.path.insert(0, _src_dir)
+
+from superghidra.compat import ghidra_gui_overlay_sync as _mod
+from superghidra.compat.ghidra_gui_overlay_sync import *  # noqa: F401,F403
 
 if __name__ == "__main__":
     import runpy as _runpy
-    _runpy.run_module("superghidra.integrations.ghidra_gui_overlay_sync", run_name="__main__", alter_sys=True)
+    _runpy.run_module("superghidra.compat.ghidra_gui_overlay_sync", run_name="__main__", alter_sys=True)
 else:
     _sys.modules[__name__] = _mod

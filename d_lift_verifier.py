@@ -1,15 +1,21 @@
-"""Backward-compatibility shim for `d_lift_verifier`.
+"""Root backward-compatibility shim for `d_lift_verifier`.
 
-Canonical location: `superghidra.integrations.d_lift_verifier`.
+Canonical package location: `superghidra.compat.d_lift_verifier`.
 """
 from __future__ import annotations
 
+import os as _os
 import sys as _sys
-from superghidra.integrations import d_lift_verifier as _mod
-from superghidra.integrations.d_lift_verifier import *  # noqa: F401,F403
+
+_src_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "src")
+if _src_dir not in _sys.path:
+    _sys.path.insert(0, _src_dir)
+
+from superghidra.compat import d_lift_verifier as _mod
+from superghidra.compat.d_lift_verifier import *  # noqa: F401,F403
 
 if __name__ == "__main__":
     import runpy as _runpy
-    _runpy.run_module("superghidra.integrations.d_lift_verifier", run_name="__main__", alter_sys=True)
+    _runpy.run_module("superghidra.compat.d_lift_verifier", run_name="__main__", alter_sys=True)
 else:
     _sys.modules[__name__] = _mod

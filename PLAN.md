@@ -88,6 +88,9 @@
 - [x] ~~**In-Memory + JSON Symbol Write-Overlay**~~
   - *Implemented in:* `WriteOverlay` in [`ghidra_oracle.py`](ghidra_oracle.py)
   - *Accomplished:* Allows renaming and commenting without dirtying read-only `.rep` databases.
+- [x] ~~**Daemon Security Model (Loopback Invariant, Session Tokens, Bounded Payloads)**~~
+  - *Implemented in:* [`ghidra_oracle.py`](superghidra/core/ghidra_oracle.py)
+  - *Accomplished:* Daemon binds strictly to loopback (`127.0.0.1`, `::1`); refuses non-loopback addresses unless `--allow-remote` is explicitly specified. Control and mutating commands (`stop`, `rename`, `comment`, `clear`, `register_struct`, `mode`, `hibernate`) require a verified session token (via `--token`, `SUPERGHIDRA_SESSION_TOKEN`, or local token file). Enforces a 2 MB max request size limit to prevent memory exhaustion and denial-of-service.
 
 ---
 
@@ -290,3 +293,5 @@ Regression tests for the 2026-10-17 audit live in `test_g1_regressions.py`, `tes
 - **Emulator `pid` access is trust-based.** The caller must declare the device serial for a `pid`; the binding can't be auto-verified.
 - **Benchmarks depend on the machine.** Numbers vary with hardware; storage numbers use synthetic pages.
 - **The MCP server must be restarted (and agy's schema cache refreshed) after code changes.** A stale server process re-caches old schemas.
+- **Daemon remote binding requires explicit opt-in.** The daemon binds strictly to loopback (`127.0.0.1`, `::1`) by default; exposing to remote interfaces requires `--allow-remote`, and control/mutation commands require a verified session token (`SUPERGHIDRA_SESSION_TOKEN` or `--token`). Requests exceeding 2 MB are rejected.
+- **HumanEval benchmark measures syntactic recompilation, not neural code generation.** The 22.62% (294/1,300) full corpus pass rate and 25.26% (98/388) held-out 30% test split pass rate evaluate the deterministic AST/token rewriter `CompilableDecompilerFilter` against GCC 16.2 (`gcc -O0 -lm`) on `LLM4Binary/decompile-eval` (raw Ghidra achieves 8.23% / 107/1,300 full corpus and 11.08% / 43/388 on the test split; IDA achieves 18.69% raw / 19.00% with `defs.h` full corpus and 11.86% on the test split). Linux ELF binaries evaluated on Windows (LLP64) experience 32-bit `long` truncation on raw Ghidra emissions (on Linux LP64, raw Ghidra achieves 21.46% / 279/1,300).

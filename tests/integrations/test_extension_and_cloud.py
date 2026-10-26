@@ -466,7 +466,9 @@ class TestFrontier4ColabCloudOrchestrator(unittest.TestCase):
 
     def test_07_colab_notebook_nbformat_v4_validity(self):
         """Tests that colab_cloud_orchestrator.ipynb is a valid Jupyter Notebook (nbformat v4)."""
-        nb_path = self.project_root / "colab_cloud_orchestrator.ipynb"
+        nb_path = self.project_root / "notebooks" / "colab_cloud_orchestrator.ipynb"
+        if not nb_path.is_file():
+            nb_path = self.project_root / "colab_cloud_orchestrator.ipynb"
         self.assertTrue(nb_path.is_file(), f"Notebook file not found at {nb_path}")
 
         with open(nb_path, "r", encoding="utf-8") as f:

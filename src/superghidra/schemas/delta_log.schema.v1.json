@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superghidra.org/schemas/delta_log.schema.v1.json",
+  "title": "SuperGhidra Semantic Delta Log Event Schema v1",
+  "description": "Schema for each line (SemanticEvent) in .ghidra-delta.jsonl audit trails.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "description": "Delta log schema version number",
+      "default": 1
+    },
+    "event_id": {
+      "type": "string",
+      "description": "Unique event identifier, e.g. EVT-ABCD1234EF56",
+      "pattern": "^EVT-[A-F0-9]+$"
+    },
+    "event_type": {
+      "type": "string",
+      "description": "Semantic event type identifier",
+      "enum": [
+        "RENAME_FUNCTION",
+        "RENAME_VARIABLE",
+        "SET_COMMENT",
+        "APPLY_TYPE",
+        "CREATE_STRUCT",
+        "MODIFY_STRUCT",
+        "REGISTER_VTABLE",
+        "RECORD_OBLIGATION",
+        "RESOLVE_OBLIGATION"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp of event creation"
+    },
+    "author": {
+      "type": "string",
+      "description": "Identifier of human analyst or automated agent"
+    },
+    "target_address": {
+      "type": ["integer", "null"],
+      "description": "Target virtual address or offset"
+    },
+    "target_symbol": {
+      "type": ["string", "null"],
+      "description": "Target symbol or function name"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Domain-specific mutation payload parameters"
+    },
+    "obligation_id": {
+      "type": ["string", "null"],
+      "description": "Associated ReconstructionObligationLedger obligation ID if gated"
+    },
+    "evidence": {
+      "type": ["object", "null"],
+      "description": "Cryptographic evidence dictionary"
+    },
+    "proof_hash": {
+      "type": "string",
+      "description": "Canonical SHA-256 hash digest of event data",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "verified": {
+      "type": "boolean",
+      "description": "Whether event has passed verification gates"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Auxiliary system metadata"
+    }
+  },
+  "required": ["event_id", "event_type", "timestamp", "payload", "proof_hash"],
+  "additionalProperties": true
+}

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superghidra.org/schemas/evidence_ledger.schema.v1.json",
+  "title": "SuperGhidra Reconstruction Obligation Ledger Schema v1",
+  "description": "Schema for ReconstructionObligationLedger exports maintaining formal verification gates.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Ledger specification version, e.g. '1.0.0'"
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO-8601 creation timestamp"
+    },
+    "binary_target": {
+      "type": "string",
+      "description": "Target binary path or SHA-256 digest"
+    },
+    "obligations": {
+      "type": "array",
+      "description": "List of proof obligations",
+      "items": {
+        "type": "object",
+        "properties": {
+          "obligation_id": {
+            "type": "string",
+            "description": "Unique obligation identifier, e.g. OBL-001"
+          },
+          "obligation_type": {
+            "type": "string",
+            "description": "Type of obligation",
+            "enum": [
+              "VTABLE_SLOT_BOUND",
+              "FIELD_DISPLACEMENT_INVARIANT",
+              "ALLOCATION_SIZE_LOWER_BOUND",
+              "FUNCTION_HOOK",
+              "STRUCT_FIELD_RENAME"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "Current verification state",
+            "enum": [
+              "PENDING",
+              "VERIFIED",
+              "VIOLATED",
+              "DISCHARGED",
+              "UNKNOWN"
+            ]
+          },
+          "target_address": {
+            "type": ["integer", "null"]
+          },
+          "target_symbol": {
+            "type": ["string", "null"]
+          },
+          "evidence": {
+            "type": "object",
+            "description": "Verification proof evidence parameters"
+          },
+          "verified_at": {
+            "type": ["string", "null"]
+          },
+          "verifier": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": ["obligation_id", "obligation_type", "status"]
+      }
+    }
+  },
+  "required": ["obligations"],
+  "additionalProperties": true
+}

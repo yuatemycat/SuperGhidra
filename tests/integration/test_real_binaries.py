@@ -16,9 +16,15 @@ from superghidra.storage.storage_compression_prototype import StorageCompression
 from superghidra.core.compilable_filter import CompilableDecompilerFilter
 
 
-# Large stripped ARM64 ELF to test against; set SUPERGHIDRA_TEST_ARM64_ELF to enable.
-REAL_ARM64_ELF = os.environ.get("SUPERGHIDRA_TEST_ARM64_ELF", "")
-REAL_KERNEL32 = r"C:\Windows\System32\kernel32.dll"
+from pathlib import Path
+
+FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "binaries"
+SAMPLE_ARM64 = str(FIXTURES_DIR / "sample_arm64.so")
+SAMPLE_X64 = str(FIXTURES_DIR / "sample_x64.dll")
+
+# Large stripped ARM64 ELF to test against; falls back to redistributable sample_arm64.so for CI.
+REAL_ARM64_ELF = os.environ.get("SUPERGHIDRA_TEST_ARM64_ELF") or (SAMPLE_ARM64 if os.path.exists(SAMPLE_ARM64) else "")
+REAL_KERNEL32 = r"C:\Windows\System32\kernel32.dll" if os.path.exists(r"C:\Windows\System32\kernel32.dll") else (SAMPLE_X64 if os.path.exists(SAMPLE_X64) else "")
 REAL_MFC64 = r"C:\Windows\System32\mfc140u.dll"
 
 

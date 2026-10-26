@@ -21,10 +21,16 @@ from superghidra.core.live_binary_tools import (
 )
 from superghidra.formats.binary_loader import BinaryImage, load_binary
 
-# Large stripped ARM64 ELF to test against; set SUPERGHIDRA_TEST_ARM64_ELF to enable.
-REAL_ARM64_ELF = os.environ.get("SUPERGHIDRA_TEST_ARM64_ELF", "")
-REAL_KERNEL32 = r"C:\Windows\System32\kernel32.dll"
-_REAL_BINARIES = [REAL_ARM64_ELF, REAL_KERNEL32]
+from pathlib import Path
+
+FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "binaries"
+SAMPLE_ARM64 = str(FIXTURES_DIR / "sample_arm64.so")
+SAMPLE_X64 = str(FIXTURES_DIR / "sample_x64.dll")
+
+# Large stripped ARM64 ELF to test against; falls back to redistributable sample binaries for CI.
+REAL_ARM64_ELF = os.environ.get("SUPERGHIDRA_TEST_ARM64_ELF") or (SAMPLE_ARM64 if os.path.exists(SAMPLE_ARM64) else "")
+REAL_KERNEL32 = r"C:\Windows\System32\kernel32.dll" if os.path.exists(r"C:\Windows\System32\kernel32.dll") else (SAMPLE_X64 if os.path.exists(SAMPLE_X64) else "")
+_REAL_BINARIES = [b for b in [REAL_ARM64_ELF, REAL_KERNEL32] if b]
 
 _FLAT_SOURCE = """\
 int flattened_score(int a, int b) {

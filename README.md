@@ -63,7 +63,7 @@ Most Ghidra automation scripts and MCP servers either pay a 5–15 second JVM co
 | **Mutation Safety & Conflict Resolution** | Direct `.rep` writes | Direct in-place renames | Direct in-place tool mutations | **Non-destructive `ghidra_overlay.json` + `merge_fork` conflict detection** |
 | **Semantic Verification Gate** | None | None | None | **Z3 P-code equivalence prover + Obligation Ledger Gate** (vtable/offset checks) |
 | **Query & IPC Latency** | Seconds per batch | HTTP / Socket bridge | HTTP / REST bridge | **5.12 µs** L1 SHM ring buffer (`195,300 msg/s`) & **< 0.01 ms** L2 SQLite cache |
-| **Compilable C Post-Processing** | Raw Ghidra pseudo-C (`8.26%` pass) | Raw Ghidra pseudo-C | Raw Ghidra pseudo-C | **`compilable_filter.py` rewriter (`22.69%` pass across 1,296 functions, zero regressions on passing baselines)** |
+| **Compilable C Post-Processing** | Raw Ghidra pseudo-C (`8.23%` pass) | Raw Ghidra pseudo-C | Raw Ghidra pseudo-C | **`compilable_filter.py` rewriter (`22.62%` pass across 1,300 functions, `25.26%` on held-out test split)** |
 | **Zero-JVM Binary & C++ Recovery** | None (JVM required) | None (JVM required) | None (JVM required) | **Pure-Python PE/ELF/Mach-O loader, MSVC RTTI, MFC `CRuntimeClass` & `Serialize()`** |
 | **Hardware-Accelerated Sweeps** | Single-threaded Java | None | None | **143.95 M insn/s NumPy SIMD & 127.25 M insn/s WGPU ARM64 `ADRP` scanners** |
 | **Database Compression** | Standard `.rep` 16 KB pages | Standard `.rep` | Standard `.rep` | **LZ4 (`442.9 MB/s`, 79.3% savings) & Zstd (`206.5 MB/s`, 86.5% savings) BufferFile codecs** |

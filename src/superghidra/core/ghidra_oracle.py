@@ -42,6 +42,8 @@ import logging
 import re
 import subprocess
 import threading
+import secrets
+import ipaddress
 from typing import Dict, Any, List, Optional, Set, Tuple, Union, Iterable
 from collections import OrderedDict
 
@@ -110,6 +112,101 @@ DAEMON_STARTUP_TIMEOUT = 40.0   # Maximum seconds to wait for daemon JVM warmup
 OVERLAY_FILENAME = "ghidra_overlay.json"
 DAEMON_LOG_FILENAME = "ghidra_oracle_daemon.log"
 L2_CACHE_FILENAME = "ghidra_oracle_cache.db"
+DEFAULT_TOKEN_FILENAME = "daemon.token"
+MAX_REQUEST_SIZE = 2 * 1024 * 1024  # 2 MB limit per request payload
+SUPERGHIDRA_DATA_DIR_ENV = "SUPERGHIDRA_DATA_DIR"
+SUPERGHIDRA_TOKEN_ENV = "SUPERGHIDRA_SESSION_TOKEN"
+
+MUTATING_COMMANDS = {
+    "stop",
+    "rename",
+    "comment",
+    "clear",
+    "clear-cache",
+    "register_struct",
+    "mode",
+    "hibernate",
+}
+
+READ_ONLY_COMMANDS = {
+    "ping",
+    "status",
+    "rva",
+    "decompile",
+    "vtable",
+    "disassemble",
+    "refs",
+    "references",
+    "adrp_add",
+    "opcodes",
+    "type",
+    "overlay",
+}
+
+
+def is_loopback_host(host: str) -> bool:
+    """Checks whether the specified host address is a local loopback interface."""
+    if not host or not isinstance(host, str):
+        return False
+    h = host.strip().strip("[]").lower()
+    if h in ("localhost", "ip6-localhost", "ipv6-localhost"):
+        return True
+    if h.startswith("127."):
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+        return ip.is_loopback
+    except ValueError:
+        return False
+
+
+def get_default_token_path() -> str:
+    """Returns the persistent file path where daemon.token is stored."""
+    data_dir = os.environ.get(SUPERGHIDRA_DATA_DIR_ENV)
+    if data_dir:
+        dir_path = os.path.abspath(data_dir)
+    else:
+        dir_path = os.path.join(os.path.expanduser("~"), ".superghidra")
+    return os.path.join(dir_path, DEFAULT_TOKEN_FILENAME)
+
+
+def save_session_token(token: str, path: Optional[str] = None) -> str:
+    """Saves session token to disk with restricted permissions (0o600)."""
+    token_path = path or get_default_token_path()
+    os.makedirs(os.path.dirname(token_path), exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    mode = 0o600
+    try:
+        fd = os.open(token_path, flags, mode)
+        with open(fd, "w", encoding="utf-8") as f:
+            f.write(token.strip())
+        if hasattr(os, "chmod"):
+            try:
+                os.chmod(token_path, 0o600)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"Could not save daemon token to {token_path}: {e}")
+    return token_path
+
+
+def load_session_token(token_arg: Optional[str] = None, token_path: Optional[str] = None) -> Optional[str]:
+    """Resolves session token from argument, environment variable, or token file on disk."""
+    if token_arg:
+        return token_arg.strip()
+    env_token = os.environ.get(SUPERGHIDRA_TOKEN_ENV)
+    if env_token:
+        return env_token.strip()
+    path = token_path or get_default_token_path()
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    return content
+        except Exception as e:
+            logger.debug(f"Could not read daemon token file {path}: {e}")
+    return None
 
 # No built-in projects: pass --project-dir/--project-name, or set
 # SUPERGHIDRA_PROJECTS to "dir,name[,program]" entries separated by ";".
@@ -1951,15 +2048,32 @@ class GhidraOracleSession:
 class GhidraDaemonServer:
     """Threaded TCP server processing newline-delimited JSON RPC requests."""
 
-    def __init__(self, session: GhidraOracleSession, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
+    def __init__(
+        self,
+        session: GhidraOracleSession,
+        host: str = DEFAULT_HOST,
+        port: int = DEFAULT_PORT,
+        allow_remote: bool = False,
+        token: Optional[str] = None,
+    ):
+        if not allow_remote and not is_loopback_host(host):
+            raise ValueError(
+                f"Refusing to bind to non-loopback address '{host}' without allow_remote=True (or --allow-remote)"
+            )
         self.session = session
         self.host = host
         self.port = port
+        self.allow_remote = allow_remote
+        self.token = token
         self.server_socket = None
         self.running = False
         self._threads: List[threading.Thread] = []
 
     def start(self) -> None:
+        if not self.allow_remote and not is_loopback_host(self.host):
+            raise ValueError(
+                f"Refusing to bind to non-loopback address '{self.host}' without allow_remote=True (or --allow-remote)"
+            )
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
@@ -1997,6 +2111,23 @@ class GhidraDaemonServer:
                     if not data:
                         break
                     buffer.extend(data)
+
+                    # Limit request size to prevent memory exhaustion
+                    if len(buffer) > MAX_REQUEST_SIZE:
+                        logger.warning(
+                            f"Closing connection: incoming buffer size ({len(buffer)} bytes) "
+                            f"exceeds MAX_REQUEST_SIZE ({MAX_REQUEST_SIZE} bytes) from {addr}"
+                        )
+                        err_resp = {
+                            "status": "error",
+                            "message": "Request payload exceeds maximum allowed size",
+                        }
+                        try:
+                            conn.sendall((json.dumps(err_resp) + "\n").encode("utf-8"))
+                        except Exception:
+                            pass
+                        return
+
                     while b"\n" in buffer:
                         idx = buffer.index(b"\n")
                         line_bytes = bytes(buffer[:idx]).strip()
@@ -2057,6 +2188,34 @@ class GhidraDaemonServer:
 
         cmd = req.get("cmd", "").lower()
         args = req.get("args", {})
+        if not isinstance(args, dict):
+            args = {}
+
+        # Validate session token if server has a token configured
+        if self.token is not None:
+            req_token = req.get("token")
+            if req_token is None and isinstance(args, dict):
+                req_token = args.get("token")
+
+            action = args.get("action", req.get("action", "list")) if isinstance(args, dict) else req.get("action", "list")
+            is_mutating = (
+                cmd in MUTATING_COMMANDS
+                or (cmd == "overlay" and action == "clear")
+            )
+
+            if is_mutating:
+                if not req_token or not secrets.compare_digest(str(req_token), str(self.token)):
+                    return {
+                        "status": "error",
+                        "message": "Unauthorized: invalid or missing session token",
+                    }
+            else:
+                # Read-only command: optional token, but if provided, validate it
+                if req_token is not None and not secrets.compare_digest(str(req_token), str(self.token)):
+                    return {
+                        "status": "error",
+                        "message": "Unauthorized: invalid or missing session token",
+                    }
 
         try:
             if cmd == "rva":
@@ -2123,8 +2282,12 @@ class GhidraDaemonServer:
                     return {"status": "error", "message": "Missing 'name' for register_struct"}
                 return self.session.register_struct(name, byte_size, members)
 
+            elif cmd in ("clear", "clear-cache"):
+                self.session.overlay.clear()
+                get_client_l2_cache().clear()
+                return {"status": "ok", "message": "Write-overlay and L2 cache cleared"}
             elif cmd == "overlay":
-                action = args.get("action", "list")
+                action = args.get("action", req.get("action", "list"))
                 if action == "clear":
                     self.session.overlay.clear()
                     return {"status": "ok", "message": "Write-overlay table cleared"}
@@ -2155,12 +2318,21 @@ def is_daemon_online(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> bool
         return False
 
 
-def spawn_background_daemon(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+def spawn_background_daemon(
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    token: Optional[str] = None,
+    allow_remote: bool = False,
+) -> None:
     """Spawns persistent background daemon if offline."""
     script_path = os.path.abspath(__file__)
     log_path = os.path.join(os.path.dirname(script_path), DAEMON_LOG_FILENAME)
 
     cmd = [sys.executable, script_path, "serve", "--host", host, "--port", str(port)]
+    if allow_remote:
+        cmd.append("--allow-remote")
+    if token:
+        cmd.extend(["--token", token])
     print(f"[*] Spawning background Ghidra daemon on {host}:{port}...", file=sys.stderr)
 
     if os.name == "nt":
@@ -2297,10 +2469,12 @@ def client_send_request(
     port: int = DEFAULT_PORT,
     auto_spawn: bool = True,
     l2_cache: Optional[L2SQLiteCache] = None,
+    token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Sends JSON-RPC command to the daemon, auto-spawning if offline."""
     t0 = time.perf_counter()
     cmd_lower = cmd.lower()
+    resolved_token = load_session_token(token_arg=token)
 
     # Fast path for rva: zero JVM required (< 0.1 ms)
     if cmd_lower == "rva":
@@ -2417,14 +2591,17 @@ def client_send_request(
         if not auto_spawn:
             return {"status": "error", "message": f"Ghidra daemon offline on {host}:{port}"}
 
-        spawn_background_daemon(host, port)
+        spawn_background_daemon(host, port, token=resolved_token)
         if not wait_for_daemon_ready(host, port):
             return {
                 "status": "error",
                 "message": f"Daemon failed to start within {DAEMON_STARTUP_TIMEOUT} seconds. Check {DAEMON_LOG_FILENAME}",
             }
 
-    payload = json.dumps({"cmd": cmd, "args": args}) + "\n"
+    payload_dict: Dict[str, Any] = {"cmd": cmd, "args": args}
+    if resolved_token:
+        payload_dict["token"] = resolved_token
+    payload = json.dumps(payload_dict) + "\n"
     res = {"status": "error", "message": "No response from daemon"}
     with socket.create_connection((host, port), timeout=60.0) as s:
         s.sendall(payload.encode("utf-8"))
@@ -2451,6 +2628,27 @@ def client_send_request(
         res["time_ms"] = round((time.perf_counter() - t0) * 1000.0, 4)
 
     return res
+
+
+def query_oracle(
+    cmd: str,
+    args: Optional[Dict[str, Any]] = None,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    token: Optional[str] = None,
+    auto_spawn: bool = True,
+    l2_cache: Optional[L2SQLiteCache] = None,
+) -> Dict[str, Any]:
+    """Client helper function to query the Ghidra Oracle daemon with session token support."""
+    return client_send_request(
+        cmd=cmd,
+        args=args or {},
+        host=host,
+        port=port,
+        auto_spawn=auto_spawn,
+        l2_cache=l2_cache,
+        token=token,
+    )
 
 
 # ==============================================================================
@@ -2628,6 +2826,16 @@ def main():
     parser.add_argument("args", nargs="*", help="Command arguments")
     parser.add_argument("--host", default=DEFAULT_HOST, help="TCP daemon host (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="TCP daemon port (default 5073)")
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Allow binding daemon to non-loopback network addresses",
+    )
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="Session token for daemon authentication",
+    )
     parser.add_argument("--json", action="store_true", help="Output raw JSON response")
     parser.add_argument("--project-dir", default=None, help="Custom Ghidra project directory")
     parser.add_argument("--project-name", default=None, help="Custom Ghidra project name")
@@ -2701,7 +2909,20 @@ def main():
             session.set_resource_mode(parsed.mode)
         print(f"[*] Initializing Ghidra & OpenJDK 21 (Mode: {session.resource_mode})...")
         session.initialize()
-        server = GhidraDaemonServer(session, host=parsed.host, port=parsed.port)
+        # Resolve or generate session token
+        token = parsed.token or os.environ.get(SUPERGHIDRA_TOKEN_ENV)
+        if not token:
+            token = secrets.token_hex(24)
+        token_path = save_session_token(token)
+        print(f"[*] Session token active and stored in {token_path}")
+
+        server = GhidraDaemonServer(
+            session,
+            host=parsed.host,
+            port=parsed.port,
+            allow_remote=parsed.allow_remote,
+            token=token,
+        )
         try:
             server.start()
         except KeyboardInterrupt:
@@ -2801,7 +3022,13 @@ def main():
         print("Available commands: decompile, vtable, disassemble, refs, adrp_add, opcodes, rva, rename, comment, overlay, type, register_struct, status, stop, hibernate, mode, clear-cache, serve")
         return
 
-    res = client_send_request(cmd, req_args, host=parsed.host, port=parsed.port)
+    res = client_send_request(
+        cmd,
+        req_args,
+        host=parsed.host,
+        port=parsed.port,
+        token=parsed.token,
+    )
 
     if parsed.json:
         print(json.dumps(res, indent=2))

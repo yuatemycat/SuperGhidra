@@ -1,0 +1,14 @@
+include LICENSE
+include README.md
+include pyproject.toml
+include CHANGELOG.md
+recursive-include src/superghidra *.py py.typed *.json
+
+# Exclude non-package development assets, launch materials, and notebooks
+exclude *.ipynb
+recursive-exclude notebooks *
+recursive-exclude docs *.docx
+recursive-exclude docs/launch *
+recursive-exclude docs/assets *
+recursive-exclude tests_manual *
+recursive-exclude scratch *

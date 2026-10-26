@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superghidra.org/schemas/overlay.schema.v1.json",
+  "title": "SuperGhidra WriteOverlay Schema v1",
+  "description": "Schema for SuperGhidra in-memory and on-disk non-destructive symbol/comment overlay files (ghidra_overlay.json).",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Overlay schema version number (default 1)",
+      "default": 1
+    },
+    "file": {
+      "type": "string",
+      "description": "Path to target binary or program database"
+    },
+    "renames": {
+      "type": "object",
+      "description": "Mapping from hexadecimal address key (e.g. '0x00101234') to new symbol name",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "comments": {
+      "type": "object",
+      "description": "Mapping from hexadecimal address key to comment text",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "prototypes": {
+      "type": "object",
+      "description": "Mapping from hexadecimal address key to C prototype definition string",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["renames", "comments"],
+  "additionalProperties": true
+}

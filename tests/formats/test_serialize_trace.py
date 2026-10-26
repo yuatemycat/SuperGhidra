@@ -6,7 +6,10 @@ import unittest
 
 import mfc_archive as MA
 import serialize_trace as ST
-from tests.formats.test_msvc_class_recovery import BASE, build_pe_sections
+try:
+    from tests.formats.test_msvc_class_recovery import BASE, build_pe_sections
+except ImportError:
+    from test_msvc_class_recovery import BASE, build_pe_sections
 
 
 def _asm_serialize() -> bytes:

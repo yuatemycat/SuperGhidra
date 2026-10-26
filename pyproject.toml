@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "superghidra"
-version = "0.3.1"
+version = "0.4.0"
 description = "SuperGhidra: Autonomous Agent Reverse Engineering, Lock-Free Ghidra Daemon & C++ Recovery Suite"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -39,6 +39,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Security",
     "Topic :: Software Development :: Compilers",
     "Topic :: Software Development :: Disassemblers",
@@ -60,6 +61,11 @@ gpu = ["wgpu"]
 storage = ["lz4", "zstandard"]
 frida = ["frida"]
 ghidra = ["pyghidra"]
+dev = [
+    "pytest>=8.0",
+    "mypy>=1.10",
+    "ruff>=0.4",
+]
 all = [
     "z3-solver",
     "wgpu",
@@ -69,61 +75,54 @@ all = [
     "pyghidra",
 ]
 
-[tool.setuptools]
-packages = [
-    "superghidra",
-    "superghidra.core",
-    "superghidra.storage",
-    "superghidra.acceleration",
-    "superghidra.diff",
-    "superghidra.lifters",
-    "superghidra.formats",
-    "superghidra.integrations",
-]
-py-modules = [
-    "apk_jni_cross_referencer",
-    "arm_thumb_decode",
-    "binary_diff_engine",
-    "binary_loader",
-    "colab_cloud_orchestrator",
-    "cross_platform_headless_harness",
-    "dependency_cache_dag",
-    "dwarf_pdb_preindexer",
-    "emulator_memory_sidecar",
-    "evidence_ledger",
-    "ghidra_extension_packager",
-    "ghidra_oracle",
-    "gpu_adrp_scanner",
-    "gpu_function_seeder",
-    "headless_analyzer_tuner",
-    "ida_flirt_bridge",
-    "ida_til_importer",
-    "live_binary_tools",
-    "mfc_archive",
-    "msvc_class_recovery",
-    "native_decompiler_pgo_builder",
-    "neural_decompiler_pipeline",
-    "pcode_lifter_bridge",
-    "resource_governor",
-    "semantic_delta_log",
-    "serialize_trace",
-    "shm_decompiler_bridge",
-    "smt_pcode_verifier",
-    "storage_compression_prototype",
-    "struct_shift_migrator",
-    "synthetic_symbol_exporter",
-    "x86_decode",
-    "ghidra_gui_overlay_sync",
-]
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["superghidra*"]
+
+[tool.setuptools.package-data]
+superghidra = ["py.typed", "schemas/*.json"]
 
 [project.scripts]
 superghidra = "superghidra.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = [".", "tests/formats"]
+pythonpath = ["src", ".", "tests/formats"]
 python_files = ["test_*.py"]
-norecursedirs = ["scratch", ".*", "build", "dist", "*.egg", "templates", "docs", "ghidra_extension_skeleton", "scripts"]
+norecursedirs = ["scratch", ".*", "build", "dist", "*.egg", "templates", "docs", "ghidra_extension_skeleton", "scripts", "tests_manual"]
 markers = [
     "integration: marks integration tests that run against real binaries",
 ]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+files = ["src/superghidra"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter / legacy long strings)
+    "E402",  # module level import not at top of file
+    "F403",  # star imports in shims
+    "F405",  # star import names
+    "UP006", # non-pep585 type annotations in legacy code
+    "UP035", # legacy typing imports
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["superghidra"]

@@ -63,11 +63,11 @@ The zero-JVM ARM64 lifter in `superghidra/lifters/pcode_lifter_bridge.py` covers
 * **Issue Body:**
 ```markdown
 ### Summary
-SuperGhidra's current compilability benchmarks evaluate `compilable_filter.py` on the 1,296-function GCC HumanEval-Decompile corpus (achieving 22.69% pass rate vs 8.26% stock Ghidra and 16.90% raw IDA Pro).
+SuperGhidra's compilability benchmarks evaluate `compilable_filter.py` on the 1,300-function GCC HumanEval-Decompile corpus (achieving 22.62% full corpus pass rate, and 25.26% on the function-disjoint held-out 30% test split, vs 8.23% stock Ghidra and 18.69% raw IDA Pro / 19.00% IDA + defs.h).
 
-To address benchmark generalizability, we want:
-1. A held-out evaluation dataset of 200 real-world compiled functions from open-source libraries (e.g. SQLite, zlib, or Coreutils).
-2. A fair comparison baseline that applies standard IDA Pro typedefs (`#include <defs.h>`) to IDA's raw pseudo-C.
+To extend benchmark generalizability beyond synthetic puzzles, we want:
+1. A held-out evaluation dataset of real-world compiled functions from open-source libraries (e.g. SQLite, zlib, or Coreutils).
+2. Extended comparative evaluation against additional architectures and compiler optimization levels.
 
 ### Acceptance Criteria
 - [ ] Script in `benchmarks/eval_held_out.py` evaluating compilation pass rates on the held-out split.

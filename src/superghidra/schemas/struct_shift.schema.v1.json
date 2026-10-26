@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superghidra.org/schemas/struct_shift.schema.v1.json",
+  "title": "SuperGhidra Struct Shift Migration Schema v1",
+  "description": "Schema for cross-version binary struct displacement diffs and migration reports.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Struct shift schema version number",
+      "default": 1
+    },
+    "v1_binary": {
+      "type": "string",
+      "description": "Identifier or path of baseline version binary"
+    },
+    "v2_binary": {
+      "type": "string",
+      "description": "Identifier or path of upgraded version binary"
+    },
+    "arch": {
+      "type": "string",
+      "description": "Instruction set architecture (arm64, x86_64, arm)"
+    },
+    "structs": {
+      "type": "array",
+      "description": "List of migrated structures",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Structure name"
+          },
+          "v1_size": {
+            "type": "integer",
+            "description": "Original structure size in bytes"
+          },
+          "v2_size": {
+            "type": "integer",
+            "description": "New structure size in bytes"
+          },
+          "fields": {
+            "type": "array",
+            "description": "Individual field shift mappings",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "v1_offset": {
+                  "type": "integer"
+                },
+                "v2_offset": {
+                  "type": "integer"
+                },
+                "delta": {
+                  "type": "integer"
+                },
+                "classification": {
+                  "type": "string",
+                  "enum": [
+                    "identical",
+                    "insertion_shift",
+                    "expansion_shift",
+                    "alignment_adjustment"
+                  ]
+                }
+              },
+              "required": ["name", "v1_offset", "v2_offset", "delta"]
+            }
+          }
+        },
+        "required": ["name", "fields"]
+      }
+    }
+  },
+  "required": ["structs"],
+  "additionalProperties": true
+}

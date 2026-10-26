@@ -40,7 +40,7 @@ Letting LLMs directly commit renames quickly pollutes your RE database.
 
 SuperGhidra puts an Obligation Ledger Gate in front of overlay commits: candidate structs and symbols must pass deterministic checks on vtable slot counts, field offsets, and allocation sizes. A pure-Python P-code lifter + Z3 solver proves equivalence (and returns `UNKNOWN` on floats/loops rather than guessing).
 
-Benchmark note: The 22.69% HumanEval-Decompile pass rate measures our deterministic C rewriter (`compilable_filter.py`), not neural model weights.
+Benchmark note: The 22.62% HumanEval-Decompile pass rate (25.26% on held-out test split) measures our deterministic C rewriter (`compilable_filter.py`), not neural model weights.
 
 ### Tweet 5 (Links & CTA)
 Everything is open source under AGPL-3.0 with dual-OS CI (747 tests on Linux & Windows):
@@ -76,7 +76,7 @@ I wrote and open-sourced **SuperGhidra** (https://github.com/yuatemycat/SuperGhi
    Includes a zero-JVM ARM64 and x86 P-code lifter with a Z3 solver backend. When simplifying decompiled basic blocks or validating variable renamings, it tests whether the candidate C expression mathematically matches the lifted IR. To ensure soundness, floating-point instructions, unsupported opcodes, or loops past unroll limits strictly return `UNKNOWN` rather than false positives.
 
 **Benchmark Caveat:**
-In our `HumanEval-Decompile` benchmarks (1,296 functions compiled with GCC `O0`–`O3`), stock Ghidra pseudo-C compiled and passed 8.26%, raw IDA passed 16.90%, and Ghidra output passed through SuperGhidra's `compilable_filter.py` passed 22.69% (with zero regressions on functions that already passed in raw Ghidra). Note that `compilable_filter.py` is a deterministic AST/token rewriter for Ghidra's pseudo-types (`undefined8`, `CONCAT44`, `SUB168`), not an LLM.
+In our `HumanEval-Decompile` benchmarks (1,300 evaluable functions compiled with GCC `O0`–`O3`), stock Ghidra pseudo-C compiled and passed 8.23% (107/1,300), raw IDA passed 18.69% (243/1,300; 19.00% with `defs.h`), and Ghidra output passed through SuperGhidra's `compilable_filter.py` passed 22.62% (294/1,300 full corpus, and 25.26% / 98/388 on the function-disjoint held-out 30% test split). Note that `compilable_filter.py` is a deterministic AST/token rewriter for Ghidra's pseudo-types (`undefined8`, `CONCAT44`, `SUB84`), not an LLM.
 
 **Links:**
 - GitHub: https://github.com/yuatemycat/SuperGhidra

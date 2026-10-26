@@ -110,13 +110,16 @@ class TestCliDecompile(unittest.TestCase):
         self.assertIn("arm64", proc.stderr.lower())
         self.assertIn("x86_64", proc.stderr.lower())
 
-    @unittest.skipUnless(
-        os.path.exists("C:\\Windows\\System32\\kernel32.dll") or os.path.exists("/bin/ls"),
-        "Neither C:\\Windows\\System32\\kernel32.dll nor /bin/ls is present",
-    )
     def test_real_system_binary_integration(self):
-        """Integration test on system binary: non-zero exit and 0x42 not in stdout."""
-        target = "C:\\Windows\\System32\\kernel32.dll" if platform.system() == "Windows" else "/bin/ls"
+        """Integration test on real/sample binary: non-zero exit and 0x42 not in stdout."""
+        fixtures_dir = Path(__file__).resolve().parent.parent / "fixtures" / "binaries"
+        sample_x64 = str(fixtures_dir / "sample_x64.dll")
+        if os.path.exists("C:\\Windows\\System32\\kernel32.dll"):
+            target = "C:\\Windows\\System32\\kernel32.dll"
+        elif os.path.exists("/bin/ls"):
+            target = "/bin/ls"
+        else:
+            target = sample_x64
         proc = self._run_cli([target, "--rva", "0x1000"])
         self.assertNotEqual(proc.returncode, 0)
         self.assertNotIn("0x42", proc.stdout)

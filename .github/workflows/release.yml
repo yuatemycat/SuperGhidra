@@ -6,11 +6,41 @@ on:
       - "v*"
 
 jobs:
+  ci-gate:
+    name: Verify CI Gate (Python ${{ matrix.python-version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]" pytest || pip install -e ".[smt,storage,gpu]" pytest || pip install -e . pytest
+
+      - name: Run Pytest Test Suite
+        run: |
+          python -m pytest tests -v -rs -rx --strict-markers
+
   release:
-    name: Build & Release Package
+    name: Build & Release Package to GitHub & PyPI
+    needs: [ci-gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - name: Checkout Repository
@@ -46,3 +76,9 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+
+      - name: Publish Distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
