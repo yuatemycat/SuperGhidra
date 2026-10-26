@@ -254,7 +254,7 @@ These subsystems form the daily-driver reverse-engineering, C rewriting, and age
 | Package / Subsystem | What It Does | Hardware / Dependency Behavior |
 | :--- | :--- | :--- |
 | **`core` (Daemon, Cache, Overlay & `CompilableDecompilerFilter`)** | Persistent RPC server on `127.0.0.1:5073`, 64 KB shared-memory ring buffer (`5.12 µs` IPC), SQLite L2 cache (`>100k req/s`), JSON write overlay (`ghidra_overlay.json`), conflict-aware `merge_fork`, deterministic `CompilableDecompilerFilter` C rewriter, and resource governor (`eco` / `balanced` / `turbo` / `auto`). | Runs on Windows, Linux, and macOS. `CompilableDecompilerFilter` is pure Python; PyGhidra + OpenJDK 21 are required only when attached to a live `.rep`. |
-| **`formats` (Binary Loader, MSVC RTTI, MFC `Serialize()` & PDB/DWARF5)** | ELF / PE / Mach-O loader, MSVC RTTI & MFC `CRuntimeClass` recovery, `Serialize()` layout tracing, `CArchive` stream decoder, PDB MSF 7.0 / GSI hash stream and TPI CodeView leaf type records, and DWARF 5 / Breakpad / `.map` export. | Pure Python; no JVM or Ghidra dependency. |
+| **`formats` (Binary Loader, MSVC RTTI, MFC `Serialize()` & DWARF5)** | ELF / PE / Mach-O loader, MSVC RTTI & MFC `CRuntimeClass` recovery, Mach-O Objective-C recovery, `Serialize()` layout tracing, `CArchive` stream decoder, DWARF 5 / Breakpad / `.map` export, and experimental PDB export. | Pure Python; no JVM or Ghidra dependency. |
 | **`diff` (Cross-Version CFG Matcher & Struct Shift Migrator)** | Matches functions across binary builds using CFG feature vectors, detects shifted struct field offsets across patches, and rewrites displaced field accesses. | Runs on CPU (NumPy accelerated). |
 | **`integrations` (38+ Guardrailed MCP Tools & Mobile Sidecar)** | Exposes 38+ MCP tools (`SuperghidraMCP`), APK ↔ JNI cross-referencer, allow-listed Android emulator memory reader, live CodeBrowser overlay sync (`ghidra_gui_overlay_sync.py`), and `ReconstructionObligationLedger` commit guards (`VTableSlotVerifier`, `FieldDisplacementVerifier`, `AllocationSizeVerifier`). | Commits symbols and structs **only** after deterministic verification of vtable slots, field displacements, and allocation sizes. |
 
@@ -445,7 +445,7 @@ print(sg.SMTPcodeVerifier().verify_equivalence(ops, ops).equivalent)
 ## Known Limitations
 
 - The Java codec doesn't compress Ghidra projects transparently. Ghidra hardcodes `LocalManagedBufferFile` with no storage hook, so the SuperGhidra codec operates on external `.sgdb` files or requires patching Ghidra's core jar.
-- PDB export implements CodeView 7.0 MSF structures with a Global Symbol Index (GSI) 4096-bucket hash table; MSVC and LLVM toolchains can read symbols, while complex type streams remain under active expansion.
+- PDB export is experimental: it emits MSF 7.0 structures with prototype DBI and public symbol records, but lacks MSVC-compatible hash streams, symbol record streams, and CodeView type (TPI) streams. DWARF 5 export is the supported path for external tooling.
 - The SMT checker is sound but incomplete. Floats, calls, unhandled ops and long loops return `UNKNOWN` by design to prevent false equivalence.
 - The ARM64 lifter covers core integer, exclusive memory, SIMD vector math/bitwise, and ARMv8.1-A atomics. Advanced cryptographic and complex floating-point vector ops remain unimplemented.
 - The LLM naming stage needs a real endpoint. Without one, it falls back to neutral names such as `sub_<addr>`, labelled `heuristic-fallback`.
@@ -457,7 +457,7 @@ More detail is in [PLAN.md](PLAN.md).
 
 ```
 superghidra/                 the canonical package, split into 7 domain subsystems
-tests/                       domain-isolated pytest suites (747+ tests)
+tests/                       domain-isolated pytest suites (790+ tests)
 benchmarks/                  reproducible benchmark harnesses and measurement scripts
 docs/                        benchmark specifications, walkthroughs, and architecture docs
 ghidra_extension_skeleton/   Java BufferFile compression extension
