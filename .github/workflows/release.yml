@@ -64,10 +64,10 @@ jobs:
 
       - name: Package Ghidra GUI Sync Extension Zip
         run: |
-          mkdir -p dist/extension
-          cp -r ghidra_extension_skeleton/* dist/extension/
-          cp src/superghidra/integrations/ghidra_gui_overlay_sync.py dist/extension/
-          cd dist && zip -r SuperGhidra-GUI-Sync-Extension.zip extension/ && rm -rf extension
+          mkdir -p build/extension
+          cp -r ghidra_extension_skeleton/* build/extension/
+          cp src/superghidra/integrations/ghidra_gui_overlay_sync.py build/extension/
+          cd build && zip -r ../SuperGhidra-GUI-Sync-Extension.zip extension/ && cd .. && rm -rf build/extension
 
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v2
@@ -75,7 +75,7 @@ jobs:
           files: |
             dist/*.whl
             dist/*.tar.gz
-            dist/SuperGhidra-GUI-Sync-Extension.zip
+            SuperGhidra-GUI-Sync-Extension.zip
           draft: false
           prerelease: false
           generate_release_notes: true
