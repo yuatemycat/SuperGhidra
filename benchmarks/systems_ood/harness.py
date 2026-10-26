@@ -4,11 +4,9 @@ from __future__ import annotations
 import dataclasses
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from superghidra.diff.ood_decompiler_benchmark import (
-    BENCHMARK_CASES,
-    BenchmarkResultRow,
     OODDecompilerBenchmarkRunner,
     format_markdown_report,
 )

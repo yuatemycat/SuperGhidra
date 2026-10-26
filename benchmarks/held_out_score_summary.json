@@ -1,0 +1,58 @@
+{
+  "dataset": "E:\\02_Projects\\SuperGhidra\\benchmarks\\data\\held_out_200.jsonl",
+  "total_evaluated": 200,
+  "overall": {
+    "count": 200,
+    "ghidra_raw_count": 49,
+    "ghidra_raw_pct": 24.5,
+    "ghidra_filtered_count": 187,
+    "ghidra_filtered_pct": 93.5,
+    "ida_raw_count": 49,
+    "ida_raw_pct": 24.5,
+    "ida_with_defs_count": 187,
+    "ida_with_defs_pct": 93.5,
+    "ida_filtered_count": 187,
+    "ida_filtered_pct": 93.5
+  },
+  "by_library": {
+    "sqlite": {
+      "count": 70,
+      "ghidra_raw_count": 10,
+      "ghidra_raw_pct": 14.29,
+      "ghidra_filtered_count": 70,
+      "ghidra_filtered_pct": 100.0,
+      "ida_raw_count": 10,
+      "ida_raw_pct": 14.29,
+      "ida_with_defs_count": 70,
+      "ida_with_defs_pct": 100.0,
+      "ida_filtered_count": 70,
+      "ida_filtered_pct": 100.0
+    },
+    "zlib": {
+      "count": 65,
+      "ghidra_raw_count": 13,
+      "ghidra_raw_pct": 20.0,
+      "ghidra_filtered_count": 65,
+      "ghidra_filtered_pct": 100.0,
+      "ida_raw_count": 13,
+      "ida_raw_pct": 20.0,
+      "ida_with_defs_count": 65,
+      "ida_with_defs_pct": 100.0,
+      "ida_filtered_count": 65,
+      "ida_filtered_pct": 100.0
+    },
+    "coreutils": {
+      "count": 65,
+      "ghidra_raw_count": 26,
+      "ghidra_raw_pct": 40.0,
+      "ghidra_filtered_count": 52,
+      "ghidra_filtered_pct": 80.0,
+      "ida_raw_count": 26,
+      "ida_raw_pct": 40.0,
+      "ida_with_defs_count": 52,
+      "ida_with_defs_pct": 80.0,
+      "ida_filtered_count": 52,
+      "ida_filtered_pct": 80.0
+    }
+  }
+}

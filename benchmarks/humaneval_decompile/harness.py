@@ -12,7 +12,7 @@ import random
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from superghidra.core.compilable_filter import IDA_COMPAT_DEFS_H
 
@@ -107,7 +107,7 @@ LENIENT_IDA_DEFS = IDA_COMPAT_DEFS_H
 class HumanEvalDecompileHarness:
     """Historical baseline reader. Scoring lives in the module functions below."""
 
-    def __init__(self, baseline_file: Optional[Path] = None):
+    def __init__(self, baseline_file: Path | None = None):
         self.baseline_file = baseline_file or BASELINE_PATH
         if not self.baseline_file.exists():
             raise FileNotFoundError(f"Baseline file not found at {self.baseline_file}")
@@ -227,7 +227,7 @@ def _download_split(allow_unpinned: bool = False):
     return split, revision, note
 
 
-def load_humaneval_rows(cache_dir: Optional[Path] = None, allow_unpinned: bool = False) -> List[Dict[str, Any]]:
+def load_humaneval_rows(cache_dir: Path | None = None, allow_unpinned: bool = False) -> List[Dict[str, Any]]:
     """Load the humaneval split, downloading it into the cache once."""
     cache = cache_dir or CACHE_DIR
     cache.mkdir(parents=True, exist_ok=True)

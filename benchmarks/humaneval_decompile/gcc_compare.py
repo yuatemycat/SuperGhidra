@@ -17,7 +17,7 @@ import shutil
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from benchmarks.humaneval_decompile.harness import (
     CACHE_DIR,
@@ -65,7 +65,7 @@ def _activate_gcc_root() -> None:
 _activate_gcc_root()
 
 
-def gcc_compiler() -> Optional[str]:
+def gcc_compiler() -> str | None:
     found = shutil.which("gcc")
     if not found:
         return None
@@ -102,7 +102,7 @@ def candidate_bodies(row: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
-def load_rows_with_ida(cache_dir: Optional[Path] = None, allow_unpinned: bool = False) -> List[Dict[str, Any]]:
+def load_rows_with_ida(cache_dir: Path | None = None, allow_unpinned: bool = False) -> List[Dict[str, Any]]:
     """Same 1,312 HumanEval rows as the cl.exe scorer, plus ``ida_pseudo``."""
     cache = cache_dir or CACHE_DIR
     cache.mkdir(parents=True, exist_ok=True)
@@ -333,7 +333,7 @@ def run_gcc_compare(output_dir: Path, workers: int = 6) -> Dict[str, Any]:
     return summary
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: List[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description="Compare IDA, raw Ghidra, and filtered Ghidra under gcc.")
