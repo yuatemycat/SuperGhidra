@@ -28,12 +28,8 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-try:  # package import or flat module import
-    from . import arm_thumb_decode, binary_loader, x86_decode
-except ImportError:
-    import arm_thumb_decode
-    import binary_loader
-    import x86_decode
+from superghidra.formats import binary_loader
+from superghidra.lifters import arm_thumb_decode, x86_decode
 
 # -----------------------------------------------------------------------------
 # 1. Memory Access Instruction Model & ARM64/x86 Instruction Decoder

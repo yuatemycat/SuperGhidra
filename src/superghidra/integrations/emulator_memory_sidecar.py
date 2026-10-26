@@ -47,7 +47,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Import SuperGhidra ShmChannel and message structures
 try:
-    from shm_decompiler_bridge import ShmChannel, ShmMessage
+    from superghidra.core.shm_decompiler_bridge import ShmChannel, ShmMessage
 except ImportError:
     from .shm_decompiler_bridge import ShmChannel, ShmMessage
 

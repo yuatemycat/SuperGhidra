@@ -16,7 +16,7 @@ from superghidra.lifters.wasm_decompiler_pipeline import (
     export_wasm_decompiler_package,
     WasmViewerServer,
 )
-import wasm_decompiler_pipeline as root_wasm
+from superghidra.lifters import wasm_decompiler_pipeline as root_wasm
 
 
 def test_wasm_module_builder_valid_binary():

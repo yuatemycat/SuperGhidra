@@ -40,7 +40,7 @@ SUPERGHIDRA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(_
 if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
-from apk_jni_cross_referencer import (
+from superghidra.integrations.apk_jni_cross_referencer import (
     APKJNICrossReferencer,
     JavaNativeMethod,
     JNICrossReferenceMatch,

@@ -42,7 +42,7 @@ logger = logging.getLogger("SuperGhidra.SemanticDelta")
 
 # Import EvidenceLedger verifiers
 try:
-    from evidence_ledger import (
+    from superghidra.diff.evidence_ledger import (
         AllocationSizeVerifier,
         FieldDisplacementVerifier,
         ObligationStatus,
@@ -54,7 +54,7 @@ try:
 except ImportError:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from evidence_ledger import (
+    from superghidra.diff.evidence_ledger import (
         AllocationSizeVerifier,
         FieldDisplacementVerifier,
         ObligationStatus,
@@ -66,7 +66,7 @@ except ImportError:
 
 # Import BinaryDiffEngine components
 try:
-    from binary_diff_engine import (
+    from superghidra.diff.binary_diff_engine import (
         BatchedBinaryMatcher,
         DiffResult,
         FunctionCFG,
@@ -74,7 +74,7 @@ try:
         extract_cfgs_from_binary,
     )
 except ImportError:
-    from binary_diff_engine import (  # type: ignore
+    from superghidra.diff.binary_diff_engine import (  # type: ignore
         BatchedBinaryMatcher,
         DiffResult,
         FunctionCFG,
@@ -83,12 +83,12 @@ except ImportError:
     )
 
 try:
-    from struct_shift_migrator import StructShiftMigrator
+    from superghidra.diff.struct_shift_migrator import StructShiftMigrator
 except ImportError:
     try:
         import sys
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from struct_shift_migrator import StructShiftMigrator  # type: ignore
+        from superghidra.diff.struct_shift_migrator import StructShiftMigrator  # type: ignore
     except ImportError:
         StructShiftMigrator = None  # type: ignore
 

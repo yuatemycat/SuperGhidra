@@ -27,7 +27,7 @@ SUPERGHIDRA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(_
 if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
-from emulator_memory_sidecar import (
+from superghidra.integrations.emulator_memory_sidecar import (
     BaseMemoryReader,
     DynamicKeyResult,
     EmulatorDeviceInfo,
@@ -46,7 +46,7 @@ from emulator_memory_sidecar import (
     verify_struct_field,
     verify_vtable_pointer,
 )
-from binary_diff_engine import (
+from superghidra.diff.binary_diff_engine import (
     BasicBlock,
     BatchedBinaryMatcher,
     FunctionCFG,
@@ -57,8 +57,8 @@ from binary_diff_engine import (
     extract_cfgs_from_binary,
     get_arm64_branch_info,
 )
-from shm_decompiler_bridge import ShmChannel, ShmRingBuffer
-from struct_shift_migrator import (
+from superghidra.core.shm_decompiler_bridge import ShmChannel, ShmRingBuffer
+from superghidra.diff.struct_shift_migrator import (
     FieldMigration,
     MemoryAccess,
     MigrationReport,

@@ -38,6 +38,11 @@ def create_parser() -> argparse.ArgumentParser:
     decomp_parser.add_argument("--arch", choices=["x86_64", "arm64", "x86"], default="x86_64", help="Architecture")
     decomp_parser.add_argument("--len", type=int, default=128, help="Max instruction bytes to lift")
     decomp_parser.add_argument("-o", "--output", type=Path, help="Output file for decompiled C")
+    decomp_parser.add_argument("--host", default="127.0.0.1", help="Ghidra daemon host (default: 127.0.0.1)")
+    decomp_parser.add_argument("--port", type=int, default=13370, help="Ghidra daemon port (default: 13370)")
+    decomp_parser.add_argument("--token", help="Daemon session token")
+    decomp_parser.add_argument("--daemon", action="store_true", help="Force routing through daemon (fail if offline)")
+    decomp_parser.add_argument("--standalone", action="store_true", help="Force local standalone lifter without querying daemon")
 
     # Subcommand: til-import
     til_parser = subparsers.add_parser("til-import", help="Import IDA .til type library")
@@ -182,6 +187,54 @@ def _function_bytes(
 
 
 def cmd_decompile(args: argparse.Namespace) -> int:
+    target_addr = args.rva if args.rva is not None else args.va
+    addr_str = f"{target_addr:#x}" if target_addr is not None else "main"
+
+    # Route through active Ghidra daemon if available and not forced standalone (#25)
+    if not args.standalone:
+        from superghidra.core.ghidra_oracle import is_daemon_online, client_send_request
+
+        daemon_up = is_daemon_online(host=args.host, port=args.port)
+        if daemon_up or args.daemon:
+            if not daemon_up:
+                print(f"Error: Ghidra daemon is offline at {args.host}:{args.port}", file=sys.stderr)
+                return 1
+            req_args = {
+                "binary": str(args.binary.resolve()) if args.binary.exists() else str(args.binary),
+                "rva": args.rva,
+                "va": args.va,
+                "addr": addr_str,
+                "arch": args.arch,
+            }
+            if target_addr is not None:
+                req_args["targets"] = [target_addr]
+            try:
+                resp = client_send_request(
+                    "decompile",
+                    req_args,
+                    host=args.host,
+                    port=args.port,
+                    auto_spawn=False,
+                    token=args.token,
+                )
+                if resp.get("status") == "ok":
+                    c_code = resp.get("code") or resp.get("decompiled") or resp.get("c_code", "")
+                    if c_code:
+                        if args.output:
+                            args.output.write_text(c_code, encoding="utf-8")
+                            print(f"Decompiled code written to {args.output}")
+                        else:
+                            print(c_code)
+                        return 0
+                if args.daemon:
+                    print(f"Error from daemon: {resp.get('error', 'unknown error')}", file=sys.stderr)
+                    return 2
+            except Exception as e:
+                if args.daemon:
+                    print(f"Daemon request failed: {e}", file=sys.stderr)
+                    return 2
+
+    # Standalone local fallback lifter
     from superghidra.core.live_binary_tools import LiftError, staged_decompile_function
 
     chunk, target_rva = _function_bytes(
@@ -342,7 +395,7 @@ def cmd_smt_verify(args: argparse.Namespace) -> int:
         if not args.ledger.is_file():
             print(f"Error: ledger file not found: {args.ledger}", file=sys.stderr)
             return 1
-        from evidence_ledger import ReconstructionObligationLedger
+        from superghidra.diff.evidence_ledger import ReconstructionObligationLedger
         ledger = ReconstructionObligationLedger(str(args.ledger))
         results = verifier.verify_ledger(ledger)
         print(f"Verified {len(results)} obligation(s) from {args.ledger.name}:")

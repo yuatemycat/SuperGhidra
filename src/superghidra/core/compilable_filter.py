@@ -605,3 +605,8 @@ class CompilableDecompilerFilter:
             result = f"{STANDARD_HEADERS}\n{result.lstrip()}"
 
         return result
+
+
+def filter_c_code(code: str, **kwargs: Any) -> str:
+    """Filter raw decompiler pseudo-C into standard C99/C++17 code."""
+    return CompilableDecompilerFilter.filter(code, **kwargs)

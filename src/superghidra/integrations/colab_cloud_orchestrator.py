@@ -52,12 +52,8 @@ except ImportError:
     HfApi = None  # type: ignore
     HAS_HF = False
 
-try:
-    from . import evidence_ledger
-    from . import pcode_lifter_bridge
-except (ImportError, ValueError):
-    import evidence_ledger
-    import pcode_lifter_bridge
+from superghidra.diff import evidence_ledger
+from superghidra.lifters import pcode_lifter_bridge
 
 logger = logging.getLogger("colab_cloud_orchestrator")
 
@@ -315,7 +311,7 @@ class ColabCloudOrchestrator:
         seeds = []
         if len(exec_bytes) >= 4 and HAS_NUMPY:
             try:
-                from gpu_function_seeder import GPUFunctionSeeder
+                from superghidra.acceleration.gpu_function_seeder import GPUFunctionSeeder
                 try:
                     seeder = GPUFunctionSeeder(backend="cpu")
                 except ValueError:

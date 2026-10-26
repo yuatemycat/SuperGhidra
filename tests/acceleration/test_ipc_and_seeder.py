@@ -43,7 +43,7 @@ SUPERGHIDRA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(_
 if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
-from shm_decompiler_bridge import (
+from superghidra.core.shm_decompiler_bridge import (
     CACHELINE_SIZE,
     RING_MODE_MPMC,
     RING_MODE_SPSC,
@@ -57,7 +57,7 @@ from shm_decompiler_bridge import (
     ShmRingBuffer,
     benchmark_shm_bridge,
 )
-from gpu_function_seeder import (
+from superghidra.acceleration.gpu_function_seeder import (
     HAS_CUDA,
     HAS_WGPU,
     KIND_BL,
@@ -72,7 +72,7 @@ from gpu_function_seeder import (
     pack_seeder_match,
     unpack_seeder_match,
 )
-from gpu_adrp_scanner import (
+from superghidra.acceleration.gpu_adrp_scanner import (
     GPUAdrpScanner,
     pack_gpu_match,
     unpack_gpu_match,

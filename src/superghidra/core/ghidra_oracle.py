@@ -49,22 +49,22 @@ from collections import OrderedDict
 
 # Import DependencyCacheDAG and SemanticDeltaLog
 try:
-    from dependency_cache_dag import DependencyCacheDAG, FunctionNode, InvalidationImpactReport
+    from superghidra.core.dependency_cache_dag import DependencyCacheDAG, FunctionNode, InvalidationImpactReport
 except ImportError:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from dependency_cache_dag import DependencyCacheDAG, FunctionNode, InvalidationImpactReport
+    from superghidra.core.dependency_cache_dag import DependencyCacheDAG, FunctionNode, InvalidationImpactReport
 
 try:
-    from semantic_delta_log import SemanticDeltaLog, DeltaEventType, SemanticEvent, CommentType
+    from superghidra.diff.semantic_delta_log import SemanticDeltaLog, DeltaEventType, SemanticEvent, CommentType
 except ImportError:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from semantic_delta_log import SemanticDeltaLog, DeltaEventType, SemanticEvent, CommentType
+    from superghidra.diff.semantic_delta_log import SemanticDeltaLog, DeltaEventType, SemanticEvent, CommentType
 
 # Import OffHeapTypeStore, OracleTypeStoreAdapter, TypeDeduplicator, TypeKind, StructMember
 try:
-    from dwarf_pdb_preindexer import (
+    from superghidra.formats.dwarf_pdb_preindexer import (
         OffHeapTypeStore,
         OracleTypeStoreAdapter,
         TypeDeduplicator,
@@ -74,7 +74,7 @@ try:
 except ImportError:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from dwarf_pdb_preindexer import (
+    from superghidra.formats.dwarf_pdb_preindexer import (
         OffHeapTypeStore,
         OracleTypeStoreAdapter,
         TypeDeduplicator,
@@ -84,7 +84,7 @@ except ImportError:
 
 # Import Resource Governor components
 try:
-    from resource_governor import (
+    from superghidra.core.resource_governor import (
         ResourceMode,
         ModePolicy,
         get_default_mode_policy,
@@ -94,7 +94,7 @@ try:
 except ImportError:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from resource_governor import (
+    from superghidra.core.resource_governor import (
         ResourceMode,
         ModePolicy,
         get_default_mode_policy,
@@ -1267,7 +1267,7 @@ class GhidraOracleSession:
                     gpu_scanned = False
                     try:
                         import numpy as np
-                        from gpu_adrp_scanner import GPUAdrpScanner
+                        from superghidra.acceleration.gpu_adrp_scanner import GPUAdrpScanner
 
                         scanner = GPUAdrpScanner(backend="auto")
                         usable_size = size - (size % 4)
@@ -3305,3 +3305,52 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def start_daemon(
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    token: Optional[str] = None,
+    allow_remote: bool = False,
+    wait_online: bool = True,
+    timeout: float = 5.0,
+) -> bool:
+    """Starts the background Ghidra daemon if not already online.
+
+    Returns True if daemon is online within timeout, False otherwise.
+    """
+    if is_daemon_online(host=host, port=port):
+        return True
+    spawn_background_daemon(host=host, port=port, token=token, allow_remote=allow_remote)
+    if not wait_online:
+        return True
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if is_daemon_online(host=host, port=port):
+            return True
+        time.sleep(0.1)
+    return is_daemon_online(host=host, port=port)
+
+
+def stop_daemon(
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    token: Optional[str] = None,
+    timeout: float = 3.0,
+) -> bool:
+    """Stops the running Ghidra daemon via TCP request.
+
+    Returns True if stopped successfully or was already offline.
+    """
+    if not is_daemon_online(host=host, port=port):
+        return True
+    try:
+        client_send_request("stop", {}, host=host, port=port, auto_spawn=False, token=token)
+    except Exception:
+        pass
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not is_daemon_online(host=host, port=port):
+            return True
+        time.sleep(0.1)
+    return not is_daemon_online(host=host, port=port)

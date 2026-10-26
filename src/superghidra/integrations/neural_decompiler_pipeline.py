@@ -521,7 +521,7 @@ class NeuralDecompilerPipeline:
         # Direct ARM64 Hardware Verification
         if arm64_bytes is not None:
             try:
-                from evidence_ledger import FieldDisplacementVerifier, VTableSlotVerifier
+                from superghidra.diff.evidence_ledger import FieldDisplacementVerifier, VTableSlotVerifier
                 claimed_fields = []
                 for off, (ftype, fname) in prediction.predicted_struct_fields.items():
                     sz = 4
@@ -560,8 +560,8 @@ class NeuralDecompilerPipeline:
         # Formal SMT Z3 Equivalence Proof Attachment
         if arm64_bytes is not None and c_code_snippet is not None:
             try:
-                from pcode_lifter_bridge import ARM64PcodeLifter
-                from smt_pcode_verifier import SMTPcodeVerifier
+                from superghidra.lifters.pcode_lifter_bridge import ARM64PcodeLifter
+                from superghidra.lifters.smt_pcode_verifier import SMTPcodeVerifier
 
                 lifter = ARM64PcodeLifter()
                 pcode_ops = lifter.lift_block(skeleton.function_address, arm64_bytes)
@@ -625,7 +625,7 @@ class NeuralDecompilerPipeline:
         # If a ReconstructionObligationLedger is wired, register formal obligations
         if self.ledger is not None:
             try:
-                import evidence_ledger
+                from superghidra.diff import evidence_ledger
                 ob_type_field = getattr(evidence_ledger.ObligationType, "STRUCT_FIELD_RENAME", "STRUCT_FIELD_RENAME")
                 ob_type_fn = getattr(evidence_ledger.ObligationType, "FUNCTION_RENAME", "FUNCTION_RENAME")
             except Exception:

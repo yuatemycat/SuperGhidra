@@ -9,7 +9,7 @@ import struct
 import unittest
 import z3
 
-from pcode_lifter_bridge import (
+from superghidra.lifters.pcode_lifter_bridge import (
     ARM64PcodeLifter,
     PcodeOp,
     PcodeOpcode,
@@ -20,7 +20,7 @@ from pcode_lifter_bridge import (
     FLAG_C_OFFSET,
     FLAG_V_OFFSET,
 )
-from smt_pcode_verifier import (
+from superghidra.lifters.smt_pcode_verifier import (
     SMTPcodeVerifier,
     SymbolicState,
     PcodeSymbolicSimulator,

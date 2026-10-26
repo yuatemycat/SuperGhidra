@@ -19,18 +19,18 @@ from unittest.mock import patch
 
 import numpy as np
 
-from evidence_ledger import (
+from superghidra.diff.evidence_ledger import (
     FieldDisplacementVerifier,
     LedgerVerificationError,
     ObligationStatus,
     ObligationType,
     ReconstructionObligationLedger,
 )
-from gpu_adrp_scanner import (
+from superghidra.acceleration.gpu_adrp_scanner import (
     GPUAdrpScanner,
     decode_ldr_imm,
 )
-from struct_shift_migrator import (
+from superghidra.diff.struct_shift_migrator import (
     MemoryAccess,
     StructShiftMigrator,
 )
@@ -74,7 +74,7 @@ class TestG2bRegressions(unittest.TestCase):
                 evidence={"field_displacements": [{"name": "health", "offset": 0, "access_size": 4}]},
             )
 
-            with patch("evidence_ledger.FieldDisplacementVerifier.verify", side_effect=RuntimeError("Z3/Hardware crash")):
+            with patch("superghidra.diff.evidence_ledger.FieldDisplacementVerifier.verify", side_effect=RuntimeError("Z3/Hardware crash")):
                 verified = ledger.verify(obl.obligation_id)
 
             self.assertFalse(verified)

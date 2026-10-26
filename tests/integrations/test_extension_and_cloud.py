@@ -39,12 +39,12 @@ SUPERGHIDRA_DIR = str(Path(__file__).resolve().parents[2])
 if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
-import colab_cloud_orchestrator
-from colab_cloud_orchestrator import CloudConfig, CloudRuntimeTier, ColabCloudOrchestrator
-import ghidra_extension_packager
-from ghidra_extension_packager import GhidraExtensionPackager, ExtensionValidationError
-import native_decompiler_pgo_builder
-from native_decompiler_pgo_builder import DecompilerBuildConfig, NativeDecompilerPGOBuilder
+from superghidra.integrations import colab_cloud_orchestrator
+from superghidra.integrations.colab_cloud_orchestrator import CloudConfig, CloudRuntimeTier, ColabCloudOrchestrator
+from superghidra.storage import ghidra_extension_packager
+from superghidra.storage.ghidra_extension_packager import GhidraExtensionPackager, ExtensionValidationError
+from superghidra.core import native_decompiler_pgo_builder
+from superghidra.core.native_decompiler_pgo_builder import DecompilerBuildConfig, NativeDecompilerPGOBuilder
 
 _GHIDRA_DIR = Path(os.environ.get("GHIDRA_INSTALL_DIR", ""))
 _INSTALLED_JAR = Path("Ghidra", "Extensions", "SuperGhidraCodec", "lib", "SuperGhidraCodec.jar")

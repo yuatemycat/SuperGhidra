@@ -27,13 +27,8 @@ import numpy as np
 
 import logging
 
-try:  # package import (superghidra.diff.binary_diff_engine) or flat module import
-    from superghidra.lifters import arm_thumb_decode, x86_decode
-    from superghidra.formats import binary_loader
-except ImportError:
-    import arm_thumb_decode
-    import binary_loader
-    import x86_decode
+from superghidra.formats import binary_loader
+from superghidra.lifters import arm_thumb_decode, x86_decode
 
 logger = logging.getLogger("binary_diff_engine")
 
@@ -725,7 +720,7 @@ def extract_cfgs_from_arm64_bytes(
 
     # 1. GPUFunctionSeeder discovery
     try:
-        from gpu_function_seeder import GPUFunctionSeeder
+        from superghidra.acceleration.gpu_function_seeder import GPUFunctionSeeder
         seeder = GPUFunctionSeeder(backend="numpy")
         seeds = seeder.seed_functions(insns, text_base_vaddr=base_vaddr)
         for s in seeds:
@@ -1085,7 +1080,7 @@ def extract_cfgs_from_x86_64_bytes(
 
     if mode == 64:
         try:
-            from gpu_function_seeder import GPUFunctionSeeder
+            from superghidra.acceleration.gpu_function_seeder import GPUFunctionSeeder
             seeder = GPUFunctionSeeder(backend="numpy")
             seeds = seeder.seed_x86_64_functions(code_bytes, text_base_vaddr=base_vaddr)
             for s in seeds:

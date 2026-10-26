@@ -35,7 +35,7 @@ SUPERGHIDRA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(_
 if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
-from binary_diff_engine import (
+from superghidra.diff.binary_diff_engine import (
     BasicBlock,
     BatchedBinaryMatcher,
     CFGFeatureExtractor,
@@ -48,7 +48,7 @@ from binary_diff_engine import (
     extract_cfgs_from_x86_64_bytes,
     generate_paired_synthetic_binaries,
 )
-from evidence_ledger import (
+from superghidra.diff.evidence_ledger import (
     AllocationSizeVerifier,
     FieldDisplacementVerifier,
     LedgerVerificationError,

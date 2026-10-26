@@ -41,7 +41,7 @@ from superghidra.core.mitigation_roadmap_engine import (
     run_section5_verification,
 )
 import superghidra.core as core_pkg
-import mitigation_roadmap_engine as root_shim
+from superghidra.core import mitigation_roadmap_engine as root_shim
 
 
 # =============================================================================

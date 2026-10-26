@@ -23,7 +23,7 @@ SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-from resource_governor import (
+from superghidra.core.resource_governor import (
     DecompilerComplexityGovernor,
     DecompileProcessPoolReaper,
     FunctionComplexityTier,

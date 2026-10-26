@@ -18,7 +18,7 @@ import tempfile
 import unittest
 import zipfile
 
-import database_migrator as root_migrator
+from superghidra.formats import database_migrator as root_migrator
 from superghidra.formats.database_migrator import (
     BinaryNinjaDatabaseMigrator,
     DatabaseMigrator,

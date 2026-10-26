@@ -87,7 +87,7 @@ superghidra = "superghidra.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", ".", "tests/formats"]
+pythonpath = ["src"]
 python_files = ["test_*.py"]
 norecursedirs = ["scratch", ".*", "build", "dist", "*.egg", "templates", "docs", "ghidra_extension_skeleton", "scripts", "tests_manual"]
 markers = [

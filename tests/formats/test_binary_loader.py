@@ -4,7 +4,7 @@ import os
 import struct
 import unittest
 
-import binary_loader as B
+from superghidra.formats import binary_loader as B
 
 
 # ----------------------------------------------------------------------------------

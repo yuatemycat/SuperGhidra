@@ -27,11 +27,11 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from dependency_cache_dag import DependencyCacheDAG
-from ghidra_oracle import GhidraDaemonServer, GhidraOracleSession, L2SQLiteCache
-from headless_analyzer_tuner import HeadlessCommandBuilder, ScriptGenerator
-from resource_governor import JVMResourceConfigurator, ResourceMode, get_default_mode_policy
-from semantic_delta_log import DeltaEventType, SemanticDeltaLog, SemanticEvent
+from superghidra.core.dependency_cache_dag import DependencyCacheDAG
+from superghidra.core.ghidra_oracle import GhidraDaemonServer, GhidraOracleSession, L2SQLiteCache
+from superghidra.core.headless_analyzer_tuner import HeadlessCommandBuilder, ScriptGenerator
+from superghidra.core.resource_governor import JVMResourceConfigurator, ResourceMode, get_default_mode_policy
+from superghidra.diff.semantic_delta_log import DeltaEventType, SemanticDeltaLog, SemanticEvent
 
 
 class TestG1Regressions(unittest.TestCase):

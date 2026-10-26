@@ -40,7 +40,7 @@ SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-from ghidra_oracle import (
+from superghidra.core.ghidra_oracle import (
     DEFAULT_HOST,
     DEFAULT_IMAGE_BASE,
     DEFAULT_PORT,
@@ -583,7 +583,7 @@ class TestCLIArgumentParsingAndFastPath(unittest.TestCase):
         for cli_args, expected_cmd, expected_req_args in test_cases:
             with self.subTest(command=expected_cmd):
                 with patch("sys.argv", ["ghidra_oracle.py"] + cli_args + ["--json"]), \
-                     patch("ghidra_oracle.client_send_request") as mock_send, \
+                     patch("superghidra.core.ghidra_oracle.client_send_request") as mock_send, \
                      patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
 
                     mock_send.return_value = {"status": "ok", "message": f"{expected_cmd} test success"}
@@ -829,7 +829,7 @@ class TestOracleDAGDeltaAndOverlayIntegration(unittest.TestCase):
             }
             l2.put("decompile", "0x00101000", decompile_data)
 
-            with patch("ghidra_oracle.WriteOverlay", lambda *args, **kwargs: overlay):
+            with patch("superghidra.core.ghidra_oracle.WriteOverlay", lambda *args, **kwargs: overlay):
                 resp = client_send_request(
                     "decompile",
                     {"targets": ["0x00101000"]},

@@ -1006,6 +1006,10 @@ def staged_decompile_function(
             unhandled.append((insn.address, insn_raw))
             continue
 
+        if insn.map == 0 and insn.opcode == 0x90:
+            # nop
+            continue
+
         if insn.map == 0 and insn.opcode == 0xC3:
             ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.RETURN, None, [gpr_vns[0]], insn.address))
             has_ret = True
@@ -1016,22 +1020,34 @@ def staged_decompile_function(
             unhandled.append((insn.address, insn_raw))
             continue
 
-        if insn.opcode in (0x89, 0x01, 0x31):
+        if insn.opcode in (0x89, 0x01, 0x29, 0x21, 0x09, 0x31):
             dst = gpr_vns[insn.rm]
             src = gpr_vns[insn.reg]
             if insn.opcode == 0x89:
                 ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.COPY, dst, [src], insn.address))
             elif insn.opcode == 0x01:
                 ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_ADD, dst, [dst, src], insn.address))
+            elif insn.opcode == 0x29:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_SUB, dst, [dst, src], insn.address))
+            elif insn.opcode == 0x21:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_AND, dst, [dst, src], insn.address))
+            elif insn.opcode == 0x09:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_OR, dst, [dst, src], insn.address))
             elif insn.opcode == 0x31:
                 ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_XOR, dst, [dst, src], insn.address))
-        elif insn.opcode in (0x8B, 0x03, 0x33):
+        elif insn.opcode in (0x8B, 0x03, 0x2B, 0x23, 0x0B, 0x33):
             dst = gpr_vns[insn.reg]
             src = gpr_vns[insn.rm]
             if insn.opcode == 0x8B:
                 ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.COPY, dst, [src], insn.address))
             elif insn.opcode == 0x03:
                 ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_ADD, dst, [dst, src], insn.address))
+            elif insn.opcode == 0x2B:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_SUB, dst, [dst, src], insn.address))
+            elif insn.opcode == 0x23:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_AND, dst, [dst, src], insn.address))
+            elif insn.opcode == 0x0B:
+                ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_OR, dst, [dst, src], insn.address))
             elif insn.opcode == 0x33:
                 ops.append(PCodeOp(len(ops) + 1, PCodeOpCode.INT_XOR, dst, [dst, src], insn.address))
         else:

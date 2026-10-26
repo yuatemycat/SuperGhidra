@@ -288,7 +288,7 @@ class TestCLISyncToScript:
 
 class TestRootCompatibilityShim:
     def test_root_shim_exports(self):
-        import ghidra_gui_overlay_sync
+        from superghidra.integrations import ghidra_gui_overlay_sync
 
         assert hasattr(ghidra_gui_overlay_sync, "OverlaySyncBridge")
         assert hasattr(ghidra_gui_overlay_sync, "generate_ghidra_python_script")

@@ -55,7 +55,7 @@ if SUPERGHIDRA_DIR not in sys.path:
     sys.path.insert(0, SUPERGHIDRA_DIR)
 
 # 1. SHM Decompiler Bridge
-from shm_decompiler_bridge import (
+from superghidra.core.shm_decompiler_bridge import (
     CACHELINE_SIZE,
     SEC_EXEC,
     SEC_READ,
@@ -68,7 +68,7 @@ from shm_decompiler_bridge import (
 )
 
 # 2. GPU Function Seeder
-from gpu_function_seeder import (
+from superghidra.acceleration.gpu_function_seeder import (
     GPUFunctionSeeder,
     FunctionSeed,
     KIND_BL,
@@ -81,7 +81,7 @@ from gpu_function_seeder import (
 )
 
 # 3. Dependency Cache DAG
-from dependency_cache_dag import (
+from superghidra.core.dependency_cache_dag import (
     DecompilationLRUCache,
     DependencyCacheDAG,
     FunctionNode,
@@ -92,7 +92,7 @@ from dependency_cache_dag import (
 )
 
 # 4. Semantic Delta Log
-from semantic_delta_log import (
+from superghidra.diff.semantic_delta_log import (
     CommentType,
     DeltaEventType,
     DeltaMigrationEngine,
@@ -102,18 +102,18 @@ from semantic_delta_log import (
     SemanticEvent,
     compute_event_proof_hash,
 )
-from binary_diff_engine import (
+from superghidra.diff.binary_diff_engine import (
     BatchedBinaryMatcher,
     generate_paired_synthetic_binaries,
 )
-from evidence_ledger import (
+from superghidra.diff.evidence_ledger import (
     ObligationStatus,
     ObligationType,
     ReconstructionObligationLedger,
 )
 
 # 5. DWARF/PDB Pre-Indexer
-from dwarf_pdb_preindexer import (
+from superghidra.formats.dwarf_pdb_preindexer import (
     DWARFTextDumpParser,
     EnumVariant,
     FunctionParameter,
@@ -130,7 +130,7 @@ from dwarf_pdb_preindexer import (
     benchmark_preindexer,
 )
 
-from synthetic_symbol_exporter import (
+from superghidra.formats.synthetic_symbol_exporter import (
     DWARF5Exporter,
     ExportField,
     ExportStruct,

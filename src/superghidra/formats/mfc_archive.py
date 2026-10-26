@@ -21,7 +21,7 @@ A u16 0xFFFE after the first 0xFF marks UTF-16 text and the length is read again
 Counts (WriteCount): u16; 0xFFFF -> u32; 0xFFFFFFFF -> u64.
 
 Usage:
-    from mfc_archive import decode_stream, layouts_from_traces
+    from superghidra.formats.mfc_archive import decode_stream, layouts_from_traces
     layouts = layouts_from_traces(serialize_trace.trace_serialize_functions("app.dll"))
     result = decode_stream(data, layouts, env={"local->0x780": 0})
 """
@@ -46,6 +46,10 @@ __all__ = [
     "decode_stream",
     "calibrate",
     "evaluate_condition",
+    "MFCArchiveDecoder",
+    "MFCClassSchema",
+    "MemberVariable",
+    "CRuntimeClassInfo",
 ]
 
 NULL_TAG = 0x0000
@@ -392,7 +396,7 @@ def _negate_cond(cond):
 
 def _cond_text(cond) -> str:
     try:
-        from serialize_trace import _gate_text  # type: ignore
+        from superghidra.formats.serialize_trace import _gate_text  # type: ignore
     except ImportError:  # pragma: no cover
         from .serialize_trace import _gate_text  # type: ignore
     return _gate_text(cond)
@@ -805,7 +809,7 @@ if __name__ == "__main__":  # pragma: no cover
     blob = open(args[0], "rb").read()
     layouts: Dict[str, List[LayoutOp]] = {}
     if len(args) > 1:
-        import serialize_trace
+        from superghidra.formats import serialize_trace
 
         tracers = [serialize_trace.SerializeTracer(p) for p in args[1:]]
         layouts = layouts_from_traces(tracers[0].class_layouts(others=tuple(tracers[1:])))
@@ -815,3 +819,10 @@ if __name__ == "__main__":  # pragma: no cover
     res = decode_stream(blob, layouts, env=env)
     print(json.dumps({k: res[k] for k in ("length", "stats", "map_reliable", "gaps")}, indent=1))
     print(json.dumps(res["objects"], indent=1, default=str)[:12000])
+
+# Aliases for Public API freeze (SuperGhidra 0.4.0)
+MFCArchiveDecoder = ArchiveReader
+MFCClassSchema = NewClassTag
+MemberVariable = Field
+
+from superghidra.formats.msvc_class_recovery import MfcRuntimeClass as CRuntimeClassInfo

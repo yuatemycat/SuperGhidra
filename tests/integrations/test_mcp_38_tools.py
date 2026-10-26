@@ -228,7 +228,7 @@ class TestMCP38ToolsAndSMTBridge(unittest.TestCase):
     def test_new_reformation_mcp_tools_smoke(self):
         """Smoke test migrate_semantic_deltas and preindex_dwarf_pdb MCP tools."""
         mcp_tools._ensure_superghidra_imported()
-        from semantic_delta_log import SemanticDeltaLog, SemanticEvent
+        from superghidra.diff.semantic_delta_log import SemanticDeltaLog, SemanticEvent
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             log_path = os.path.join(tmp_dir, "baseline.jsonl")

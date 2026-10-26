@@ -34,10 +34,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import colab_cloud_orchestrator
-from colab_cloud_orchestrator import CloudConfig, ColabCloudOrchestrator
-import emulator_memory_sidecar
-from emulator_memory_sidecar import (
+from superghidra.integrations import colab_cloud_orchestrator
+from superghidra.integrations.colab_cloud_orchestrator import CloudConfig, ColabCloudOrchestrator
+from superghidra.integrations import emulator_memory_sidecar
+from superghidra.integrations.emulator_memory_sidecar import (
     EmulatorFleetGuard,
     FleetSafetyViolationError,
     FridaMemoryReader,
@@ -45,8 +45,8 @@ from emulator_memory_sidecar import (
     Win32ProcessMemoryReader,
     extract_dynamic_encryption_keys,
 )
-import neural_decompiler_pipeline
-from neural_decompiler_pipeline import (
+from superghidra.integrations import neural_decompiler_pipeline
+from superghidra.integrations.neural_decompiler_pipeline import (
     DecompiledSkeleton,
     LLMDecompilerClient,
     NeuralDecompilerPipeline,
@@ -301,8 +301,8 @@ class TestG3aColabCloudRegressions(unittest.TestCase):
 
             # Case 1: Default upload=False -> never uploads even if token is present
             with mock.patch.dict(os.environ, {"HF_TOKEN": "hf_test_token"}):
-                with mock.patch("colab_cloud_orchestrator.HAS_HF", True):
-                    with mock.patch("colab_cloud_orchestrator.HfApi") as MockHfApi:
+                with mock.patch("superghidra.integrations.colab_cloud_orchestrator.HAS_HF", True):
+                    with mock.patch("superghidra.integrations.colab_cloud_orchestrator.HfApi") as MockHfApi:
                         mock_api_instance = MockHfApi.return_value
                         res = ColabCloudOrchestrator.run_reconstruction_pipeline(
                             cfg, dummy_bin, dry_run=False
@@ -312,8 +312,8 @@ class TestG3aColabCloudRegressions(unittest.TestCase):
 
             # Case 2: Explicit upload=True -> uploads ONLY results directory with allow_patterns
             with mock.patch.dict(os.environ, {"HF_TOKEN": "hf_test_token"}):
-                with mock.patch("colab_cloud_orchestrator.HAS_HF", True):
-                    with mock.patch("colab_cloud_orchestrator.HfApi") as MockHfApi:
+                with mock.patch("superghidra.integrations.colab_cloud_orchestrator.HAS_HF", True):
+                    with mock.patch("superghidra.integrations.colab_cloud_orchestrator.HfApi") as MockHfApi:
                         mock_api_instance = MockHfApi.return_value
                         res = ColabCloudOrchestrator.run_reconstruction_pipeline(
                             cfg, dummy_bin, dry_run=False, upload=True

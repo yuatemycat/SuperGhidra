@@ -4,7 +4,7 @@ import importlib.util
 import os
 import unittest
 
-import x86_decode as X
+from superghidra.lifters import x86_decode as X
 
 
 def d(hexstr, mode=64, addr=0x1000):
@@ -128,7 +128,7 @@ _DLLS = [p for p in (r"C:\Windows\System32\kernel32.dll", r"C:\Windows\SysWOW64\
 class TestAgainstCapstone(unittest.TestCase):
     def test_lengths_match_capstone_on_real_code(self):
         import capstone
-        import binary_loader as B
+        from superghidra.formats import binary_loader as B
 
         for path in _DLLS:
             img = B.load_binary(path)

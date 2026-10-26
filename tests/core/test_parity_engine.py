@@ -19,7 +19,7 @@ import struct
 import unittest
 import numpy as np
 
-import parity_engine as shim_parity_engine
+from superghidra.core import parity_engine as shim_parity_engine
 from superghidra.core import (
     ARM64ADRPScanner,
     AppcallExecutionFrame,

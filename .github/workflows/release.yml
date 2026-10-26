@@ -63,7 +63,7 @@ jobs:
         run: |
           mkdir -p dist/extension
           cp -r ghidra_extension_skeleton/* dist/extension/
-          cp ghidra_gui_overlay_sync.py dist/extension/
+          cp src/superghidra/integrations/ghidra_gui_overlay_sync.py dist/extension/
           cd dist && zip -r SuperGhidra-GUI-Sync-Extension.zip extension/ && rm -rf extension
 
       - name: Create GitHub Release and Upload Assets

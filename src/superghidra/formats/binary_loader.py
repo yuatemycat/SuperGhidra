@@ -29,6 +29,7 @@ __all__ = [
     "Section",
     "Symbol",
     "Import",
+    "Relocation",
     "BinaryImage",
     "load_binary",
     "detect_format",
@@ -78,6 +79,14 @@ class Import:
     ordinal: Optional[int] = None
     address: Optional[int] = None  # IAT / GOT slot VA when known
     delay_loaded: bool = False
+
+
+@dataclass
+class Relocation:
+    offset: int
+    symbol: Optional[str] = None
+    type: int = 0
+    addend: int = 0
 
 
 @dataclass

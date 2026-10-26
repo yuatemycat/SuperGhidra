@@ -4,8 +4,8 @@ import os
 import tempfile
 import unittest
 
-import binary_diff_engine as D
-import struct_shift_migrator as M
+from superghidra.diff import binary_diff_engine as D
+from superghidra.diff import struct_shift_migrator as M
 from tests.formats.test_binary_loader import build_elf, build_macho64, build_pe
 
 

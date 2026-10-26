@@ -37,10 +37,7 @@ except ImportError:
     pypcode = None  # type: ignore
     HAS_PYPCODE = False
 
-try:
-    from superghidra.lifters import x86_decode
-except ImportError:
-    import x86_decode  # type: ignore
+from superghidra.lifters import x86_decode
 
 
 # ==============================================================================

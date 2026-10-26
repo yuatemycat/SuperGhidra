@@ -55,7 +55,7 @@ class TestShimsAndExports(unittest.TestCase):
         self.assertTrue(hasattr(diff_pkg, "run_phase1_phase2_demonstration"))
 
     def test_root_shims_import(self) -> None:
-        import phase1_phase2_roadmap_engine as root_shim1
+        from superghidra.diff import phase1_phase2_roadmap_engine as root_shim1
 
         self.assertIs(root_shim1.RellicGotoFreeRestructurer, RellicGotoFreeRestructurer)
         self.assertIs(root_shim1.CSRSparseMatrixVSAEngine, CSRSparseMatrixVSAEngine)

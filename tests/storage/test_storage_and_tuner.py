@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')))
 
-from storage_compression_prototype import (
+from superghidra.storage.storage_compression_prototype import (
     GHIDRA_BLOCK_SIZE,
     GHIDRA_BUFFER_SIZE,
     GHIDRA_HEADER_SIZE,
@@ -33,7 +33,7 @@ from storage_compression_prototype import (
     StorageCompressionBenchmark,
 )
 
-from headless_analyzer_tuner import (
+from superghidra.core.headless_analyzer_tuner import (
     AnalyzerConfiguration,
     AnalyzerProfileName,
     HeadlessCommandBuilder,

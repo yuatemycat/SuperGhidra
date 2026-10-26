@@ -8,6 +8,21 @@ on:
     branches: [ "master" ]
 
 jobs:
+  dco-check:
+    name: Verify DCO Sign-off (CLA)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify Signed-off-by Trailer on PR Commits
+        run: |
+          COMMITS=$(git log --no-merges origin/${{ github.base_ref }}..HEAD --format="%B")
+          echo "$COMMITS" | grep -q "Signed-off-by:" || (echo "Error: Commits must include a 'Signed-off-by:' trailer (git commit -s) per CLA.md" && exit 1)
+
   test:
     name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -35,3 +50,42 @@ jobs:
       - name: Run Pytest Test Suite
         run: |
           python -m pytest tests -v -rs -rx --strict-markers
+
+  test-wheel:
+    name: Test Built Wheel in Clean Environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Build Wheel
+        run: |
+          python -m pip install --upgrade pip build wheel
+          python -m build --wheel --no-isolation
+
+      - name: Install Wheel in Isolated Location
+        run: |
+          WHEEL=$(ls dist/*.whl)
+          mkdir -p /tmp/clean_env
+          cd /tmp/clean_env
+          python -m venv test_venv
+          . test_venv/bin/activate
+          pip install --upgrade pip
+          pip install $GITHUB_WORKSPACE/$WHEEL
+
+      - name: Verify Clean Imports and CLI Commands Outside Repository
+        run: |
+          cd /tmp/clean_env
+          . test_venv/bin/activate
+          python -c "import superghidra; print('Version:', superghidra.__version__)"
+          python -c "import superghidra; missing = [k for k in superghidra._SUPPORTED_CORE if not hasattr(superghidra, k)]; assert not missing, f'Missing: {missing}'"
+          python -c "import superghidra; assert len(superghidra.__all__) == 33"
+          superghidra --help
+          superghidra version
+          superghidra rtti-recover --help
+          superghidra decompile --help

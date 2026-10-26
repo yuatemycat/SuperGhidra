@@ -4,7 +4,7 @@ import os
 import struct
 import unittest
 
-import msvc_class_recovery as R
+from superghidra.formats import msvc_class_recovery as R
 
 BASE = 0x180000000
 

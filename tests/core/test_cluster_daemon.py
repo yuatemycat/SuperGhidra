@@ -21,7 +21,7 @@ from superghidra.core.cluster_daemon import (
     TaskEnvelope,
     WorkerDescriptor,
 )
-import cluster_daemon as root_cluster_shim
+from superghidra.core import cluster_daemon as root_cluster_shim
 
 
 def test_root_shim_export():

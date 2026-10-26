@@ -29,14 +29,15 @@ def generate_pe64_dll(out_path: Path) -> None:
     opt_size = 240
 
     # 1. Code in .text (RVA 0x1000)
-    # mov rax, rbx ; mov rcx, rax ; mov rdx, rcx ; ret (dataflow chain)
-    # 48 89 D8 ; 48 89 C1 ; 48 89 CA ; C3
+    # mov rax, [rcx + 0x18] ; mov [rcx + 0x20], rax ; mov edx, [rcx + 0x08]
+    # mov rax, rbx ; mov rcx, rax ; mov rdx, rcx ; ret (dataflow chain + type lattice displacements)
+    # 48 8B 41 18 ; 48 89 41 20 ; 8B 51 08 ; 48 89 D8 ; 48 89 C1 ; 48 89 CA ; C3
     code = bytearray()
     # FUN at 0x1000
-    code.extend(bytes.fromhex("4889D8 4889C1 4889CA C3"))
+    code.extend(bytes.fromhex("488B4118 48894120 8B5108 4889D8 4889C1 4889CA C3"))
     # Padding
     code.extend(b"\x90" * 8)
-    # FUN at 0x1010: add and xor chain
+    # FUN at 0x101C: add and xor chain
     code.extend(bytes.fromhex("4801D8 4831C9 C3"))
     # Pad to at least 16 KB so chunk compression tests work
     code.extend(b"\x90" * (16384 - len(code)))

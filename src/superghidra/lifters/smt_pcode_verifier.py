@@ -41,7 +41,7 @@ def _require_z3():
 
 # Import P-Code lifter and ledger models
 try:
-    from pcode_lifter_bridge import (
+    from superghidra.lifters.pcode_lifter_bridge import (
         ARM64PcodeLifter,
         AddressSpace,
         CANONICAL_REG_OFFSETS,
@@ -53,7 +53,7 @@ try:
         Varnode,
         X86_64PcodeLifter,
     )
-    from evidence_ledger import (
+    from superghidra.diff.evidence_ledger import (
         CheckResult,
         ObligationStatus,
         ObligationType,
@@ -63,7 +63,7 @@ try:
 except ImportError:
     import os
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from pcode_lifter_bridge import (  # type: ignore
+    from superghidra.lifters.pcode_lifter_bridge import (  # type: ignore
         ARM64PcodeLifter,
         AddressSpace,
         CANONICAL_REG_OFFSETS,
@@ -75,7 +75,7 @@ except ImportError:
         Varnode,
         X86_64PcodeLifter,
     )
-    from evidence_ledger import (  # type: ignore
+    from superghidra.diff.evidence_ledger import (  # type: ignore
         CheckResult,
         ObligationStatus,
         ObligationType,

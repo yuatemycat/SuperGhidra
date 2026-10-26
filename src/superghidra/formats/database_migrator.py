@@ -55,7 +55,7 @@ try:
     from superghidra.core.ghidra_oracle import WriteOverlay
 except ImportError:
     try:
-        from ghidra_oracle import WriteOverlay  # type: ignore
+        from superghidra.core.ghidra_oracle import WriteOverlay  # type: ignore
     except ImportError:
         WriteOverlay = None  # type: ignore
 
@@ -69,7 +69,7 @@ try:
     )
 except ImportError:
     try:
-        from semantic_delta_log import (  # type: ignore
+        from superghidra.diff.semantic_delta_log import (  # type: ignore
             CommentType,
             DeltaEventType,
             SemanticDeltaLog,
@@ -93,7 +93,7 @@ try:
     )
 except ImportError:
     try:
-        from evidence_ledger import (  # type: ignore
+        from superghidra.diff.evidence_ledger import (  # type: ignore
             FieldDisplacementVerifier,
             ObligationStatus,
             ObligationType,
@@ -119,7 +119,7 @@ try:
     )
 except ImportError:
     try:
-        from synthetic_symbol_exporter import (  # type: ignore
+        from superghidra.formats.synthetic_symbol_exporter import (  # type: ignore
             DWARF5Exporter,
             ExportField,
             ExportStruct,

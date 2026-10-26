@@ -42,12 +42,8 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-try:  # package import or flat module import
-    from . import binary_loader, msvc_class_recovery, x86_decode
-except ImportError:
-    import binary_loader
-    import msvc_class_recovery
-    import x86_decode
+from superghidra.formats import binary_loader, msvc_class_recovery
+from superghidra.lifters import x86_decode
 
 __all__ = ["ArchiveOp", "SerializeTrace", "SerializeTracer", "trace_serialize_functions"]
 

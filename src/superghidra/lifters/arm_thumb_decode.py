@@ -1158,7 +1158,7 @@ def decode_arm_thumb_memory_accesses(
     Returns objects matching struct_shift_migrator.MemoryAccess.
     """
     try:
-        from struct_shift_migrator import MemoryAccess
+        from superghidra.diff.struct_shift_migrator import MemoryAccess
     except ImportError:
         # Fallback dataclass if imported outside SuperGhidra package
         from dataclasses import dataclass

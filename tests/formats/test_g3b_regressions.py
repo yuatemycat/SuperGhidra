@@ -27,7 +27,7 @@ import tempfile
 import unittest
 from typing import List
 
-from synthetic_symbol_exporter import (
+from superghidra.formats.synthetic_symbol_exporter import (
     DWARF5Exporter,
     ExportField,
     ExportStruct,
@@ -36,11 +36,11 @@ from synthetic_symbol_exporter import (
     encode_sleb128,
     encode_uleb128,
 )
-from dwarf_pdb_preindexer import (
+from superghidra.formats.dwarf_pdb_preindexer import (
     OffHeapTypeStore,
     TypeDeduplicator,
 )
-from shm_decompiler_bridge import (
+from superghidra.core.shm_decompiler_bridge import (
     FRAME_HDR_FMT,
     FRAME_HDR_SIZE,
     FRAME_MAGIC,
@@ -49,7 +49,7 @@ from shm_decompiler_bridge import (
     RING_OFFSET_TAIL,
     ShmRingBuffer,
 )
-from apk_jni_cross_referencer import (
+from superghidra.integrations.apk_jni_cross_referencer import (
     APKJNICrossReferencer,
 )
 

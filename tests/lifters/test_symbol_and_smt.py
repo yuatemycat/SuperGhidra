@@ -17,7 +17,7 @@ import z3
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')))
 
-from synthetic_symbol_exporter import (
+from superghidra.formats.synthetic_symbol_exporter import (
     DWARF5Exporter,
     ExportField,
     ExportStruct,
@@ -29,7 +29,7 @@ from synthetic_symbol_exporter import (
     export_from_ledger,
 )
 
-from smt_pcode_verifier import (
+from superghidra.lifters.smt_pcode_verifier import (
     CCodeParser,
     CIntrinsic,
     CSymbolicEvaluator,
@@ -39,7 +39,7 @@ from smt_pcode_verifier import (
     VerificationResult,
 )
 
-from pcode_lifter_bridge import (
+from superghidra.lifters.pcode_lifter_bridge import (
     ARM64PcodeLifter,
     AddressSpace,
     FLAG_C_OFFSET,
@@ -52,7 +52,7 @@ from pcode_lifter_bridge import (
     X86_64PcodeLifter,
 )
 
-from evidence_ledger import (
+from superghidra.diff.evidence_ledger import (
     LedgerVerificationError,
     ObligationStatus,
     ObligationType,
@@ -60,7 +60,7 @@ from evidence_ledger import (
     ReconstructionObligationLedger,
 )
 
-from dwarf_pdb_preindexer import (
+from superghidra.formats.dwarf_pdb_preindexer import (
     OffHeapTypeStore,
     StructMember,
     TypeDeduplicator,

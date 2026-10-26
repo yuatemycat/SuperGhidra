@@ -44,35 +44,35 @@ import json
 import tempfile
 from unittest.mock import MagicMock, patch
 
-from apk_jni_cross_referencer import (
+from superghidra.integrations.apk_jni_cross_referencer import (
     APKJNICrossReferencer,
     construct_static_jni_symbol,
     mangle_jni_identifier,
 )
-from colab_cloud_orchestrator import ColabCloudOrchestrator
-from cross_platform_headless_harness import (
+from superghidra.integrations.colab_cloud_orchestrator import ColabCloudOrchestrator
+from superghidra.core.cross_platform_headless_harness import (
     HeadlessEnvironmentConfigurator,
     HeadlessProfile,
 )
-import evidence_ledger
-from native_decompiler_pgo_builder import (
+from superghidra.diff import evidence_ledger
+from superghidra.core.native_decompiler_pgo_builder import (
     DecompilerBuildConfig,
     NativeDecompilerPGOBuilder,
 )
-from neural_decompiler_pipeline import (
+from superghidra.integrations.neural_decompiler_pipeline import (
     DecompiledSkeleton,
     LLMDecompilerClient,
     NeuralDecompilerPipeline,
     NeuralPrediction,
     SkeletonExtractor,
 )
-from pcode_lifter_bridge import (
+from superghidra.lifters.pcode_lifter_bridge import (
     AddressSpace,
     ARM64PcodeLifter,
     PcodeGraphBuilder,
     PcodeOpcode,
 )
-from semantic_delta_log import (
+from superghidra.diff.semantic_delta_log import (
     DeltaEventType,
     DeltaMigrationEngine,
     SemanticEvent,

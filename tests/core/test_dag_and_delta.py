@@ -37,7 +37,7 @@ CURRENT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__fil
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from dependency_cache_dag import (
+from superghidra.core.dependency_cache_dag import (
     DecompilationLRUCache,
     DependencyCacheDAG,
     FunctionNode,
@@ -46,7 +46,7 @@ from dependency_cache_dag import (
     StructNode,
     generate_synthetic_dependency_dag,
 )
-from semantic_delta_log import (
+from superghidra.diff.semantic_delta_log import (
     CommentType,
     DeltaEventType,
     DeltaMigrationEngine,
@@ -56,11 +56,11 @@ from semantic_delta_log import (
     SemanticEvent,
     compute_event_proof_hash,
 )
-from binary_diff_engine import (
+from superghidra.diff.binary_diff_engine import (
     BatchedBinaryMatcher,
     generate_paired_synthetic_binaries,
 )
-from evidence_ledger import (
+from superghidra.diff.evidence_ledger import (
     ObligationStatus,
     ObligationType,
     ReconstructionObligationLedger,

@@ -27,7 +27,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')))
 
-from gpu_adrp_scanner import (
+from superghidra.acceleration.gpu_adrp_scanner import (
     GPUAdrpScanner,
     NumPyAdrpEngine,
     benchmark_scanner,
@@ -35,7 +35,7 @@ from gpu_adrp_scanner import (
     decode_adrp_target,
     decode_ldr_imm,
 )
-from evidence_ledger import (
+from superghidra.diff.evidence_ledger import (
     AllocationSizeVerifier,
     FieldDisplacementVerifier,
     LedgerVerificationError,
@@ -44,7 +44,7 @@ from evidence_ledger import (
     ReconstructionObligationLedger,
     VTableSlotVerifier,
 )
-from binary_diff_engine import (
+from superghidra.diff.binary_diff_engine import (
     BasicBlock,
     BatchedBinaryMatcher,
     CFGFeatureExtractor,

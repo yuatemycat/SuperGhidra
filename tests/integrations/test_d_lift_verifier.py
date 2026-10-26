@@ -371,7 +371,7 @@ class TestBackwardCompatibilityAndAliases:
         assert DLiftRewardEngine is DLiFTPipeline
 
     def test_root_shim_exports(self) -> None:
-        import d_lift_verifier as root_mod
+        from superghidra.integrations import d_lift_verifier as root_mod
         assert hasattr(root_mod, "DLiftRewardEngine")
         assert hasattr(root_mod, "InMemClangSyntaxGate")
         assert hasattr(root_mod, "Z3SemanticEquivalenceGate")

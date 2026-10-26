@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Attempt to import from local workspace
 try:
-    from evidence_ledger import (
+    from superghidra.diff.evidence_ledger import (
         ObligationStatus,
         ObligationType,
         ProofObligation,
@@ -40,7 +40,7 @@ try:
 except ImportError:
     # If run standalone outside package root
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from evidence_ledger import (  # type: ignore
+    from superghidra.diff.evidence_ledger import (  # type: ignore
         ObligationStatus,
         ObligationType,
         ProofObligation,

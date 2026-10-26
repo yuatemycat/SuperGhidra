@@ -29,11 +29,8 @@ import struct
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-try:  # package import or flat module import
-    from . import binary_loader, x86_decode
-except ImportError:
-    import binary_loader
-    import x86_decode
+from superghidra.formats import binary_loader
+from superghidra.lifters import x86_decode
 
 __all__ = [
     "VTable",
@@ -42,6 +39,10 @@ __all__ = [
     "ClassRecoveryReport",
     "demangle_rtti_name",
     "recover_classes",
+    "RTTIClass",
+    "RTTIBaseClass",
+    "MemberVariable",
+    "CRuntimeClassInfo",
 ]
 
 # CObject vtable layout in release MFC (x86 and x64): 0 GetRuntimeClass, 1 deleting dtor,
@@ -477,14 +478,40 @@ def _scan_mfc(view: _View) -> List[MfcRuntimeClass]:
     # GetBaseClass() function returning it.
     # A base CRuntimeClass in another module (e.g. mfc140u.dll) is only known by its
     # import name, so base_class stays None and base_name comes from the import.
+    # 1. MFC linkage check: binary must either import an MFC library or define CObject
+    has_mfc_linkage = any(
+        imp.library and (imp.library.lower().startswith("mfc") or imp.library.lower().startswith("afx"))
+        for imp in img.imports
+    ) or any(c.name == "CObject" for c in found.values())
+
+    if not has_mfc_linkage:
+        return []
+
+    imported_bases: Dict[int, str] = {}
     for cls in found.values():
         if cls.base_class and view.is_code(cls.base_class):
-            cls.base_class, imported = _stub_value(view, cls.base_class)
+            resolved_base, imported = _stub_value(view, cls.base_class)
+            cls.base_class = resolved_base
             if imported:
+                imported_bases[cls.address] = imported
                 cls.base_name = _demangle_mfc_import(imported)
         if cls.base_class in found:
             cls.base_name = found[cls.base_class].name
-    return sorted(found.values(), key=lambda c: c.name)
+
+    # 2. Hierarchy validation: authentic MFC classes must trace to CObject or an imported MFC base
+    def reaches_mfc_root(c: MfcRuntimeClass, visited: set) -> bool:
+        if c.name == "CObject" or c.base_name is not None or c.address in imported_bases:
+            return True
+        if not c.base_class or c.base_class in visited:
+            return False
+        visited.add(c.base_class)
+        parent = found.get(c.base_class)
+        if parent is None:
+            return False
+        return reaches_mfc_root(parent, visited)
+
+    valid_classes = [c for c in found.values() if reaches_mfc_root(c, set())]
+    return sorted(valid_classes, key=lambda c: c.name)
 
 
 _SIBLING_VIEWS: Dict[str, Optional[Tuple[_View, Dict[str, int]]]] = {}
@@ -629,3 +656,11 @@ if __name__ == "__main__":  # pragma: no cover
     for c in d["mfc_classes"][:40]:
         print(f"{c['name']:40} size={c['object_size']:<6} schema={c['schema']:<6} base={c['base_name']} "
               f"vt={c['vtable']} serialize={c['serialize']}")
+
+# Aliases for Public API freeze (SuperGhidra 0.4.0)
+RTTIClass = RttiClass
+RTTIBaseClass = VTable
+CRuntimeClassInfo = MfcRuntimeClass
+
+# Field alias for member recovery
+from superghidra.formats.mfc_archive import Field as MemberVariable

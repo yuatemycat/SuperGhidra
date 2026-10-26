@@ -89,6 +89,12 @@ class TestStagedPCodePipeline(unittest.TestCase):
         body = res["c_code"].split("{", 1)[1].rsplit("}", 1)[0]
         self.assertIn("rax = r8;", body)
 
+    def test_decompile_sub_rax_rbx(self):
+        # 48 29 d8 c3 (sub rax, rbx ; ret)
+        res = staged_decompile_function(bytes.fromhex("4829D8C3"), func_rva=0x1000)
+        body = res["c_code"].split("{", 1)[1].rsplit("}", 1)[0]
+        self.assertIn("rax = rax - rbx;", body)
+
     def test_decompile_xor_rax_rax(self):
         # 48 31 c0 c3 (xor rax, rax ; ret -> rax = 0;)
         res = staged_decompile_function(bytes.fromhex("4831C0C3"), func_rva=0x1000)

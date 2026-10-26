@@ -734,8 +734,8 @@ class ReconstructionObligationLedger:
             # 5. SMT Equivalence verification if c_code and code_bytes provided
             c_code = obligation.evidence.get("c_code_snippet") or obligation.evidence.get("c_code")
             if c_code and code_bytes:
-                from pcode_lifter_bridge import ARM64PcodeLifter
-                from smt_pcode_verifier import SMTPcodeVerifier
+                from superghidra.lifters.pcode_lifter_bridge import ARM64PcodeLifter
+                from superghidra.lifters.smt_pcode_verifier import SMTPcodeVerifier
                 lifter = ARM64PcodeLifter()
                 pcode_ops = lifter.lift_block(obligation.target_address or 0x1000, code_bytes)
                 verifier = SMTPcodeVerifier(timeout_ms=5000)
