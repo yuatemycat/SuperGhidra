@@ -718,5 +718,37 @@ class TestSuperGhidraSection3MCPServer(unittest.TestCase):
         self.assertEqual(len(self.server._schema_cache), 0)
 
 
+
+class TestSafeASTMathEvaluator(unittest.TestCase):
+    """Verifies that safe_eval_math_expr rejects code execution and safely computes arithmetic."""
+
+    def test_arithmetic_and_bitwise_operations(self):
+        from superghidra.core.parity_engine import safe_eval_math_expr
+        env = {"x": 10, "y": 20, "mask": 0xFFFFFFFF, "state": 42}
+        self.assertEqual(safe_eval_math_expr("(x ^ (x - 1)) & 1", env), 1)
+        self.assertEqual(safe_eval_math_expr("(state + 7) ^ 0x42", env), ((42 + 7) ^ 0x42))
+        self.assertEqual(safe_eval_math_expr("~x & mask", env), (~10 & 0xFFFFFFFF))
+        self.assertTrue(safe_eval_math_expr("x < y and y <= 20", env))
+        self.assertTrue(safe_eval_math_expr("x == 10", env))
+        self.assertFalse(safe_eval_math_expr("x > y", env))
+
+    def test_sandbox_escape_attempts_are_blocked(self):
+        from superghidra.core.parity_engine import safe_eval_math_expr
+        env = {"x": 10, "y": 20, "mask": 0xFFFFFFFF, "state": 42}
+        injection_payloads = [
+            "__import__('os').system('echo pwned')",
+            "(1).__class__.__bases__[0].__subclasses__()",
+            "[x for x in (1, 2)]",
+            "open('test.txt', 'w')",
+            "getattr(x, '__class__')",
+            "lambda: 1",
+            "x.__class__",
+        ]
+        for payload in injection_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises((ValueError, TypeError)):
+                    safe_eval_math_expr(payload, env)
+
+
 if __name__ == "__main__":
     unittest.main()

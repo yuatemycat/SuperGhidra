@@ -44,7 +44,7 @@ import subprocess
 import threading
 import secrets
 import ipaddress
-from typing import Dict, Any, List, Optional, Set, Tuple, Union, Iterable
+from typing import Dict, Any, List, Optional, Set, Tuple, Union, Iterable, Sequence
 from collections import OrderedDict
 
 # Import DependencyCacheDAG and SemanticDeltaLog
@@ -2042,6 +2042,208 @@ class GhidraOracleSession:
 
 
 # ==============================================================================
+# Mock Ghidra Oracle Session (Standalone Offline Core)
+# ==============================================================================
+
+class MockGhidraOracleSession:
+    """Standalone in-memory mock oracle session for running and testing the daemon without Ghidra/JVM."""
+
+    def __init__(
+        self,
+        resource_mode: str = "balanced",
+        overlay: Optional[WriteOverlay] = None,
+        l2_cache: Optional[L2SQLiteCache] = None,
+    ):
+        self.project_dir = "mock_project_dir"
+        self.project_name = "mock_project"
+        self.program_name = "mock_program"
+        self.image_base = DEFAULT_IMAGE_BASE
+        self.resource_mode = resource_mode
+        self.overlay = overlay if overlay is not None else WriteOverlay()
+        self.l2_cache = l2_cache if l2_cache is not None else L2SQLiteCache()
+        self.start_time = time.time()
+        self.decompile_cache = LRUCache(512)
+        self.vtable_cache = LRUCache(512)
+        self.type_store = OffHeapTypeStore()
+        self.is_hibernating = False
+        self.throttle_ms = 10
+
+    def initialize(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def query_rva(self, addr: Any) -> Dict[str, Any]:
+        val = parse_addr_int(addr)
+        return {
+            "status": "ok",
+            "va": normalize_hex_key(val),
+            "rva": f"0x{va_to_rva(val):08X}",
+            "time_ms": 0.05,
+        }
+
+    def query_decompile(self, targets: Sequence[Any], style: str = "ghidra", throttle_ms: Optional[int] = None) -> Dict[str, Any]:
+        funcs = []
+        for t in targets:
+            addr_int = parse_addr_int(t)
+            code = (
+                f"// Mock decompilation for {normalize_hex_key(addr_int)} (SuperGhidra standalone mode)\n"
+                f"int func_{addr_int:08X}(int a1, int a2) {{\n"
+                f"    return (a1 * 2) + a2;\n"
+                f"}}\n"
+            )
+            funcs.append({
+                "va": normalize_hex_key(addr_int),
+                "rva": f"0x{va_to_rva(addr_int):08X}",
+                "name": f"func_{addr_int:08X}",
+                "code": code,
+                "time_ms": 0.5,
+            })
+        return {
+            "status": "ok",
+            "targets": list(targets),
+            "style": style,
+            "functions": funcs,
+            "time_ms": 1.0,
+        }
+
+    def query_vtable(self, addr: Any, count: int = 12) -> Dict[str, Any]:
+        base_addr = parse_addr_int(addr)
+        slots = [
+            {
+                "slot": i,
+                "va": f"0x{base_addr + i * 8:08X}",
+                "target": f"0x{0x00401000 + i * 0x20:08X}",
+                "name": f"vfunc_{i}",
+            }
+            for i in range(count)
+        ]
+        return {
+            "status": "ok",
+            "target_va": normalize_hex_key(base_addr),
+            "target_rva": f"0x{va_to_rva(base_addr):08X}",
+            "vtable": slots,
+            "time_ms": 0.5,
+        }
+
+    def query_disassemble(self, addr: Any, count: int = 30) -> Dict[str, Any]:
+        base_addr = parse_addr_int(addr)
+        insns = []
+        for i in range(count):
+            insns.append({
+                "va": f"0x{base_addr + i * 4:08X}",
+                "rva": f"0x{va_to_rva(base_addr + i * 4):08X}",
+                "bytes": "E00300AA",
+                "mnemonic": "mov",
+                "operands": f"x0, x{i % 8}",
+                "comment": "",
+            })
+        return {
+            "status": "ok",
+            "target_va": normalize_hex_key(base_addr),
+            "target_rva": f"0x{va_to_rva(base_addr):08X}",
+            "count": len(insns),
+            "instructions": insns,
+            "time_ms": 0.5,
+        }
+
+    def query_refs(self, addr: Any, count: int = 20) -> Dict[str, Any]:
+        base_addr = parse_addr_int(addr)
+        refs = [
+            {
+                "from_va": f"0x{base_addr - 0x100 + i * 0x20:08X}",
+                "from_rva": f"0x{va_to_rva(base_addr - 0x100 + i * 0x20):08X}",
+                "ref_type": "DATA",
+                "caller_name": "None",
+                "caller_entry_rva": "0x00000000",
+            }
+            for i in range(min(count, 5))
+        ]
+        return {
+            "status": "ok",
+            "target_va": normalize_hex_key(base_addr),
+            "target_rva": f"0x{va_to_rva(base_addr):08X}",
+            "total_refs": len(refs),
+            "references": refs,
+            "time_ms": 0.5,
+        }
+
+    def query_adrp_add(self, target: str) -> Dict[str, Any]:
+        return {
+            "status": "ok",
+            "target": target,
+            "count": 0,
+            "pairs": [],
+            "time_ms": 0.2,
+        }
+
+    def query_opcodes(self, min_op: int = 500, max_op: int = 550) -> Dict[str, Any]:
+        return {
+            "status": "ok",
+            "min_opcodes": min_op,
+            "max_opcodes": max_op,
+            "count": 0,
+            "functions": [],
+            "time_ms": 0.2,
+        }
+
+    def hibernate(self) -> Dict[str, Any]:
+        return {"status": "ok", "state": "hibernated", "mode": self.resource_mode}
+
+    def set_resource_mode(self, new_mode: str) -> Dict[str, Any]:
+        self.resource_mode = new_mode
+        return {"status": "ok", "mode": new_mode}
+
+    def set_rename(self, addr: Any, name: str, old_name: Optional[str] = None) -> Dict[str, Any]:
+        hex_addr = normalize_hex_key(addr)
+        self.overlay.set_rename(hex_addr, name)
+        return {"status": "ok", "addr": hex_addr, "new_name": name}
+
+    def set_comment(self, addr: Any, comment: str, comment_type: str = "eol") -> Dict[str, Any]:
+        hex_addr = normalize_hex_key(addr)
+        self.overlay.set_comment(hex_addr, comment)
+        return {"status": "ok", "addr": hex_addr, "comment": comment}
+
+    def query_type(self, name_or_id: str) -> Dict[str, Any]:
+        return {
+            "status": "ok",
+            "type": {"name": str(name_or_id), "size": 8},
+            "c_decl": f"struct {name_or_id} {{ void* vptr; }};",
+        }
+
+    def register_struct(self, name: str, byte_size: int, members: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        return {
+            "status": "ok",
+            "name": name,
+            "byte_size": byte_size,
+            "type_id": 1001,
+            "c_decl": f"struct {name} {{ char _buf[{byte_size}]; }};",
+        }
+
+    def query_status(self) -> Dict[str, Any]:
+        return {
+            "status": "ok",
+            "initialized": True,
+            "mock_mode": True,
+            "mode": self.resource_mode,
+            "program_name": self.program_name,
+            "project_name": self.project_name,
+            "project_dir": self.project_dir,
+            "image_base": f"0x{self.image_base:08X}",
+            "function_count": 42,
+            "indexed_opcode_gates": 0,
+            "indexed_adrp_pages": 0,
+            "decompile_cache": {"size": 0, "capacity": 512, "hit_rate_pct": 0.0, "hits": 0, "misses": 0},
+            "vtable_cache": {"size": 0, "capacity": 512, "hit_rate_pct": 0.0, "hits": 0, "misses": 0},
+            "l2_cache_count": 0,
+            "overall_hit_rate_pct": 0.0,
+            "overlay_renames_count": len(self.overlay.renames),
+            "overlay_comments_count": len(self.overlay.comments),
+        }
+
+
+# ==============================================================================
 # TCP/JSON Daemon Server
 # ==============================================================================
 
@@ -2077,6 +2279,7 @@ class GhidraDaemonServer:
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
+        self.port = self.server_socket.getsockname()[1]
         self.server_socket.listen(16)
         self.running = True
         logger.info(f"Ghidra Oracle daemon listening on {self.host}:{self.port}")
@@ -2207,6 +2410,7 @@ class GhidraDaemonServer:
                 if not req_token or not secrets.compare_digest(str(req_token), str(self.token)):
                     return {
                         "status": "error",
+                        "code": 401,
                         "message": "Unauthorized: invalid or missing session token",
                     }
             else:
@@ -2214,6 +2418,7 @@ class GhidraDaemonServer:
                 if req_token is not None and not secrets.compare_digest(str(req_token), str(self.token)):
                     return {
                         "status": "error",
+                        "code": 401,
                         "message": "Unauthorized: invalid or missing session token",
                     }
 
@@ -2874,6 +3079,11 @@ def main():
         default=600.0,
         help="Threshold in seconds before a lock file is considered stale (default 600s)",
     )
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Run daemon in mock/standalone mode with synthetic responses (no Ghidra/JDK installation required)",
+    )
     parser.add_argument("-h", "--help", action="store_true", help="Show help message")
 
     parsed, unknown = parser.parse_known_args()
@@ -2897,18 +3107,30 @@ def main():
     if cmd == "serve":
         logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
         target_mode = parsed.mode or "balanced"
-        session = GhidraOracleSession(
-            project_dir=parsed.project_dir,
-            project_name=parsed.project_name,
-            program_name=parsed.program_name,
-            resource_mode=target_mode,
-            clean_stale_locks=parsed.clean_stale_locks,
-            lock_stale_threshold_sec=parsed.lock_stale_threshold_sec,
-        )
-        if parsed.mode:
-            session.set_resource_mode(parsed.mode)
-        print(f"[*] Initializing Ghidra & OpenJDK 21 (Mode: {session.resource_mode})...")
-        session.initialize()
+        use_mock = parsed.mock or (os.environ.get("SUPERGHIDRA_MOCK_ORACLE") == "1")
+        if not use_mock:
+            try:
+                import pyghidra  # noqa: F401
+            except ImportError:
+                print("[!] PyGhidra not detected. Running daemon in mock standalone mode (--mock).")
+                use_mock = True
+
+        if use_mock:
+            session = MockGhidraOracleSession(resource_mode=target_mode)
+            print(f"[*] Initializing Mock Ghidra Oracle (Mode: {session.resource_mode}, Zero-JVM standalone)...")
+        else:
+            session = GhidraOracleSession(
+                project_dir=parsed.project_dir,
+                project_name=parsed.project_name,
+                program_name=parsed.program_name,
+                resource_mode=target_mode,
+                clean_stale_locks=parsed.clean_stale_locks,
+                lock_stale_threshold_sec=parsed.lock_stale_threshold_sec,
+            )
+            if parsed.mode:
+                session.set_resource_mode(parsed.mode)
+            print(f"[*] Initializing Ghidra & OpenJDK 21 (Mode: {session.resource_mode})...")
+            session.initialize()
         # Resolve or generate session token
         token = parsed.token or os.environ.get(SUPERGHIDRA_TOKEN_ENV)
         if not token:

@@ -34,3 +34,5 @@ Briefly describe the change, feature, or bug fix introduced by this pull request
 - [ ] If modifying instruction lifting or AST translation, I have included Z3 SMT equivalence proofs.
 - [ ] No temporary files, `.lock` files, or test outputs were created in the source tree.
 - [ ] I have updated relevant documentation / docstrings.
+- [ ] I agree to the [SuperGhidra Contributor License Agreement](CLA.md) (authorizing distribution under GNU AGPL-3.0 and the commercial license).
+- [ ] My commits include a Developer Certificate of Origin (DCO) sign-off (`git commit -s`).

@@ -51,8 +51,13 @@ Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) or [feature request]
 - the resource governor mode (`eco`, `balanced`, `turbo` or `auto`)
 - a minimal binary slice or disassembly dump that reproduces it
 
-## License
+## Contributor License Agreement (CLA) & Licensing
 
-SuperGhidra is released under the GNU AGPL-3.0-or-later and is also offered under a separate commercial license (see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)). By opening a pull request you agree that your contribution may be distributed under both. You keep the copyright on your work. If you can't agree to the second part, say so in the PR before it is merged.
+SuperGhidra is dual-licensed under the GNU AGPL-3.0-or-later and a separate commercial license (see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)).
 
-Code from before the license change was released under Apache-2.0, and that version of the text is in `LICENSES/Apache-2.0.txt`.
+All contributors must accept the [Contributor License Agreement](CLA.md) before contributions can be merged. By opening a pull request or submitting code with a Developer Certificate of Origin (DCO) sign-off (`git commit -s`), you agree that:
+1. Your contribution may be distributed under both the GNU AGPL-3.0-or-later and the SuperGhidra commercial license.
+2. You retain copyright ownership of your contribution.
+3. You have the right to grant these licenses (see [CLA.md](CLA.md) for full terms).
+
+Code created before the dual-licensing update was released under Apache-2.0; that text is preserved in `LICENSES/Apache-2.0.txt`.

@@ -48,6 +48,7 @@ Implemented Subsystems:
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 from dataclasses import dataclass, field
 import enum
@@ -55,6 +56,7 @@ import hashlib
 import json
 import math
 import mmap
+import operator
 import re
 import struct
 import zlib
@@ -486,6 +488,100 @@ class PCodeCFG:
         return dom
 
 
+_SAFE_MATH_BIN_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.BitOr: operator.or_,
+    ast.BitXor: operator.xor,
+    ast.BitAnd: operator.and_,
+    ast.LShift: operator.lshift,
+    ast.RShift: operator.rshift,
+    ast.Pow: operator.pow,
+}
+
+_SAFE_MATH_UNARY_OPS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+    ast.Invert: operator.invert,
+    ast.Not: operator.not_,
+}
+
+_SAFE_MATH_COMPARE_OPS = {
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+}
+
+
+def _eval_math_ast_node(node: ast.AST, env: Dict[str, Any]) -> Any:
+    """Evaluates an AST node strictly restricted to numeric/bitwise operations."""
+    if isinstance(node, ast.Expression):
+        return _eval_math_ast_node(node.body, env)
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, (int, float, bool)):
+            return node.value
+        raise ValueError(f"Disallowed constant type in AST evaluator: {type(node.value)}")
+    if isinstance(node, ast.Name):
+        if node.id in env:
+            return env[node.id]
+        raise ValueError(f"Undefined variable in expression: {node.id}")
+    if isinstance(node, ast.UnaryOp):
+        op_type = type(node.op)
+        if op_type in _SAFE_MATH_UNARY_OPS:
+            val = _eval_math_ast_node(node.operand, env)
+            return _SAFE_MATH_UNARY_OPS[op_type](val)
+        raise ValueError(f"Disallowed unary operator: {op_type}")
+    if isinstance(node, ast.BinOp):
+        op_type = type(node.op)
+        if op_type in _SAFE_MATH_BIN_OPS:
+            left = _eval_math_ast_node(node.left, env)
+            right = _eval_math_ast_node(node.right, env)
+            if op_type is ast.LShift and (right > 128 or right < 0):
+                raise ValueError("Left shift operand out of bounds")
+            if op_type is ast.RShift and right < 0:
+                raise ValueError("Right shift operand negative")
+            if op_type is ast.Pow and (right > 64 or right < 0 or abs(left) > 1000000):
+                raise ValueError("Exponentiation operand out of bounds")
+            return _SAFE_MATH_BIN_OPS[op_type](left, right)
+        raise ValueError(f"Disallowed binary operator: {op_type}")
+    if isinstance(node, ast.Compare):
+        left = _eval_math_ast_node(node.left, env)
+        for op, comparator in zip(node.ops, node.comparators):
+            op_type = type(op)
+            if op_type not in _SAFE_MATH_COMPARE_OPS:
+                raise ValueError(f"Disallowed comparison operator: {op_type}")
+            comp_val = _eval_math_ast_node(comparator, env)
+            if not _SAFE_MATH_COMPARE_OPS[op_type](left, comp_val):
+                return False
+            left = comp_val
+        return True
+    if isinstance(node, ast.BoolOp):
+        if isinstance(node.op, ast.And):
+            for v in node.values:
+                if not _eval_math_ast_node(v, env):
+                    return False
+            return True
+        if isinstance(node.op, ast.Or):
+            for v in node.values:
+                if _eval_math_ast_node(v, env):
+                    return True
+            return False
+        raise ValueError(f"Disallowed boolean operator: {type(node.op)}")
+    raise ValueError(f"Disallowed AST node: {type(node).__name__}")
+
+
+def safe_eval_math_expr(expr: str, env: Dict[str, Any]) -> Any:
+    """Safely evaluates a numeric/bitwise expression using an AST walker without eval()."""
+    tree = ast.parse(expr.strip(), mode="eval")
+    return _eval_math_ast_node(tree, env)
+
+
 class SymbolicCFGDeflattener:
     """
     Closes Gap 2: Combines dominance-tree analysis with algebraic / bit-vector
@@ -505,12 +601,12 @@ class SymbolicCFGDeflattener:
             0x1337, 0x7FFFFFFF & mask, 0x80000000 & mask, mask,
         ]
         results: Set[bool] = set()
-        safe_globals = {"__builtins__": {}}
+        # AST safe evaluation
         for x_val in test_vectors:
             for y_val in (0, 1, 2, 7, 19, 0x55555555 & mask):
                 local_env = {"x": x_val & mask, "y": y_val & mask, "mask": mask}
                 try:
-                    res = bool(eval(expr, safe_globals, local_env))
+                    res = bool(safe_eval_math_expr(expr, local_env))
                 except Exception:
                     return None
                 results.add(res)
@@ -614,10 +710,10 @@ class SymbolicCFGDeflattener:
 
         # 3. Arbitrary Symbolic Formula Evaluation
         if state_formula is not None:
-            safe_globals = {"__builtins__": {}}
+            # AST safe evaluation
             local_env = {"state": curr & mask, "x": curr & mask, "mask": mask}
             try:
-                curr = int(eval(state_formula, safe_globals, local_env)) & mask
+                curr = int(safe_eval_math_expr(state_formula, local_env)) & mask
             except Exception:
                 pass
 
