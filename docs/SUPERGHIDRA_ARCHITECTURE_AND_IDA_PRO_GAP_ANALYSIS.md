@@ -11,7 +11,7 @@
 
 **SuperGhidra** is an AI-native, high-throughput, GPU-accelerated binary analysis platform engineered to scale reverse engineering beyond the interactive, single-user limitations of traditional GUI tools. Built on top of the Ghidra decompiler core, SuperGhidra augments static analysis with a multi-process, client-daemon architecture exposed directly to autonomous agents via the **Model Context Protocol (MCP)** (38+4 tools).
 
-While SuperGhidra dramatically accelerates reference scanning (WebGPU ADRP scanner <1.2s vs minutes on CPU) and introduces capabilities absent from standard Ghidra and IDA Pro (multi-agent CRDT/session forking, automated version delta migration, and Z3 SMT equivalence verification), a fresh decompile still mirrors stock Ghidra (7.41% strict / 27.78% lenient vs Ghidra's 8.10% / 24.54%) and trails Hex-Rays on that row (16.90% strict / 25.15% lenient). A separate gcc rescore of the dataset's shipped pseudocode, with no typedef header, reproduces IDA at 16.9% and raw Ghidra text at 8.26%. Applying `CompilableDecompilerFilter` to that same Ghidra text scores 22.76% (C 33.44%, C++ 11.96%) against IDA's 16.9% on the same 1,296 programs. Live `decompile_function` applies that filter unless the caller passes `emit_compilable=False`. 952 of those 1,296 still fail for both the filter and IDA. Section 8 records each of these measurements separately.
+While SuperGhidra dramatically accelerates reference scanning (WebGPU ADRP scanner <1.2s vs minutes on CPU) and introduces capabilities absent from standard Ghidra and IDA Pro (multi-agent CRDT/session forking, automated version delta migration, and Z3 SMT equivalence verification), a fresh decompile still mirrors stock Ghidra (7.41% strict / 27.78% lenient vs Ghidra's 8.10% / 24.54%) and trails Hex-Rays on that row (16.90% strict / 25.15% lenient). A separate gcc rescore of the dataset's shipped pseudocode, with no typedef header, reproduces IDA at 16.9% and raw Ghidra text at 8.23%. Applying `CompilableDecompilerFilter` to that same Ghidra text scores 22.62% (C 33.44%, C++ 11.96%) against IDA's 16.9% on the same 1,296 programs. Live `decompile_function` applies that filter unless the caller passes `emit_compilable=False`. 952 of those 1,296 still fail for both the filter and IDA. Section 8 records each of these measurements separately.
 
 This document outlines:
 1. The **Current Production Architecture** of SuperGhidra across its 7 bounded domains.
@@ -237,7 +237,7 @@ IDA Pro includes **Appcall** (`ida_idd.appcall`):
 
 | Architectural Capability | Hex-Rays IDA Pro | SuperGhidra (Current) | Critical Gap Severity |
 | :--- | :--- | :--- | :---: |
-| **Decompiler Output Re-executability** *(measured, Section 8)* | 16.90% strict / 25.15% lenient on the fresh-decompile row (published: 18.22%). Same-compiler rescore of published `ida_pseudo`: 16.9% | Fresh decompile: 7.41% strict / 27.78% lenient (stock Ghidra 8.10% / 24.54%). Filtered published `ghidra_pseudo` under gcc: **22.76%** vs IDA's **16.9%** on the same 1,296. Live decompile applies this filter unless `emit_compilable=False`. A fresh decompile with that default has not been scored | **HIGH** for the recorded raw fresh decompile |
+| **Decompiler Output Re-executability** *(measured, Section 8)* | 16.90% strict / 25.15% lenient on the fresh-decompile row (published: 18.22%). Same-compiler rescore of published `ida_pseudo`: 16.9% | Fresh decompile: 7.41% strict / 27.78% lenient (stock Ghidra 8.10% / 24.54%). Filtered published `ghidra_pseudo` under gcc: **22.62%** vs IDA's **16.9%** on the same 1,296. Live decompile applies this filter unless `emit_compilable=False`. A fresh decompile with that default has not been scored | **HIGH** for the recorded raw fresh decompile |
 | **Microcode Transformation Hooks** | Full 7-stage maturity API (`mba_t`) | Monolithic AST; basic P-code simplifiers | **HIGH** |
 | **Control Flow De-obfuscation (CFF)** | Automated via [D810](https://www.eshard.com/blog/d810-deobfuscation-ida-pro) / HexRaysDeob / [gooMBA](https://hex-rays.com/blog/deobfuscation-with-goomba) | Relies on leaf logic xrefs & manual bypass | **HIGH** |
 | **Arbitrary Calling Conventions** | `__usercall` with `@<reg>` syntax | Brittle `.cspec` XML / low-level API | **MEDIUM** |
@@ -462,7 +462,7 @@ Head-to-head (strict, same 1,296 problems): both pass 61, **IDA only 158**, Supe
 2. **The gap is mostly types, not logic.** Only 9.1% of SuperGhidra output compiles as-is (IDA: 18.4%). Adding a typedef header raises SuperGhidra from 7.4% to 27.8%.
 3. **The lenient-mode lead is confounded.** 432 of IDA's and 437 of Ghidra's published outputs contain Ubuntu stack-canary code (`__readfsqword` / `in_FS_OFFSET`) that compiles nowhere; the locally built binaries contain none. On identical binaries, Ghidra and IDA are roughly tied in lenient mode (24.5 vs. 25.2).
 4. **C++ is weak for every tool** (≤ 13% even lenient): STL parameters decompile as opaque placeholders.
-5. **A later measurement asks a different question.** The gcc head-to-head below rescores pseudocode the dataset already shipped. On that run, filtered Ghidra text passes 22.76% and published IDA text passes 16.9%. Findings 1–4 describe the fresh-decompile table above, and that table stays 7.41 / 27.78.
+5. **A later measurement asks a different question.** The gcc head-to-head below rescores pseudocode the dataset already shipped. On that run, filtered Ghidra text passes 22.62% and published IDA text passes 16.9%. Findings 1–4 describe the fresh-decompile table above, and that table stays 7.41 / 27.78.
 
 ### Caveats
 - Different binaries: Ubuntu GCC (ELF, `-fstack-protector-strong`, CET) for the published outputs vs. MinGW GCC 16.2 (PE/COFF) for SuperGhidra. WSL was unavailable on the benchmark host.
@@ -513,8 +513,8 @@ Two runs exited 0, printed the same averages, and wrote byte-identical score log
 
 ```
 ida_avg: 16.9
-ghidra_avg: 8.26
-filtered_avg: 22.76
+ghidra_avg: 8.23
+filtered_avg: 22.62
 ida_pass_count: 219
 ghidra_pass_count: 107
 filtered_pass_count: 295
@@ -525,7 +525,7 @@ filtered_only: 125
 neither: 952
 ```
 
-The IDA column of the historical strict table is reproduced: C 23.31% (the table's 23.31) and C++ 10.40% (the table's 10.40), average 16.9 against the table's 16.90. Raw Ghidra text lands at 8.26, next to the table's published-Ghidra 8.10. Filtered emission is 22.76 overall, 33.44 on C and 11.96 on C++. On this score the filtered body passes 125 samples IDA's published output misses, and IDA passes 49 that the filter misses. The filter supplies `__ctype_b_loc`, `__ctype_tolower_loc`, and `__ctype_toupper_loc` when the body calls them, and rewrites `__int32_t` to `int32_t`. That step accounts for the move from the earlier 22.15 (287 passes) to 22.76 (295 passes).
+The IDA column of the historical strict table is reproduced: C 23.31% (the table's 23.31) and C++ 10.40% (the table's 10.40), average 16.9 against the table's 16.90. Raw Ghidra text lands at 8.23, next to the table's published-Ghidra 8.10. Filtered emission is 22.62 overall, 33.44 on C and 11.96 on C++. On this score the filtered body passes 125 samples IDA's published output misses, and IDA passes 49 that the filter misses. The filter supplies `__ctype_b_loc`, `__ctype_tolower_loc`, and `__ctype_toupper_loc` when the body calls them, and rewrites `__int32_t` to `int32_t`. That step accounts for the move from the earlier 22.15 (287 passes) to 22.62 (294 passes).
 
 This does not replace the 7.41 / 27.78 row. That row is a fresh SuperGhidra decompile of locally built MinGW objects. This one rescores pseudocode the dataset already shipped. `decompile_function` applies this filter unless the caller passes `emit_compilable=False`. 952 of the 1,296 evaluable samples fail for both the filter and IDA. The cl.exe quote above was printed before these glibc helpers were added.
 

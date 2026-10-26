@@ -39,10 +39,11 @@ def create_parser() -> argparse.ArgumentParser:
     decomp_parser.add_argument("--len", type=int, default=128, help="Max instruction bytes to lift")
     decomp_parser.add_argument("-o", "--output", type=Path, help="Output file for decompiled C")
     decomp_parser.add_argument("--host", default="127.0.0.1", help="Ghidra daemon host (default: 127.0.0.1)")
-    decomp_parser.add_argument("--port", type=int, default=13370, help="Ghidra daemon port (default: 13370)")
+    decomp_parser.add_argument("--port", type=int, default=5073, help="Ghidra daemon port (default: 5073)")
     decomp_parser.add_argument("--token", help="Daemon session token")
     decomp_parser.add_argument("--daemon", action="store_true", help="Force routing through daemon (fail if offline)")
     decomp_parser.add_argument("--standalone", action="store_true", help="Force local standalone lifter without querying daemon")
+    decomp_parser.add_argument("--raw", action="store_true", help="Emit raw decompiled code without C filter normalization")
 
     # Subcommand: til-import
     til_parser = subparsers.add_parser("til-import", help="Import IDA .til type library")
@@ -218,16 +219,32 @@ def cmd_decompile(args: argparse.Namespace) -> int:
                     token=args.token,
                 )
                 if resp.get("status") == "ok":
-                    c_code = resp.get("code") or resp.get("decompiled") or resp.get("c_code", "")
+                    c_code = ""
+                    if isinstance(resp.get("code"), str) and resp["code"]:
+                        c_code = resp["code"]
+                    elif isinstance(resp.get("functions"), list) and resp["functions"]:
+                        codes = [fn["code"] for fn in resp["functions"] if isinstance(fn, dict) and "code" in fn]
+                        c_code = "\n\n".join(codes)
+                    elif isinstance(resp.get("results"), list) and resp["results"]:
+                        codes = [r["code"] for r in resp["results"] if isinstance(r, dict) and "code" in r]
+                        c_code = "\n\n".join(codes)
+                    elif isinstance(resp.get("decompiled"), str):
+                        c_code = resp["decompiled"]
+
                     if c_code:
+                        if not getattr(args, "raw", False):
+                            from superghidra.core.compilable_filter import filter_c_code
+                            c_code = filter_c_code(c_code)
                         if args.output:
                             args.output.write_text(c_code, encoding="utf-8")
                             print(f"Decompiled code written to {args.output}")
                         else:
                             print(c_code)
                         return 0
+
                 if args.daemon:
-                    print(f"Error from daemon: {resp.get('error', 'unknown error')}", file=sys.stderr)
+                    err_msg = resp.get("message") or resp.get("error") or "unknown error"
+                    print(f"Error from daemon: {err_msg}", file=sys.stderr)
                     return 2
             except Exception as e:
                 if args.daemon:
@@ -256,6 +273,9 @@ def cmd_decompile(args: argparse.Namespace) -> int:
         return 3
 
     c_code = result.get("c_code", "")
+    if not getattr(args, "raw", False):
+        from superghidra.core.compilable_filter import filter_c_code
+        c_code = filter_c_code(c_code)
 
     if args.output:
         args.output.write_text(c_code, encoding="utf-8")

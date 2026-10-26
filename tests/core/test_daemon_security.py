@@ -193,9 +193,12 @@ class TestDaemonPayloadSizeLimit(unittest.TestCase):
             self.assertEqual(resp.get("status"), "error")
             self.assertIn("Request payload exceeds maximum allowed size", resp.get("message", ""))
 
-            # Confirm socket is terminated by server (next recv returns b"")
-            trailing = s.recv(1024)
-            self.assertEqual(trailing, b"", "Socket must be closed after exceeding size limit")
+            # Confirm socket is terminated by server (next recv returns b"" or raises ConnectionResetError)
+            try:
+                trailing = s.recv(1024)
+                self.assertEqual(trailing, b"", "Socket must be closed after exceeding size limit")
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                pass  # Closed by peer via TCP RST (Linux/POSIX behavior)
 
     def test_payload_within_max_size_accepted(self):
         """Verifies payload within size limit executes normally."""

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-10-26
 
+### Fixed
+- **Canonical Package Imports & Zero Shims**: Replaced all internal and test imports with canonical package paths (`superghidra.<domain>.<module>`), removed the 33 root backward-compatibility shims, and purged `.` from `pytest.ini`'s `pythonpath`.
+- **Public API Resolution**: Resolved 10 broken `AttributeError` exports in `superghidra.__all__` (`Relocation`, `RTTIClass`, `RTTIBaseClass`, `CRuntimeClassInfo`, `MemberVariable`, `MFCArchiveDecoder`, `MFCClassSchema`, `start_daemon`, `stop_daemon`, `filter_c_code`).
+- **MFC Class Recovery Validation**: Added MFC linkage check and `CObject` hierarchy reachability validation in `msvc_class_recovery._scan_mfc`, pruning 18 false-positive candidate classes in pure C binaries like `libcrypto-3.dll`.
+- **Cross-Platform Type Lattice CI**: Regenerated `tests/fixtures/binaries/sample_x64.dll` with memory displacement instructions, fixing type lattice test failures on non-Windows CI platforms.
+- **Decompiler Daemon Routing (#25)**: Connected `superghidra decompile` to route through active Ghidra background daemon on default port 5073 with automatic multi-function response parsing and compilable C filter normalization (`filter_c_code`), while adding `--raw` bypass flag and local ALU fallback lifter.
+- **Linux Socket Reset Handling**: Handled `ConnectionResetError` during oversized TCP payload test termination across POSIX environments.
+- **CI Wheel Isolation & DCO Verification**: Added `test-wheel` isolated verification job installing into clean virtualenv outside repository, and added per-commit DCO sign-off check for PRs.
+
 ### Added
 - **API Freeze & Supported Core**: Standardized `superghidra` public surface around a frozen, documented core:
   - Binary Loader (`load_binary`, `BinaryImage`, `Section`, `Symbol`, `Import`, `Relocation`)
