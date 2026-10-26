@@ -86,6 +86,18 @@ typedef int32_t __int32;
 #ifndef __int64
 typedef int64_t __int64;
 #endif
+#ifndef __fastcall
+#define __fastcall
+#endif
+#ifndef __cdecl
+#define __cdecl
+#endif
+#ifndef __stdcall
+#define __stdcall
+#endif
+#ifndef __thiscall
+#define __thiscall
+#endif
 #endif
 
 #ifndef LOBYTE
