@@ -18,7 +18,7 @@ This kit provides ready-to-submit pull request copy and target specifications fo
   Adds **[SuperGhidra](https://github.com/yuatemycat/SuperGhidra)** (and its companion MCP server **[SuperGhidraMCP](https://github.com/yuatemycat/SuperGhidraMCP)**) to the `Ghidra Scripts/Plugins/Extension` section.
 
   **Why it's useful for Ghidra users:**
-  - Eliminates the 5–15s JVM cold-start penalty in headless scripting by keeping a `readOnly=True` Ghidra daemon on `127.0.0.1:5073` with L1 shared-memory (`5.12 µs`) and L2 SQLite caching.
+  - Eliminates the 5–15s JVM cold-start penalty in headless scripting by keeping a `readOnly=True` Ghidra daemon on `127.0.0.1:5073` with L1 shared-memory (`< 50 µs`) and L2 SQLite caching.
   - Prevents `LockException` when the Ghidra GUI is open by writing renames, comments, and recovered types to a non-destructive `ghidra_overlay.json` journal that syncs live into the GUI via `ghidra_gui_overlay_sync.py`.
   - Ships with `pip install superghidra`, a 6-job Windows/Linux CI matrix, and standalone MSVC RTTI / MFC `CArchive::Serialize()` recovery, LZ4/Zstd 16 KB `BufferFile` codecs, and NumPy SIMD / WGPU ARM64 `ADRP` scanners.
   ```

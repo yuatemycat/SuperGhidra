@@ -12,8 +12,8 @@
 SuperGhidra solves the systems bottlenecks that make scripting and running AI agents against stock NSA Ghidra slow:
 - Persistent read-only daemon (`127.0.0.1:5073`) eliminating 5–15 second headless JVM startup overhead and `.rep` project lock contention.
 - Sub-millisecond SQLite L2 query cache with 1-hop invalidation DAG.
-- 5.12 µs zero-copy shared-memory (SHM) ring buffer.
-- WGPU / SIMD ARM64 instruction scanner (127.25M–143.95M insn/s).
+- Zero-copy shared-memory (SHM) ring buffer (< 50 µs latency in tests).
+- WGPU / SIMD ARM64 instruction scanner (127.25M insn/s WGPU compute, 143.95M insn/s SIMD fallback).
 - Z3 SMT P-code equivalence checker.
 - Compilable C cleanup filter lifting HumanEval-Decompile pass rates from 8.26% (stock Ghidra) to 22.69% (294 / 1,296 functions) with zero regressions.
 
@@ -260,7 +260,7 @@ superghidra crate-audit target_rust.exe -o rust_deps.json
 
 ## 7. Pillar 6: The `superghidra[rea]` Provider Bridge
 
-REA has an active agent user base, but its built-in Ghidra provider starts cold headless JVM processes (with a 330s timeout) and restricts Windows x64 to experimental read-only sessions. SuperGhidra `1.0.0` adds an optional `rea` extra (`pip install "superghidra[rea]"`) that exposes SuperGhidra's `127.0.0.1:5073` daemon and 5.12 µs SHM ring buffer as a backend for REA and any MCP client.
+REA has an active agent user base, but its built-in Ghidra provider starts cold headless JVM processes (with a 330s timeout) and restricts Windows x64 to experimental read-only sessions. SuperGhidra `1.0.0` adds an optional `rea` extra (`pip install "superghidra[rea]"`) that exposes SuperGhidra's `127.0.0.1:5073` daemon and zero-copy SHM ring buffer (< 50 µs latency in tests) as a backend for REA and any MCP client.
 
 ### 7.1 Bridge Routing & Execution Layers (`superghidra.integrations.rea_bridge`)
 
@@ -268,7 +268,7 @@ REA has an active agent user base, but its built-in Ghidra provider starts cold 
 | :--- | :--- | :--- | :--- |
 | **1. Agent Client** | Claude Code, Cursor, Codex, Gemini CLI | MCP `stdio` / SSE (`compact` schema profile) | Issues standard REA native calls or SuperGhidra extension calls |
 | **2. Adapter Shim** | `superghidra.integrations.rea_bridge` | In-process Python async router | Maps REA contracts (`open_binary`, `analyze_function`, `trace_native_values`, `decompile_all`, `set_address_name`, `annotate_native_function`) and exposes `sg_filter_c`, `sg_z3_prove`, `sg_wgpu_sweep`, `sg_rtti_recover`, `sg_serialize_trace`, and `sg_diff_versions` |
-| **3. Warm Ghidra Core** | `superghidra.core` Daemon (`127.0.0.1:5073`) | 5.12 µs SHM ring buffer & <0.01 ms SQLite L2 cache | Serves cached decompilation, xrefs, P-code value graphs, and lock-free JSON overlay / `merge_fork` mutations |
+| **3. Warm Ghidra Core** | `superghidra.core` Daemon (`127.0.0.1:5073`) | Zero-copy SHM ring buffer (< 50 µs latency) & <0.01 ms SQLite L2 cache | Serves cached decompilation, xrefs, P-code value graphs, and lock-free JSON overlay / `merge_fork` mutations |
 | **4. Fast Bypass Engines** | `formats`, `lifters`, `acceleration`, `storage` | Direct NumPy SIMD / WGPU DirectX 12 / Z3 | Runs ARM64 `ADRP` sweeps, Z3 equivalence proofs, compilable C filtering, and Ghidra-free PE/ELF/Mach-O/IL2CPP/Rust parsing without touching the JVM |
 
 ### 7.2 Capabilities Enabled by the Bridge

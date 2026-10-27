@@ -24,7 +24,7 @@ Solves the two biggest headaches with Ghidra scripting: 5–15s JVM startup over
 ### Tweet 2 (Daemon & Overlay Architecture)
 Every headless run normally pays JVM boot latency. And if your CodeBrowser GUI is open, scripts crash with `LockException`.
 
-SuperGhidra keeps a `readOnly=True` Ghidra instance warm in a local daemon (`127.0.0.1:5073`) backed by an L2 SQLite cache (<0.01ms hits) and 64 KB shared-memory ring buffer (5.12 µs roundtrip).
+SuperGhidra keeps a `readOnly=True` Ghidra instance warm in a local daemon (`127.0.0.1:5073`) backed by an L2 SQLite cache (<0.01ms hits) and 64 KB shared-memory ring buffer (<50 µs roundtrip).
 
 All agent writes go to a JSON overlay (`ghidra_overlay.json`), syncing live into GUI sessions without corrupting `.rep` files.
 
@@ -67,7 +67,7 @@ I wrote and open-sourced **SuperGhidra** (https://github.com/yuatemycat/SuperGhi
 
 1. **JVM Cold-Starts & `.rep` Lock Contention:**
    Every `analyzeHeadless` invocation costs 5–15 seconds of JVM startup. More painfully, opening a `.rep` project in Ghidra CodeBrowser acquires an exclusive OS lock, causing background scripts or AI agents to fail with `LockException`.
-   SuperGhidra keeps a single `readOnly=True` Ghidra session warm in a local daemon (`127.0.0.1:5073`) backed by a 64 KB shared-memory ring buffer (5.12 µs roundtrip) and SQLite L2 cache. All renames, comments, and recovered types are routed to a non-destructive `ghidra_overlay.json` journal. You sync them into your active GUI session using a generated FlatProgramAPI script (`superghidra overlay-sync --watch`), so your GUI and background scripts never fight over locks.
+   SuperGhidra keeps a single `readOnly=True` Ghidra session warm in a local daemon (`127.0.0.1:5073`) backed by a 64 KB shared-memory ring buffer (<50 µs roundtrip) and SQLite L2 cache. All renames, comments, and recovered types are routed to a non-destructive `ghidra_overlay.json` journal. You sync them into your active GUI session using a generated FlatProgramAPI script (`superghidra overlay-sync --watch`), so your GUI and background scripts never fight over locks.
 
 2. **Standalone MSVC RTTI & MFC `Serialize()` Tracing (No JVM):**
    Ghidra lacks built-in MFC `CRuntimeClass` recovery and `CArchive` serialization layout tracing. SuperGhidra includes pure-Python PE/ELF/Mach-O parsers that extract MSVC RTTI structures (`CompleteObjectLocator`, class hierarchy descriptors, vtables) and trace MFC dynamic class declarations. On Microsoft's `mfc140u.dll`, it extracts 755 RTTI classes and 391 MFC classes in ~1 second without running Ghidra or Java. It can export these directly to DWARF 5, Breakpad symbols, or JSON.
@@ -136,7 +136,7 @@ We built **SuperGhidra** and its companion MCP server **SuperGhidraMCP** (38 too
 ```text
 Hey everyone! Just released **SuperGhidra 0.3.1** — high-performance Python tooling and a lock-free daemon for Ghidra:
 
-- 🚀 **Zero `.rep` Lock Contention:** Keeps a read-only Ghidra instance warm on `127.0.0.1:5073` (5.12 µs IPC, SQLite L2 cache). Writes go to `ghidra_overlay.json` and sync live into an open Ghidra GUI window with `superghidra overlay-sync --watch`.
+- 🚀 **Zero `.rep` Lock Contention:** Keeps a read-only Ghidra instance warm on `127.0.0.1:5073` (<50 µs IPC, SQLite L2 cache). Writes go to `ghidra_overlay.json` and sync live into an open Ghidra GUI window with `superghidra overlay-sync --watch`.
 - ⚡ **Pure-Python MSVC & MFC Recovery:** Recovers MSVC RTTI class trees, MFC `CRuntimeClass` descriptors, and `CArchive::Serialize()` field layouts directly from PE binaries without touching the JVM or launching Ghidra (~1s on 750+ classes).
 - 🛡️ **Formal Z3 Equivalence Gate:** Verifies rewritten C logic against lifted ARM64/x86 P-code via Z3, rejecting hallucinated agent mutations.
 - 🔌 **38-Tool MCP Server:** Built-in multi-agent session forks for Claude Desktop, Cursor, Antigravity, and Claude Code.
@@ -156,7 +156,7 @@ Reverse engineering stripped enterprise binaries with Ghidra often runs into two
 To solve this, I've open-sourced SuperGhidra (v0.3.1) and its companion Model Context Protocol (MCP) server:
 
 Architecture highlights:
-1. Lock-Free Oracle Daemon: Decouples binary read operations from write mutations. A persistent background daemon serves queries across an L1 shared-memory ring buffer (5.12 µs roundtrip) and an L2 SQLite cache (>100k req/s).
+1. Lock-Free Oracle Daemon: Decouples binary read operations from write mutations. A persistent background daemon serves queries across an L1 shared-memory ring buffer (<50 µs roundtrip) and an L2 SQLite cache (>100k req/s).
 2. Non-Destructive Write Overlays: Mutations are recorded in append-only JSON journals (ghidra_overlay.json) and synced live into active Ghidra CodeBrowser sessions via atomic transactions, preventing database corruption when multiple agents or scripts run concurrently.
 3. Zero-JVM C++ Recovery: Standalone PE/ELF parsers recover MSVC RTTI hierarchies and MFC CRuntimeClass / CArchive field layouts in pure Python without launching a JVM.
 4. Formal SMT Verification: Includes a pure-Python P-code lifter coupled with a Z3 solver to verify semantic equivalence before committing speculative code restructurings.

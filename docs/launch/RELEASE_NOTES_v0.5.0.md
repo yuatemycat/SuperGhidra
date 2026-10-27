@@ -27,7 +27,7 @@ This release stabilizes the core daemon RPC, SQLite L2 query cache, multi-archit
 - **CArchive Decoding**: Decodes MFC `CArchive` binary streams using recovered object schemas.
 
 ### GPU Compute Shader Acceleration
-- **WGPU ARM64 Sweeps**: DirectX 12 and Vulkan compute shaders scanning ARM64 `ADRP + ADD/LDR` reference pairs across multi-megabyte shared libraries in under 1 second (127.25M–143.95M insn/s).
+- **ARM64 ADRP Sweeps**: DirectX 12 and Vulkan compute shaders scanning ARM64 `ADRP + ADD/LDR` reference pairs across 20 MB shared libraries at 127.25M insn/s (with NumPy SIMD fallback achieving 143.95M insn/s on 4 MB blocks).
 - **GPU Function Seeder**: Identifies candidate entry points without sequential disassembler sweeping.
 
 ### Cross-Version Binary Diffing & Struct Migration
@@ -50,7 +50,7 @@ This release stabilizes the core daemon RPC, SQLite L2 query cache, multi-archit
 3. **PDB Export Scope**:
    - The synthetic PDB exporter writes valid MSF 7.0 containers with DBI streams, but lacks CodeView Type (TPI) streams. DWARF 5 export is the supported route for external symbol consumers.
 4. **Buffer Compression Extension**:
-   - The LZ4 and Zstandard buffer codec prototypes achieve 54% to 85% footprint reduction on synthetic Ghidra-like pages, but Ghidra's internal `LocalManagedBufferFile` requires extension loading to apply compression to live project files.
+   - The LZ4 and Zstandard buffer codec prototypes achieve 79% (LZ4) and 86% (Zstd L3) space savings on 1,000 synthetic 16 KB pages (16.0 MB), but Ghidra's internal `LocalManagedBufferFile` requires extension loading to apply compression to live project files.
 
 ---
 

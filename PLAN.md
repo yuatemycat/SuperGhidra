@@ -27,7 +27,7 @@
 - [x] ~~**Block-Level Frame Compression (LZ4 / Zstandard L3)**~~
   - *Implemented in:* [`storage_compression_prototype.py`](src/superghidra/storage/storage_compression_prototype.py)
   - *Accomplished:* 16 KB block codec with 64-bit slot directory (`[block_id, offset, comp_len, orig_len]`). The Python-internal container uses its own magic, distinct from the Java-compatible `SGDB` format.
-  - *Benchmark:* **54.16% reduction** (LZ4) and **69.27% - 85.39% reduction** (Zstd L3), lossless. Measured on synthetic Ghidra-like pages from `GhidraPageSimulator`, not on real `.gbf` buffers.
+  - *Benchmark:* **79.32% space savings** (LZ4) and **86.47% space savings** (Zstd L3) on 1,000 synthetic 16 KB pages (16.0 MB), lossless. Measured on synthetic Ghidra-like pages from `GhidraPageSimulator`, not on real `.gbf` buffers.
 - [x] ~~**Elimination of Stale `.lock` and `.lock~` Collisions**~~
   - *Implemented in:* [`ghidra_oracle.py`](src/superghidra/core/ghidra_oracle.py) (`clean_locks()`)
   - *Accomplished:* Programs open read-only (`openProgram(..., readOnly=True)`). Lock files are reported, not deleted, unless `--clean-stale-locks` is passed and the lock is older than the stale threshold.
@@ -138,7 +138,7 @@
   - *Accomplished:* Phase 1 structural/VTable recovery ("skeleton") coupled with Phase 2 LLM semantic naming ("skin") gated by `EvidenceLedger`.
 - [x] ~~**Zero-Copy Shared-Memory IPC Bridge**~~
   - *Implemented in:* [`shm_decompiler_bridge.py`](src/superghidra/core/shm_decompiler_bridge.py)
-  - *Accomplished:* POSIX/Win32 shared memory view (zero-copy `ShmBinaryView`) and SPSC ring buffer (pops copy the payload; MPMC mode uses a named OS mutex). **~5 µs IPC roundtrip** on the dev machine.
+  - *Accomplished:* POSIX/Win32 shared memory view (zero-copy `ShmBinaryView`) and SPSC ring buffer (pops copy the payload; MPMC mode uses a named OS mutex). **< 50 µs IPC roundtrip latency in test benchmarks**.
 - [x] ~~**GPU Parallel Function Seeder**~~
   - *Implemented in:* [`gpu_function_seeder.py`](src/superghidra/acceleration/gpu_function_seeder.py)
   - *Accomplished:* Discovered **8,617 functions in 39.81 ms** (**144.77 Million insns/sec**) on the same library.
@@ -279,7 +279,7 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
   - `superghidra.cli`: `superghidra decompile-all --resume` with `(st_dev, st_ino)` locking and `decompile-index.json`
   - `superghidra.formats`: `apple_dispatch.py`, `il2cpp_metadata.py`, `rust_go_metadata.py`
   - `superghidra.integrations`: `rea_bridge.py` (`superghidra[rea]` drop-in provider bridge)
-- [ ] **Status:** Roadmap, 6 Pillars, and 6 Phased Milestones finalized in [`SUPERGHIDRA_1_0_0_SPECIFICATION.md`](docs/specs/SUPERGHIDRA_1_0_0_SPECIFICATION.md); targeted across Milestones 1–6 for version `1.0.0`. Interim milestone tagged as `v0.5.0` ([`docs/launch/RELEASE_NOTES_v0.5.0.md`](docs/launch/RELEASE_NOTES_v0.5.0.md)).
+- [ ] **Status:** Roadmap, 6 Pillars, and 6 Phased Milestones finalized in [`SUPERGHIDRA_1_0_0_SPECIFICATION.md`](docs/specs/SUPERGHIDRA_1_0_0_SPECIFICATION.md); targeted across Milestones 1–6 for version `1.0.0`. Interim candidate v0.5.0 ([`docs/launch/RELEASE_NOTES_v0.5.0.md`](docs/launch/RELEASE_NOTES_v0.5.0.md)) prepared for tagging.
 
 ---
 
@@ -287,7 +287,7 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
 
 | Suite | Command | Result |
 | :--- | :--- | :--- |
-| SuperGhidra | `python -m pytest` (repo root) | **787 passed** (808 including subtests/benchmarks) |
+| SuperGhidra | `python -m pytest` (repo root) | **787 passed**, 85 subtests passed |
 | SuperghidraMCP | `.venv\Scripts\python -m pytest tests\unit` | **243 passed** |
 
 Regression tests for the 2026-10-17 audit live in `test_g1_regressions.py`, `test_g2_regressions.py`, `test_g2b_regressions.py`, `test_g3a_regressions.py`, `test_g3b_regressions.py` and `pyghidra-mcp/tests/unit/test_g4a_regressions.py`. Test runs no longer write into the repository (ledger → `SUPERGHIDRA_DATA_DIR` or `~/.superghidra`; benchmark report → temp dir).

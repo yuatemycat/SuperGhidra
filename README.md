@@ -62,7 +62,7 @@ Most Ghidra automation scripts and MCP servers either pay a 5–15 second JVM co
 | **Concurrent GUI + Multi-Agent Access** | Blocked by `.rep` project lock | Single mutable GUI state | Single/HTTP bridged GUI state | **Lock-free `readOnly=True` daemon + isolated session forks** |
 | **Mutation Safety & Conflict Resolution** | Direct `.rep` writes | Direct in-place renames | Direct in-place tool mutations | **Non-destructive `ghidra_overlay.json` + `merge_fork` conflict detection** |
 | **Semantic Verification Gate** | None | None | None | **Z3 P-code equivalence prover + Obligation Ledger Gate** (vtable/offset checks) |
-| **Query & IPC Latency** | Seconds per batch | HTTP / Socket bridge | HTTP / REST bridge | **5.12 µs** L1 SHM ring buffer (`195,300 msg/s`) & **< 0.01 ms** L2 SQLite cache |
+| **Query & IPC Latency** | Seconds per batch | HTTP / Socket bridge | HTTP / REST bridge | **< 50 µs** L1 SHM ring buffer & **< 0.01 ms** L2 SQLite cache |
 | **Compilable C Post-Processing** | Raw Ghidra pseudo-C (`8.23%` pass) | Raw Ghidra pseudo-C | Raw Ghidra pseudo-C | **`compilable_filter.py` rewriter (`22.62%` pass across 1,300 functions, `25.26%` on held-out test split)** |
 | **Zero-JVM Binary & C++ Recovery** | None (JVM required) | None (JVM required) | None (JVM required) | **Pure-Python PE/ELF/Mach-O loader, MSVC RTTI, MFC `CRuntimeClass` & `Serialize()`** |
 | **Hardware-Accelerated Sweeps** | Single-threaded Java | None | None | **143.95 M insn/s NumPy SIMD & 127.25 M insn/s WGPU ARM64 `ADRP` scanners** |
@@ -253,7 +253,7 @@ These subsystems form the daily-driver reverse-engineering, C rewriting, and age
 
 | Package / Subsystem | What It Does | Hardware / Dependency Behavior |
 | :--- | :--- | :--- |
-| **`core` (Daemon, Cache, Overlay & `CompilableDecompilerFilter`)** | Persistent RPC server on `127.0.0.1:5073`, 64 KB shared-memory ring buffer (`5.12 µs` IPC), SQLite L2 cache (`>100k req/s`), JSON write overlay (`ghidra_overlay.json`), conflict-aware `merge_fork`, deterministic `CompilableDecompilerFilter` C rewriter, and resource governor (`eco` / `balanced` / `turbo` / `auto`). | Runs on Windows, Linux, and macOS. `CompilableDecompilerFilter` is pure Python; PyGhidra + OpenJDK 21 are required only when attached to a live `.rep`. |
+| **`core` (Daemon, Cache, Overlay & `CompilableDecompilerFilter`)** | Persistent RPC server on `127.0.0.1:5073`, 64 KB shared-memory ring buffer (`< 50 µs` latency in tests), SQLite L2 cache (`>100k req/s`), JSON write overlay (`ghidra_overlay.json`), conflict-aware `merge_fork`, deterministic `CompilableDecompilerFilter` C rewriter, and resource governor (`eco` / `balanced` / `turbo` / `auto`). | Runs on Windows, Linux, and macOS. `CompilableDecompilerFilter` is pure Python; PyGhidra + OpenJDK 21 are required only when attached to a live `.rep`. |
 | **`formats` (Binary Loader, MSVC RTTI, MFC `Serialize()` & DWARF5)** | ELF / PE / Mach-O loader, MSVC RTTI & MFC `CRuntimeClass` recovery, Mach-O Objective-C recovery, `Serialize()` layout tracing, `CArchive` stream decoder, DWARF 5 / Breakpad / `.map` export, and experimental PDB export. | Pure Python; no JVM or Ghidra dependency. |
 | **`diff` (Cross-Version CFG Matcher & Struct Shift Migrator)** | Matches functions across binary builds using CFG feature vectors, detects shifted struct field offsets across patches, and rewrites displaced field accesses. | Runs on CPU (NumPy accelerated). |
 | **`integrations` (38+ Guardrailed MCP Tools & Mobile Sidecar)** | Exposes 38+ MCP tools (`SuperghidraMCP`), APK ↔ JNI cross-referencer, allow-listed Android emulator memory reader, live CodeBrowser overlay sync (`ghidra_gui_overlay_sync.py`), and `ReconstructionObligationLedger` commit guards (`VTableSlotVerifier`, `FieldDisplacementVerifier`, `AllocationSizeVerifier`). | Commits symbols and structs **only** after deterministic verification of vtable slots, field displacements, and allocation sizes. |
@@ -284,7 +284,7 @@ All benchmarks are measured on physical hardware (Intel Core i9-12950HX, 64 GB D
 | **Buffer File Compression (LZ4)** | 1,000 synthetic 16 KB pages (16.0 MB) | LZ4 `block` | **36.12 ms** | **442.9 MB/s** (4.84x ratio) | 79.32% disk savings |
 | **Buffer File Compression (Zstd)** | 1,000 synthetic 16 KB pages (16.0 MB) | Zstd Level 3 | **77.48 ms** | **206.5 MB/s** (7.39x ratio) | 86.47% disk savings |
 | **Decompilation Query Cache** | Live Ghidra Daemon RPC | SQLite L2 Cache | **< 0.01 ms** | **> 100,000 req/s** | In-memory overlay match |
-| **SHM Channel IPC Roundtrip** | 64 KB memory-mapped ring buffer | Windows SHM IPC | **5.12 µs** | **195,300 msg/s** | Zero-copy shared memory |
+| **SHM Channel IPC Roundtrip** | 64 KB memory-mapped ring buffer | Windows SHM IPC | **< 50 µs** | **> 20,000 msg/s** | Zero-copy shared memory |
 
 **Benchmark Caveats:**
 - **CPU SIMD vs. WGPU Crossover:** Below ~5–10 MB, NumPy CPU SIMD (`143.95 M insn/s` on 4 MB blocks) outperforms WGPU DirectX 12 (`127.25 M insn/s` on 20 MB blocks) because PCIe host-to-device transfer overhead exceeds shader execution time. `gpu_adrp_scanner` automatically routes `< 5 MB` inputs to the CPU SIMD path.
