@@ -2639,9 +2639,9 @@ def spawn_background_daemon(
 
     if os.name == "nt":
         base_flags = (
-            subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.DETACHED_PROCESS
-            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200))
+            | int(getattr(subprocess, "DETACHED_PROCESS", 0x00000008))
+            | int(getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
         )
         log_f = open(log_path, "a", encoding="utf-8")
         try:
