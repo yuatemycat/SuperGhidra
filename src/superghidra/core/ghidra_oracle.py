@@ -180,52 +180,78 @@ def is_loopback_host(host: str) -> bool:
         return False
 
 
-def get_default_token_path() -> str:
-    """Returns the persistent file path where daemon.token is stored."""
+def get_default_token_path(port: int | None = None) -> str:
+    """Returns the persistent file path where daemon.token is stored, optionally scoped to a port."""
     data_dir = os.environ.get(SUPERGHIDRA_DATA_DIR_ENV)
     if data_dir:
         dir_path = os.path.abspath(data_dir)
     else:
         dir_path = os.path.join(os.path.expanduser("~"), ".superghidra")
+    if port is not None:
+        return os.path.join(dir_path, f"daemon.{port}.token")
     return os.path.join(dir_path, DEFAULT_TOKEN_FILENAME)
 
 
-def save_session_token(token: str, path: str | None = None) -> str:
-    """Saves session token to disk with restricted permissions (0o600)."""
-    token_path = path or get_default_token_path()
+def save_session_token(token: str, path: str | None = None, port: int | None = None) -> str:
+    """Saves session token to disk with restricted permissions (0o600).
+    Saves to a port-specific file (daemon.<port>.token) and also daemon.token if on DEFAULT_PORT.
+    """
+    token_path = path or get_default_token_path(port)
     os.makedirs(os.path.dirname(token_path), exist_ok=True)
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     mode = 0o600
-    try:
-        fd = os.open(token_path, flags, mode)
-        with open(fd, "w", encoding="utf-8") as f:
-            f.write(token.strip())
-        if hasattr(os, "chmod"):
-            try:
-                os.chmod(token_path, 0o600)
-            except Exception:
-                pass
-    except Exception as e:
-        logger.warning(f"Could not save daemon token to {token_path}: {e}")
+
+    def _write_file(f_path: str) -> None:
+        try:
+            fd = os.open(f_path, flags, mode)
+            with open(fd, "w", encoding="utf-8") as f:
+                f.write(token.strip())
+            if hasattr(os, "chmod"):
+                try:
+                    os.chmod(f_path, 0o600)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Could not save daemon token to {f_path}: {e}")
+
+    _write_file(token_path)
+    if path is None and port is not None and port == DEFAULT_PORT:
+        _write_file(get_default_token_path(None))
+
     return token_path
 
 
-def load_session_token(token_arg: str | None = None, token_path: str | None = None) -> str | None:
-    """Resolves session token from argument, environment variable, or token file on disk."""
+def load_session_token(
+    token_arg: str | None = None,
+    token_path: str | None = None,
+    port: int | None = None,
+) -> str | None:
+    """Resolves session token from argument, environment variable, or token file on disk.
+    If port is provided, checks daemon.<port>.token before falling back to unnumbered daemon.token.
+    """
     if token_arg:
         return token_arg.strip()
     env_token = os.environ.get(SUPERGHIDRA_TOKEN_ENV)
     if env_token:
         return env_token.strip()
-    path = token_path or get_default_token_path()
-    if os.path.isfile(path):
-        try:
-            with open(path, encoding="utf-8") as f:
-                content = f.read().strip()
-                if content:
-                    return content
-        except Exception as e:
-            logger.debug(f"Could not read daemon token file {path}: {e}")
+
+    paths_to_check: List[str] = []
+    if token_path:
+        paths_to_check.append(token_path)
+    else:
+        if port is not None:
+            paths_to_check.append(get_default_token_path(port))
+        paths_to_check.append(get_default_token_path(None))
+
+    for p in paths_to_check:
+        if os.path.isfile(p):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content:
+                        return content
+            except Exception as e:
+                logger.debug(f"Could not read daemon token file {p}: {e}")
     return None
 
 # No built-in projects: pass --project-dir/--project-name, or set
@@ -2382,7 +2408,7 @@ class GhidraDaemonServer:
         logger.info(f"Ghidra Oracle daemon listening on {self.host}:{self.port}")
         print(f"[*] Ghidra Oracle daemon online & listening on {self.host}:{self.port}")
         if self.save_token and self.token:
-            saved_path = save_session_token(self.token, path=self.token_path)
+            saved_path = save_session_token(self.token, path=self.token_path, port=self.port)
             print(f"[*] Session token active and stored in {saved_path}")
 
         while self.running:
@@ -2791,7 +2817,7 @@ def client_send_request(
     """Sends JSON-RPC command to the daemon, auto-spawning if offline."""
     t0 = time.perf_counter()
     cmd_lower = cmd.lower()
-    resolved_token = load_session_token(token_arg=token)
+    resolved_token = load_session_token(token_arg=token, port=port)
 
     # Fast path for rva: zero JVM required (< 0.1 ms)
     if cmd_lower == "rva":

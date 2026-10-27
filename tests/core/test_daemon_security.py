@@ -45,7 +45,9 @@ if PROJECT_ROOT not in sys.path:
 
 from superghidra.core.ghidra_oracle import (
     MAX_REQUEST_SIZE,
+    SUPERGHIDRA_DATA_DIR_ENV,
     SUPERGHIDRA_TOKEN_ENV,
+    get_default_token_path,
     GhidraDaemonServer,
     is_loopback_host,
     load_session_token,
@@ -487,6 +489,33 @@ class TestTokenPersistenceAndClientIntegration(unittest.TestCase):
             self.assertEqual(persisted, initial_token)
         finally:
             server1.stop()
+
+    def test_multiple_daemons_on_different_ports_have_isolated_tokens(self):
+        """Verifies that a second daemon on another port writes its own port-specific token
+        and does NOT overwrite or lock out the first daemon."""
+        with tempfile.TemporaryDirectory() as td:
+            with patch.dict(os.environ, {SUPERGHIDRA_DATA_DIR_ENV: td}):
+                port1 = find_free_port()
+                port2 = find_free_port()
+                while port2 == port1:
+                    port2 = find_free_port()
+
+                token1 = "token-for-port-1"
+                token2 = "token-for-port-2"
+
+                save_session_token(token1, port=port1)
+                save_session_token(token2, port=port2)
+
+                # Each port resolves its own distinct token
+                self.assertEqual(load_session_token(port=port1), token1)
+                self.assertEqual(load_session_token(port=port2), token2)
+
+                # Confirm file paths on disk are separate
+                path1 = get_default_token_path(port=port1)
+                path2 = get_default_token_path(port=port2)
+                self.assertTrue(os.path.isfile(path1))
+                self.assertTrue(os.path.isfile(path2))
+                self.assertNotEqual(path1, path2)
 
 
 if __name__ == "__main__":
