@@ -5,7 +5,7 @@ Use this instruction file when operating as an autonomous reverse-engineering ag
 ## 1. Golden Rules for Tool Selection
 
 1. **NEVER use `superghidra decompile` on real functions:**
-   - `superghidra decompile` is an experimental zero-JVM integer-only P-code lifter. It handles register-to-register operations (`mov`, `add`, `xor`) and returns on x86-64. Calling it on production functions with calls, branches, memory dereferences, or floats will exit non-zero.
+   - `superghidra decompile` is an experimental zero-JVM integer-only P-code lifter. It handles function prologues, direct calls, integer register operations, and ARM64 lowering (11 of 154 exports decompiled on test DLLs). Calling it on production functions with complex branches, memory dereferences, or floats will exit non-zero.
    - **For real decompilation, use `python -m superghidra.core.ghidra_oracle decompile <addr>`** (or the `decompile_function` / `oracle_decompile` MCP tool).
    - **To filter raw decompiler output into clean compilable C, use `superghidra filter <raw.c> -o <clean.c>`.** This strips stack canaries, simplifies stride calculations, replaces Ghidra pseudo-types (`undefined8`, `CONCAT44`, `SUB84`) with `<stdint.h>` types, and injects required standard headers.
 

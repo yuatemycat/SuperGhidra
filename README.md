@@ -373,7 +373,7 @@ SuperGhidra ships with an integrated standalone command-line executable `supergh
 # Display version and hardware acceleration telemetry
 superghidra version
 
-# Prototype standalone P-code decompiler (handles register-to-register mov/add/xor and ret on x86-64; prototype covering 11/154 exports on test DLLs; other instructions exit non-zero)
+# Prototype standalone P-code decompiler (covers 11/154 exports on test DLLs; handles function prologues, direct calls, and ARM64 lowering; complex branches/floats exit non-zero)
 superghidra decompile target.dll --va 0x140001000 --arch x86_64 -o decompiled.c
 
 # Import IDA Pro .til type library and dump schema catalog
