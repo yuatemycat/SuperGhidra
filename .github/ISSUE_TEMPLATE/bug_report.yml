@@ -41,7 +41,7 @@ body:
       label: Steps to Reproduce
       description: Exact commands, script invocation, or steps to reproduce the behavior.
       placeholder: |
-        1. Run `python ghidra_oracle.py decompile 0x1000`
+        1. Run `python -m superghidra.core.ghidra_oracle decompile 0x1000`
         2. Encounter exception...
     validations:
       required: true

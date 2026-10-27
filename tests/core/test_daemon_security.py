@@ -436,6 +436,57 @@ class TestTokenPersistenceAndClientIntegration(unittest.TestCase):
             self.assertEqual(kwargs.get("port"), 6000)
             self.assertTrue(kwargs.get("allow_remote"))
             self.assertEqual(kwargs.get("token"), "cli-test-token")
+            self.assertTrue(kwargs.get("save_token"))
+
+
+    def test_bind_failure_does_not_overwrite_existing_token(self):
+        """Verifies that if a second server fails to bind (port collision),
+        the existing daemon.token on disk remains intact and is not overwritten."""
+        initial_token = "initial-running-daemon-token"
+        save_session_token(initial_token, path=self.token_path)
+
+        # Start first server on loopback
+        mock_session = MagicMock()
+        port = find_free_port()
+        server1 = GhidraDaemonServer(
+            mock_session,
+            host="127.0.0.1",
+            port=port,
+            token="token1",
+            save_token=False,
+        )
+        t1 = threading.Thread(target=server1.start, daemon=True)
+        t1.start()
+
+        # Wait until server1 binds
+        ready = False
+        for _ in range(50):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                    ready = True
+                    break
+            except OSError:
+                time.sleep(0.05)
+        self.assertTrue(ready, "Server 1 failed to bind port")
+
+        try:
+            # Second server attempts to bind same port with save_token=True and target self.token_path
+            server2 = GhidraDaemonServer(
+                mock_session,
+                host="127.0.0.1",
+                port=port,
+                token="clobbering-token-xyz",
+                save_token=True,
+                token_path=self.token_path,
+            )
+            with self.assertRaises(OSError):
+                server2.start()
+
+            # Confirm token file was NOT modified/overwritten
+            persisted = load_session_token(token_path=self.token_path)
+            self.assertEqual(persisted, initial_token)
+        finally:
+            server1.stop()
 
 
 if __name__ == "__main__":

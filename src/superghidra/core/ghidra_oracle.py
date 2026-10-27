@@ -2179,6 +2179,7 @@ class MockGhidraOracleSession:
                 f"}}\n"
             )
             funcs.append({
+                "target": str(t),
                 "va": normalize_hex_key(addr_int),
                 "rva": f"0x{va_to_rva(addr_int):08X}",
                 "name": f"func_{addr_int:08X}",
@@ -2189,6 +2190,7 @@ class MockGhidraOracleSession:
             "status": "ok",
             "targets": list(targets),
             "style": style,
+            "results": funcs,
             "functions": funcs,
             "time_ms": 1.0,
         }
@@ -2342,6 +2344,8 @@ class GhidraDaemonServer:
         port: int = DEFAULT_PORT,
         allow_remote: bool = False,
         token: str | None = None,
+        save_token: bool = False,
+        token_path: str | None = None,
     ):
         if not allow_remote and not is_loopback_host(host):
             raise ValueError(
@@ -2352,6 +2356,8 @@ class GhidraDaemonServer:
         self.port = port
         self.allow_remote = allow_remote
         self.token = token
+        self.save_token = save_token
+        self.token_path = token_path
         self.server_socket: socket.socket | None = None
         self.running = False
         self._threads: List[threading.Thread] = []
@@ -2362,13 +2368,22 @@ class GhidraDaemonServer:
                 f"Refusing to bind to non-loopback address '{self.host}' without allow_remote=True (or --allow-remote)"
             )
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE") and os.name == "nt":
+            try:
+                self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            except OSError:
+                self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        else:
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
         self.port = self.server_socket.getsockname()[1]
         self.server_socket.listen(16)
         self.running = True
         logger.info(f"Ghidra Oracle daemon listening on {self.host}:{self.port}")
         print(f"[*] Ghidra Oracle daemon online & listening on {self.host}:{self.port}")
+        if self.save_token and self.token:
+            saved_path = save_session_token(self.token, path=self.token_path)
+            print(f"[*] Session token active and stored in {saved_path}")
 
         while self.running:
             try:
@@ -2961,8 +2976,9 @@ def print_decompile_result(res: Dict[str, Any]) -> None:
     if res.get("status") != "ok":
         print(f"ERROR: {res.get('message')}")
         return
-    for item in res.get("results", []):
-        t = item.get("target")
+    items = res.get("results") or res.get("functions") or []
+    for item in items:
+        t = item.get("target") or item.get("va")
         va = item.get("va")
         rva = item.get("rva")
         name = item.get("name", "Unknown")
@@ -3233,8 +3249,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         token = parsed.token or os.environ.get(SUPERGHIDRA_TOKEN_ENV)
         if not token:
             token = secrets.token_hex(24)
-        token_path = save_session_token(token)
-        print(f"[*] Session token active and stored in {token_path}")
 
         server = GhidraDaemonServer(
             session,
@@ -3242,6 +3256,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             port=parsed.port,
             allow_remote=parsed.allow_remote,
             token=token,
+            save_token=True,
         )
         try:
             server.start()
@@ -3254,12 +3269,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     req_args = {}
     if cmd == "rva":
         if not c_args:
-            print("Usage: python ghidra_oracle.py rva <addr>")
+            print("Usage: python -m superghidra.core.ghidra_oracle rva <addr>")
             return 1
         req_args["addr"] = c_args[0]
     elif cmd == "decompile":
         if not c_args:
-            print("Usage: python ghidra_oracle.py decompile <addr...>")
+            print("Usage: python -m superghidra.core.ghidra_oracle decompile <addr...>")
             return 1
         req_args["targets"] = c_args
         if parsed.style:
@@ -3268,25 +3283,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             req_args["throttle_ms"] = parsed.throttle_ms
     elif cmd == "vtable":
         if not c_args:
-            print("Usage: python ghidra_oracle.py vtable <addr> [count]")
+            print("Usage: python -m superghidra.core.ghidra_oracle vtable <addr> [count]")
             return 1
         req_args["addr"] = c_args[0]
         req_args["count"] = int(c_args[1]) if len(c_args) > 1 else 12
     elif cmd == "disassemble":
         if not c_args:
-            print("Usage: python ghidra_oracle.py disassemble <addr> [count]")
+            print("Usage: python -m superghidra.core.ghidra_oracle disassemble <addr> [count]")
             return 1
         req_args["addr"] = c_args[0]
         req_args["count"] = int(c_args[1]) if len(c_args) > 1 else 30
     elif cmd in ("refs", "references"):
         if not c_args:
-            print("Usage: python ghidra_oracle.py refs <addr> [count]")
+            print("Usage: python -m superghidra.core.ghidra_oracle refs <addr> [count]")
             return 1
         req_args["addr"] = c_args[0]
         req_args["count"] = int(c_args[1]) if len(c_args) > 1 else 20
     elif cmd == "adrp_add":
         if not c_args:
-            print("Usage: python ghidra_oracle.py adrp_add <symbol_or_addr>")
+            print("Usage: python -m superghidra.core.ghidra_oracle adrp_add <symbol_or_addr>")
             return 1
         req_args["target"] = c_args[0]
     elif cmd == "opcodes":
@@ -3296,13 +3311,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         req_args["max"] = max_op
     elif cmd == "rename":
         if len(c_args) < 2:
-            print("Usage: python ghidra_oracle.py rename <addr> <name>")
+            print("Usage: python -m superghidra.core.ghidra_oracle rename <addr> <name>")
             return 1
         req_args["addr"] = c_args[0]
         req_args["name"] = c_args[1]
     elif cmd == "comment":
         if len(c_args) < 2:
-            print("Usage: python ghidra_oracle.py comment <addr> <text>")
+            print("Usage: python -m superghidra.core.ghidra_oracle comment <addr> <text>")
             return 1
         req_args["addr"] = c_args[0]
         req_args["comment"] = " ".join(c_args[1:])
@@ -3310,12 +3325,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         req_args["action"] = c_args[0] if c_args else "list"
     elif cmd == "type":
         if not c_args:
-            print("Usage: python ghidra_oracle.py type <name_or_id>")
+            print("Usage: python -m superghidra.core.ghidra_oracle type <name_or_id>")
             return 1
         req_args["name"] = c_args[0]
     elif cmd == "register_struct":
         if len(c_args) < 2:
-            print("Usage: python ghidra_oracle.py register_struct <name> <byte_size> [members_json]")
+            print("Usage: python -m superghidra.core.ghidra_oracle register_struct <name> <byte_size> [members_json]")
             return 1
         req_args["name"] = c_args[0]
         req_args["byte_size"] = int(c_args[1])
@@ -3329,7 +3344,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif parsed.mode:
             target_mode = parsed.mode.lower()
         else:
-            print("Usage: python ghidra_oracle.py mode <eco|balanced|turbo|auto>")
+            print("Usage: python -m superghidra.core.ghidra_oracle mode <eco|balanced|turbo|auto>")
             return 1
         if target_mode not in ("eco", "balanced", "turbo", "auto"):
             print(f"ERROR: Invalid mode '{target_mode}'. Choose from: eco, balanced, turbo, auto")

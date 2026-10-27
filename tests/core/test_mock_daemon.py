@@ -8,12 +8,14 @@ a Ghidra or JVM installation.
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 if PROJECT_ROOT not in sys.path:
@@ -23,6 +25,8 @@ from superghidra.core.ghidra_oracle import (
     GhidraDaemonServer,
     MockGhidraOracleSession,
     client_send_request,
+    main,
+    print_decompile_result,
 )
 
 
@@ -128,7 +132,29 @@ class TestMockDaemonServerNetwork(unittest.TestCase):
         res_dec = client_send_request("decompile", {"targets": ["0x00102000"]}, host="127.0.0.1", port=self.port)
         self.assertEqual(res_dec["status"], "ok")
         self.assertEqual(len(res_dec["functions"]), 1)
+        self.assertIn("results", res_dec)
+        self.assertEqual(len(res_dec["results"]), 1)
         self.assertIn("func_00102000", res_dec["functions"][0]["code"])
+
+        # Test that print_decompile_result produces non-empty human-readable output
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            print_decompile_result(res_dec)
+        output = buf.getvalue()
+        self.assertIn("DECOMPILED", output)
+        self.assertIn("func_00102000", output)
+
+    def test_decompile_cli_prints_output_against_mock_daemon(self):
+        """Verifies that running CLI decompile command prints decompilation against mock daemon."""
+        buf = io.StringIO()
+        cli_argv = ["ghidra_oracle.py", "decompile", "0x00102000", "--host", "127.0.0.1", "--port", str(self.port)]
+        with patch("sys.argv", cli_argv), patch("sys.stdout", buf):
+            rc = main()
+        self.assertEqual(rc, 0)
+        output = buf.getvalue()
+        self.assertTrue(len(output) > 0, "CLI decompile output must not be empty")
+        self.assertIn("DECOMPILED", output)
+        self.assertIn("func_00102000", output)
 
     def test_mutating_command_enforces_token_auth(self):
         # Without token should be rejected (401)
