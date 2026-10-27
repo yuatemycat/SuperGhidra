@@ -54,6 +54,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify Tag Matches Package Version
+        run: |
+          VERSION=$(python -c "import tomllib; f = open('pyproject.toml', 'rb'); print(tomllib.load(f)['project']['version'])")
+          EXPECTED_TAG="v${VERSION}"
+          if [ "${{ github.ref_name }}" != "$EXPECTED_TAG" ]; then
+            echo "Error: Git tag '${{ github.ref_name }}' does not match pyproject.toml version '$EXPECTED_TAG'"
+            exit 1
+          fi
+          INIT_VERSION=$(python -c "import superghidra; print(superghidra.__version__)")
+          if [ "$INIT_VERSION" != "$VERSION" ]; then
+            echo "Error: superghidra.__version__ '$INIT_VERSION' does not match pyproject.toml version '$VERSION'"
+            exit 1
+          fi
+          echo "Verified tag '${{ github.ref_name }}' matches package version '$VERSION'"
+
       - name: Install Build Tooling
         run: |
           python -m pip install --upgrade pip build wheel

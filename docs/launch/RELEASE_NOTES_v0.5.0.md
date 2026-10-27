@@ -9,13 +9,13 @@ This release stabilizes the core daemon RPC, SQLite L2 query cache, multi-archit
 ## 1. Core Subsystems in v0.5.0
 
 ### Persistent Lock-Free Ghidra Oracle Daemon
-- **In-Memory JVM Daemon**: Serves queries over TCP (`127.0.0.1:5073`) to keep OpenJDK and Ghidra's `DecompInterface` hot in memory. Reduces repeat query latency from ~15 seconds (cold JVM start) to < 5 ms.
+- **In-Memory JVM Daemon**: Serves queries over TCP (`127.0.0.1:5073`) to keep OpenJDK and Ghidra's `DecompInterface` hot in memory, eliminating repetitive 5–15 second JVM cold-start penalties across agent queries.
 - **Port-Scoped Token Security**: Security model enforces loopback-only binding by default (`127.0.0.1`, `::1`), bounded 2 MB request payloads, and per-port session tokens (`~/.superghidra/daemon.<port>.token`). Multiple daemons can run concurrently on different ports without cross-process token overwrite or lockout.
 - **Lock-Free State Overlay**: JSON write-overlays (`ghidra_overlay.json`) and append-only event logs (`.ghidra-delta.jsonl`) record symbol renames, type definitions, and comments without mutating read-only `.rep` project databases.
 
 ### Persistent L2 SQLite WAL Cache
 - **Microsecond Query Interception**: Caches decompiled C output, function signatures, disassembly blocks, references, and vtables in an on-disk SQLite WAL database.
-- **Fine-Grained 1-Hop Invalidation DAG**: Dependency DAG retains 99.7% of cached functions across struct or signature edits instead of triggering global cache flushes.
+- **Fine-Grained 1-Hop Invalidation DAG**: Dependency DAG invalidates only directly affected and 1-hop dependent functions on struct or signature edits instead of triggering global cache flushes.
 
 ### Multi-Architecture Binary Loading
 - **Pure-Python Parser**: Parses ELF 32/64 (LE/BE), PE32/PE32+ (EXE/DLL), and Mach-O (thin and universal FAT binaries).
@@ -45,8 +45,8 @@ This release stabilizes the core daemon RPC, SQLite L2 query cache, multi-archit
 1. **Standalone Zero-JVM Decompiler is an Experimental Prototype**:
    - The Python-native P-code lifter and AST restructuring pipeline currently decompiles 11 of 154 exports (7.1%) and compiles 7 (4.5%) across four Windows test DLLs (`dbghelp.dll`, `msvcp140.dll`, `version.dll`, `winmm.dll`).
    - For complete decompilation, queries should route through the running Ghidra daemon (`python -m superghidra.core.ghidra_oracle decompile <addr>`). Standalone coverage improvements are targeted for the 1.x roadmap.
-2. **RTTI Recovery Scope**:
-   - RTTI recovery currently targets MSVC C++ binaries on Windows PE. GCC and Clang Itanium ABI vtables/typeinfo and Objective-C class structures are planned for 1.x.
+2. **Objective-C & Non-MSVC RTTI Recovery Scope**:
+   - RTTI recovery currently targets MSVC C++ binaries on Windows PE. The pure-Python `macho_objc_recovery` module is an experimental prototype (currently recovers 0 classes on real-world frameworks such as Sparkle). Full production Objective-C runtime metadata, GCC/Clang Itanium ABI vtables/typeinfo, and Swift 5 nominal type recovery are planned for 1.x.
 3. **PDB Export Scope**:
    - The synthetic PDB exporter writes valid MSF 7.0 containers with DBI streams, but lacks CodeView Type (TPI) streams. DWARF 5 export is the supported route for external symbol consumers.
 4. **Buffer Compression Extension**:

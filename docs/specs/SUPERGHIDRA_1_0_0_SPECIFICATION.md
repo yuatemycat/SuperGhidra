@@ -735,7 +735,7 @@ superghidra mcp-serve   [--port 5073]   [--profile <compact|full>]   [--transpor
 ### 12.4 Definition of Done (DoD) for SuperGhidra 1.0.0 Tag
 
 - [ ] All 6 Phased Implementation Milestones implemented with code living in canonical domain packages.
-- [ ] 100% of unit and integration test suites passing in CI (all 535 baseline tests + 141 new 1.0.0 milestone tests).
+- [ ] 100% of unit and integration test suites passing in CI (all 787 baseline tests + new 1.0.0 milestone tests).
 - [ ] Zero HumanEval-Decompile regressions against baseline corpus (minimum 22.69% pass rate preserved).
 - [ ] Clean prose audit: zero prohibited marketing terms per AGENTS.md rule 7.
 - [ ] Declarative security surface descriptor `mcp.superghidra.json` published and verified by schema validator.

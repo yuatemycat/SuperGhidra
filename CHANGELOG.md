@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0-dev] - Unreleased
+## [0.5.0] - 2026-10-27
 
 ### Added
 - **Deprecation Policy**: Authored `DEPRECATION.md` codifying the SemVer stability contract, 3-tier API classification (Tier 1 Frozen Core, Tier 2 Experimental, Tier 3 Legacy Compatibility), deprecation notice timelines (`DeprecationWarning`), and versioned JSON schema evolution rules.
@@ -13,10 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Push-Level DCO Verification**: Extended DCO sign-off validation in CI to verify commits on push as well as pull requests.
 - **SHA-256 Binary Hash Validation**: Extended daemon server binary mismatch protection to compare file SHA-256 hashes against Ghidra project metadata.
 - **ARM64 Bitfield & CSEL Verification (#26)**: Added ARM64 bitfield moves (`UBFM`, `SBFM`, `LSL`, `LSR`, `ASR`, `UXTB`, `UXTH`, `UBFX`, `UBFIZ`) and conditional selection (`CSEL`, `CSINC`, `CSINV`, `CSNEG`) lowering with Z3 SMT equivalence verification in `tests/lifters/test_arm64_bitfield_csel.py`.
-- **Mach-O Objective-C Metadata Recovery (#28)**: Added pure-Python 64-bit Mach-O Objective-C runtime recovery engine (`superghidra.formats.macho_objc_recovery`) extracting classes, superclasses, instance methods, class methods, and ivar displacements, with CLI subcommand `superghidra objc-recover`, synthetic fixture `sample_objc_arm64.dylib`, and unit test suite `tests/formats/test_macho_objc_recovery.py`.
+- **Mach-O Objective-C Recovery Prototype (#28)**: Added experimental prototype for 64-bit Mach-O Objective-C runtime metadata parsing (`superghidra.formats.macho_objc_recovery`) with CLI subcommand `superghidra objc-recover` and unit tests (`tests/formats/test_macho_objc_recovery.py`). Designated as an early prototype (currently recovers 0 classes on real-world frameworks such as Sparkle); full production Objective-C class and Swift 5 nominal type recovery is planned for the 1.x roadmap.
 - **Standalone Decompiler Memory Lowering & Register Declarations**: Added function prologue/epilogue decoding, memory displacement operand support, and automatic hardware register typing (`uint64_t <reg> = 0;`) in decompiled C output.
 - **MFC Public Sample & CI Precision/Recall Suite**: Added synthetic redistributable binary `sample_mfc_x64.dll` and test suite `TestMFCPrecisionRecall` verifying precision=1.0 and recall=1.0 on MFC class hierarchies and 0 false positives on non-MFC binaries.
 - **Synthetic Decompiler Idiom Benchmark (#27)**: Added 200-sample synthetic regression suite across 17 decompiler idiom templates in `benchmarks/data/held_out_200.jsonl` with evaluation runner `benchmarks/eval_held_out.py`. Evaluates type and macro normalization against synthetic Ghidra and Hex-Rays idioms, with fair IDA baseline (`defs.h` via `IDA_COMPAT_DEFS_H`) showing compilability rises from 24.50% to 93.50% (matching SuperGhidra's 93.50%). Documented in `docs/benchmarks/SYNTHETIC_IDIOM_BENCHMARK.md` and verified by `tests/benchmarks/test_held_out_eval.py`.
+- **Release Verification & Tag Guard**: Enforced tag-to-version equality check in `release.yml` preventing accidental out-of-sync package publishing; verified 787 unit and integration tests passing across all domains.
 
 ### Fixed
 - **Undefined Name Elimination**: Resolved 5 `F821` runtime name errors across `compilable_filter.py`, `cross_platform_headless_harness.py`, `parity_engine.py`, `arm_thumb_decode.py`, and `egraph_mlir_pipeline.py`.

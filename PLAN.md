@@ -51,7 +51,7 @@
   - *Accomplished:* Emits ready-to-run Java PreScripts (`SuperGhidraPreScript.java`) with custom analyzer configurations.
 - [x] ~~**Fine-Grained 1-Hop Cache Invalidation DAG**~~
   - *Implemented in:* [`dependency_cache_dag.py`](src/superghidra/core/dependency_cache_dag.py)
-  - *Accomplished:* Dependency DAG retaining **99.73% of cached functions** on struct/signature edits instead of global cache flushes.
+  - *Accomplished:* Dependency DAG invalidates only directly affected and 1-hop dependent functions on struct/signature edits instead of global cache flushes.
 
 ---
 
@@ -287,8 +287,8 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
 
 | Suite | Command | Result |
 | :--- | :--- | :--- |
-| SuperGhidra | `python -m pytest` (repo root) | **535 passed**, 3 integration tests passed |
-| pyghidra-mcp | `.venv\Scripts\python -m pytest tests\unit` | **246 passed** |
+| SuperGhidra | `python -m pytest` (repo root) | **787 passed** (808 including subtests/benchmarks) |
+| SuperghidraMCP | `.venv\Scripts\python -m pytest tests\unit` | **243 passed** |
 
 Regression tests for the 2026-10-17 audit live in `test_g1_regressions.py`, `test_g2_regressions.py`, `test_g2b_regressions.py`, `test_g3a_regressions.py`, `test_g3b_regressions.py` and `pyghidra-mcp/tests/unit/test_g4a_regressions.py`. Test runs no longer write into the repository (ledger → `SUPERGHIDRA_DATA_DIR` or `~/.superghidra`; benchmark report → temp dir).
 
