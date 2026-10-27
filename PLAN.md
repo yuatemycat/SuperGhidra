@@ -279,7 +279,7 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
   - `superghidra.cli`: `superghidra decompile-all --resume` with `(st_dev, st_ino)` locking and `decompile-index.json`
   - `superghidra.formats`: `apple_dispatch.py`, `il2cpp_metadata.py`, `rust_go_metadata.py`
   - `superghidra.integrations`: `rea_bridge.py` (`superghidra[rea]` drop-in provider bridge)
-- [ ] **Status:** Roadmap and 6 Pillars specified in [`SUPERGHIDRA_1_0_0_SPECIFICATION.md`](docs/specs/SUPERGHIDRA_1_0_0_SPECIFICATION.md); actively targeted across Milestones 1–4 for version `1.0.0`. Interim milestone tagged as `v0.5.0` ([`docs/launch/RELEASE_NOTES_v0.5.0.md`](docs/launch/RELEASE_NOTES_v0.5.0.md)).
+- [ ] **Status:** Roadmap, 6 Pillars, and 6 Phased Milestones finalized in [`SUPERGHIDRA_1_0_0_SPECIFICATION.md`](docs/specs/SUPERGHIDRA_1_0_0_SPECIFICATION.md); targeted across Milestones 1–6 for version `1.0.0`. Interim milestone tagged as `v0.5.0` ([`docs/launch/RELEASE_NOTES_v0.5.0.md`](docs/launch/RELEASE_NOTES_v0.5.0.md)).
 
 ---
 
