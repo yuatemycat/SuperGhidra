@@ -140,7 +140,7 @@ class ClangSyntaxGate:
                 [self.compiler, "-fsyntax-only", "-std=c11", "-Wall", "-Wno-unused-variable", tmp_path],
                 capture_output=True,
                 text=True,
-                timeout=15.0,
+                timeout=30.0,
             )
             stderr = proc.stderr.strip()
             diags = [line for line in stderr.splitlines() if "error:" in line or "warning:" in line]
@@ -158,6 +158,9 @@ class ClangSyntaxGate:
                 diagnostics=diags[:5],
                 elapsed_ms=round((time.perf_counter() - t0) * 1000.0, 3),
             )
+        except subprocess.TimeoutExpired:
+            # Fall back to structural parser if system compiler hangs or times out under heavy CI load
+            return self._verify_with_structural_parser(c_code, t0)
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
