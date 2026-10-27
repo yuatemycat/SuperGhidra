@@ -112,6 +112,7 @@ files = [
     "src/superghidra/formats/macho_objc_recovery.py",
     "src/superghidra/formats/ida_flirt_bridge.py",
     "src/superghidra/core/compilable_filter.py",
+    "src/superghidra/core/ghidra_oracle.py",
     "src/superghidra/core/live_binary_tools.py",
     "src/superghidra/core/cluster_daemon.py",
     "src/superghidra/schemas/validator.py",

@@ -43,9 +43,9 @@ SuperGhidra spans four distinct execution paths. Pick the entry point that match
 | **Run GPU/SIMD ARM64 scans, LZ4/Zstd buffer compression, or Z3 P-code checks** | Python API / standalone modules (or MCP tools) | **No** (standalone Python / NumPy / WGPU / Z3) | **No** |
 
 > [!WARNING]
-> **The `superghidra decompile` CLI Subcommand is Experimental**
+> **The `superghidra decompile` CLI Subcommand is an Experimental Prototype**
 >
-> Do **not** use `superghidra decompile` to decompile production binaries. The standalone `superghidra decompile` CLI subcommand invokes an experimental, zero-JVM P-code lifter restricted to a small integer-arithmetic subset (register-to-register `mov`/`add`/`xor` and `ret` on x86-64; any other instruction exits non-zero). It will exit non-zero or return incomplete output on real functions containing branches, floats, or complex calls.
+> Do **not** use `superghidra decompile` to decompile production binaries. The standalone `superghidra decompile` CLI subcommand invokes an experimental research prototype: on real Windows binaries, only 11 of 154 exports across four test DLLs decompile, and only 7 of those compile cleanly. It uses a zero-JVM P-code lifter restricted to a small integer-arithmetic subset (register-to-register `mov`/`add`/`xor` and `ret` on x86-64; any other instruction exits non-zero). It will exit non-zero or return incomplete output on real functions containing branches, floats, or complex calls.
 >
 > **To decompile real functions from a Ghidra project, use the Ghidra-backed oracle:**
 > ```bash
@@ -373,7 +373,7 @@ SuperGhidra ships with an integrated standalone command-line executable `supergh
 # Display version and hardware acceleration telemetry
 superghidra version
 
-# Staged P-code decompiler (handles register-to-register mov/add/xor and ret on x86-64; any other instruction exits non-zero)
+# Prototype standalone P-code decompiler (handles register-to-register mov/add/xor and ret on x86-64; prototype covering 11/154 exports on test DLLs; other instructions exit non-zero)
 superghidra decompile target.dll --va 0x140001000 --arch x86_64 -o decompiled.c
 
 # Import IDA Pro .til type library and dump schema catalog
@@ -447,7 +447,8 @@ print(sg.SMTPcodeVerifier().verify_equivalence(ops, ops).equivalent)
 - **Objective-C Runtime Recovery:** Currently recovers classes, methods, and ivars from traditional 64-bit Mach-O binaries with direct pointers (`__objc_classlist`, `__objc_const`). Binaries using modern macOS / iOS dyld chained fixups (`LC_DYLD_CHAINED_FIXUPS`) are not yet dereferenced and are planned for 1.x.
 - **C++ RTTI Formats:** Class recovery targets MSVC RTTI (`CompleteObjectLocator`, `TypeDescriptor`, `ClassHierarchyDescriptor`) and MFC `CRuntimeClass`. GNU Itanium ABI C++ RTTI (`type_info`, `_vptr` prefix structures) is planned for 1.x.
 - **MFC Class Recovery Testing:** Precision and recall (100% precision, 0 false positives on non-MFC binaries such as `libcrypto-3.dll`) are verified in automated CI using synthetic redistributable PE fixtures (`sample_mfc_x64.dll`). Real commercial applications (such as WinMerge with 713 RTTI and 160 MFC classes) are evaluated manually.
-- **MCP Server Package:** The Model Context Protocol server is distributed as `superghidra-mcp` on PyPI (source in [`SuperghidraMCP`](https://github.com/yuatemycat/SuperGhidraMCP)), depending on `superghidra>=0.4.0` and connecting AI coding agents directly to the local daemon and standalone recovery tools.
+- **MCP Server Package:** The Model Context Protocol server is hosted in [`SuperghidraMCP`](https://github.com/yuatemycat/SuperGhidraMCP) and installed directly from source (`pip install git+https://github.com/yuatemycat/SuperGhidraMCP.git`); it is not currently published on PyPI. It depends on `superghidra>=0.4.0` and connects AI coding agents directly to the local daemon and standalone recovery tools.
+- **Standalone P-Code Decompilation:** The zero-JVM CLI decompiler (`superghidra decompile`) is an experimental prototype covering integer register arithmetic (11 of 154 exports decompiled, 7 compiling across four test DLLs). For production decompilation, use the Ghidra-backed daemon oracle (`python ghidra_oracle.py decompile <addr>`).
 - **PDB Export:** PDB export is experimental: it emits MSF 7.0 structures with prototype DBI and public symbol records, but lacks MSVC-compatible hash streams, symbol record streams, and CodeView type (TPI) streams. DWARF 5 export is the supported path for external tooling.
 - **SMT Verification Incompleteness:** The SMT checker is sound but incomplete. Floats, calls, unhandled ops and long loops return `UNKNOWN` by design to prevent false equivalence.
 - **ARM64 Lifter Instruction Surface:** The ARM64 lifter covers core integer, exclusive memory, SIMD vector math/bitwise, bitfield moves, conditional selection, and ARMv8.1-A atomics. Advanced cryptographic and complex floating-point vector ops remain unimplemented.

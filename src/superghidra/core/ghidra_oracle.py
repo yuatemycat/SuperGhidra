@@ -862,11 +862,11 @@ class GhidraOracleSession:
         self.clean_stale_locks = clean_stale_locks
         self.lock_stale_threshold_sec = lock_stale_threshold_sec
 
-        self.project = None
-        self.program = None
-        self.flat_api = None
-        self.decompiler = None
-        self.monitor = None
+        self.project: Any = None
+        self.program: Any = None
+        self.flat_api: Any = None
+        self.decompiler: Any = None
+        self.monitor: Any = None
         self.image_base = DEFAULT_IMAGE_BASE
 
         self.start_time = time.time()
@@ -994,12 +994,17 @@ class GhidraOracleSession:
                 continue
 
             # On POSIX, verify flock non-blocking lock can be acquired
-            if os.name != "nt":
+            if sys.platform != "win32":
                 try:
                     import fcntl
                     with open(p, "r+") as f:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                        flock_fn = getattr(fcntl, "flock", None)
+                        lock_ex = getattr(fcntl, "LOCK_EX", 2)
+                        lock_nb = getattr(fcntl, "LOCK_NB", 4)
+                        lock_un = getattr(fcntl, "LOCK_UN", 8)
+                        if flock_fn is not None:
+                            flock_fn(f.fileno(), lock_ex | lock_nb)
+                            flock_fn(f.fileno(), lock_un)
                 except OSError as e:
                     logger.warning(f"Lock file '{p}' is held by an active process, skipping removal: {e}")
                     continue
@@ -1333,21 +1338,23 @@ class GhidraOracleSession:
                         insn_array = np.frombuffer(raw[:usable_size], dtype="<u4")
                         matches = scanner.scan_matches(insn_array, base_pc=base_va, filter_same_register=True)
 
-                        for m in matches:
-                            target_page = m.resolved_target & ~0xFFF
-                            if m.paired_type == "ADD":
-                                paired_info = f"add x{m.paired_rt}, x{m.paired_rn}, #0x{m.immediate:x}"
+                        paired_info: str | None = None
+                        paired_offset: int | None = None
+                        for adrp_match in matches:
+                            target_page = adrp_match.resolved_target & ~0xFFF
+                            if adrp_match.paired_type == "ADD":
+                                paired_info = f"add x{adrp_match.paired_rt}, x{adrp_match.paired_rn}, #0x{adrp_match.immediate:x}"
                             else:
-                                paired_info = f"ldr x{m.paired_rt}, [x{m.paired_rn}, #0x{m.immediate:x}]"
+                                paired_info = f"ldr x{adrp_match.paired_rt}, [x{adrp_match.paired_rn}, #0x{adrp_match.immediate:x}]"
 
                             if target_page not in adrp_dict:
                                 adrp_dict[target_page] = []
                             adrp_dict[target_page].append({
-                                "insn_va": m.adrp_pc,
-                                "insn_rva": m.adrp_pc - self.image_base,
-                                "rd": m.adrp_rd,
+                                "insn_va": adrp_match.adrp_pc,
+                                "insn_rva": adrp_match.adrp_pc - self.image_base,
+                                "rd": adrp_match.adrp_rd,
                                 "target_page": target_page,
-                                "paired_offset": m.immediate,
+                                "paired_offset": adrp_match.immediate,
                                 "paired_info": paired_info,
                             })
                         gpu_scanned = True
@@ -1485,8 +1492,8 @@ class GhidraOracleSession:
                     if style is None and DecompilerComplexityGovernor is not None:
                         try:
                             body_size = int(func.getBody().getNumAddresses()) if hasattr(func, "getBody") and func.getBody() else 0
-                            mode_enum = ResourceMode(self.resource_mode.lower()) if ResourceMode else None
-                            if mode_enum and get_default_mode_policy:
+                            mode_enum = ResourceMode(self.resource_mode.lower()) if ResourceMode is not None else None
+                            if mode_enum is not None and get_default_mode_policy is not None:
                                 policy = get_default_mode_policy(mode_enum)
                                 dyn_style, _ = DecompilerComplexityGovernor.resolve_simplification_style(
                                     policy,
@@ -1666,7 +1673,7 @@ class GhidraOracleSession:
                 addr = self.flat_api.toAddr(va)
                 listing = self.program.getListing()
 
-                rows = []
+                rows: List[Dict[str, Any]] = []
                 for insn in listing.getInstructions(addr, True):
                     if len(rows) >= count:
                         break
@@ -1860,7 +1867,7 @@ class GhidraOracleSession:
                             "asm": f"mov w0, #0x{imm:x}; ret",
                         })
 
-                matches.sort(key=lambda x: x["opcode"])
+                matches.sort(key=lambda x: int(str(x.get("opcode") or 0)))
                 return {
                     "status": "ok",
                     "min": min_op,
@@ -2330,7 +2337,7 @@ class GhidraDaemonServer:
 
     def __init__(
         self,
-        session: GhidraOracleSession,
+        session: Any,
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
         allow_remote: bool = False,
@@ -2345,7 +2352,7 @@ class GhidraDaemonServer:
         self.port = port
         self.allow_remote = allow_remote
         self.token = token
-        self.server_socket = None
+        self.server_socket: socket.socket | None = None
         self.running = False
         self._threads: List[threading.Thread] = []
 
@@ -2523,22 +2530,22 @@ class GhidraDaemonServer:
                 return self.session.query_decompile(targets, style=style, throttle_ms=throttle_int)
             elif cmd == "vtable":
                 addr = args.get("addr") or req.get("addr")
-                count = int(args.get("count", req.get("count", 12)))
+                count = int(args.get("count") or req.get("count") or 12)
                 return self.session.query_vtable(addr, count)
             elif cmd == "disassemble":
                 addr = args.get("addr") or req.get("addr")
-                count = int(args.get("count", req.get("count", 30)))
+                count = int(args.get("count") or req.get("count") or 30)
                 return self.session.query_disassemble(addr, count)
             elif cmd in ("refs", "references"):
                 addr = args.get("addr") or req.get("addr")
-                count = int(args.get("count", req.get("count", 20)))
+                count = int(args.get("count") or req.get("count") or 20)
                 return self.session.query_refs(addr, count)
             elif cmd == "adrp_add":
                 target = args.get("target") or req.get("target") or args.get("addr")
                 return self.session.query_adrp_add(str(target))
             elif cmd == "opcodes":
-                min_op = int(args.get("min", req.get("min", 0)))
-                max_op = int(args.get("max", req.get("max", 1000)))
+                min_op = int(args.get("min") or req.get("min") or 0)
+                max_op = int(args.get("max") or req.get("max") or 1000)
                 return self.session.query_opcodes(min_op, max_op)
             elif cmd == "hibernate":
                 return self.session.hibernate()
@@ -2549,12 +2556,12 @@ class GhidraDaemonServer:
                 addr = args.get("addr")
                 name = args.get("name")
                 old_name = args.get("old_name")
-                return self.session.set_rename(addr, name, old_name=old_name)
+                return self.session.set_rename(addr, str(name or ""), old_name=old_name)
             elif cmd == "comment":
                 addr = args.get("addr")
                 comment = args.get("comment")
                 ctype = args.get("comment_type", "EOL")
-                return self.session.set_comment(addr, comment, comment_type=ctype)
+                return self.session.set_comment(addr, str(comment or ""), comment_type=str(ctype or "EOL"))
             elif cmd == "type":
                 name_or_id = (
                     args.get("name")
@@ -2570,11 +2577,12 @@ class GhidraDaemonServer:
                 return self.session.query_type(str(name_or_id))
             elif cmd == "register_struct":
                 name = args.get("name") or req.get("name")
-                byte_size = int(args.get("byte_size", req.get("byte_size", 0)))
+                byte_size = int(args.get("byte_size") or req.get("byte_size") or 0)
                 members = args.get("members", req.get("members", []))
                 if not name:
                     return {"status": "error", "message": "Missing 'name' for register_struct"}
-                return self.session.register_struct(name, byte_size, members)
+                members_list = members if isinstance(members, list) else []
+                return self.session.register_struct(name, byte_size, members_list)
 
             elif cmd in ("clear", "clear-cache"):
                 self.session.overlay.clear()
@@ -2896,7 +2904,7 @@ def client_send_request(
     if resolved_token:
         payload_dict["token"] = resolved_token
     payload = json.dumps(payload_dict) + "\n"
-    res = {"status": "error", "message": "No response from daemon"}
+    res: Dict[str, Any] = {"status": "error", "message": "No response from daemon"}
     with socket.create_connection((host, port), timeout=60.0) as s:
         s.sendall(payload.encode("utf-8"))
         buf = bytearray()
@@ -3190,7 +3198,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         cache = get_client_l2_cache()
         cache.clear()
         print(f"[*] Persistent L2 SQLite cache cleared successfully ({cache.db_path}).")
-        return
+        return 0
 
     # 1. Daemon serve mode
     if cmd == "serve":
@@ -3204,6 +3212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print("[!] PyGhidra not detected. Running daemon in mock standalone mode (--mock).")
                 use_mock = True
 
+        session: Any
         if use_mock:
             session = MockGhidraOracleSession(resource_mode=target_mode)
             print(f"[*] Initializing Mock Ghidra Oracle (Mode: {session.resource_mode}, Zero-JVM standalone)...")
@@ -3239,19 +3248,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         except KeyboardInterrupt:
             print("\n[*] Stopping Ghidra Oracle daemon...")
             server.stop()
-        return
+        return 0
 
     # 2. Client Commands
     req_args = {}
     if cmd == "rva":
         if not c_args:
             print("Usage: python ghidra_oracle.py rva <addr>")
-            return
+            return 1
         req_args["addr"] = c_args[0]
     elif cmd == "decompile":
         if not c_args:
             print("Usage: python ghidra_oracle.py decompile <addr...>")
-            return
+            return 1
         req_args["targets"] = c_args
         if parsed.style:
             req_args["style"] = parsed.style
@@ -3260,25 +3269,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif cmd == "vtable":
         if not c_args:
             print("Usage: python ghidra_oracle.py vtable <addr> [count]")
-            return
+            return 1
         req_args["addr"] = c_args[0]
         req_args["count"] = int(c_args[1]) if len(c_args) > 1 else 12
     elif cmd == "disassemble":
         if not c_args:
             print("Usage: python ghidra_oracle.py disassemble <addr> [count]")
-            return
+            return 1
         req_args["addr"] = c_args[0]
         req_args["count"] = int(c_args[1]) if len(c_args) > 1 else 30
     elif cmd in ("refs", "references"):
         if not c_args:
             print("Usage: python ghidra_oracle.py refs <addr> [count]")
-            return
+            return 1
         req_args["addr"] = c_args[0]
         req_args["count"] = int(c_args[1]) if len(c_args) > 1 else 20
     elif cmd == "adrp_add":
         if not c_args:
             print("Usage: python ghidra_oracle.py adrp_add <symbol_or_addr>")
-            return
+            return 1
         req_args["target"] = c_args[0]
     elif cmd == "opcodes":
         min_op = int(c_args[0]) if len(c_args) > 0 else 500
@@ -3288,13 +3297,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif cmd == "rename":
         if len(c_args) < 2:
             print("Usage: python ghidra_oracle.py rename <addr> <name>")
-            return
+            return 1
         req_args["addr"] = c_args[0]
         req_args["name"] = c_args[1]
     elif cmd == "comment":
         if len(c_args) < 2:
             print("Usage: python ghidra_oracle.py comment <addr> <text>")
-            return
+            return 1
         req_args["addr"] = c_args[0]
         req_args["comment"] = " ".join(c_args[1:])
     elif cmd == "overlay":
@@ -3302,12 +3311,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif cmd == "type":
         if not c_args:
             print("Usage: python ghidra_oracle.py type <name_or_id>")
-            return
+            return 1
         req_args["name"] = c_args[0]
     elif cmd == "register_struct":
         if len(c_args) < 2:
             print("Usage: python ghidra_oracle.py register_struct <name> <byte_size> [members_json]")
-            return
+            return 1
         req_args["name"] = c_args[0]
         req_args["byte_size"] = int(c_args[1])
         req_args["members"] = json.loads(c_args[2]) if len(c_args) > 2 else []
@@ -3321,17 +3330,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_mode = parsed.mode.lower()
         else:
             print("Usage: python ghidra_oracle.py mode <eco|balanced|turbo|auto>")
-            return
+            return 1
         if target_mode not in ("eco", "balanced", "turbo", "auto"):
             print(f"ERROR: Invalid mode '{target_mode}'. Choose from: eco, balanced, turbo, auto")
-            return
+            return 1
         req_args["mode"] = target_mode
     elif cmd in ("status", "stop", "ping"):
         pass
     else:
         print(f"Unknown command: {cmd}")
         print("Available commands: decompile, vtable, disassemble, refs, adrp_add, opcodes, rva, rename, comment, overlay, type, register_struct, status, stop, hibernate, mode, clear-cache, serve")
-        return
+        return 1
 
     res = client_send_request(
         cmd,
@@ -3343,7 +3352,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if parsed.json:
         print(json.dumps(res, indent=2))
-        return
+        return 0
 
     # Human-readable output formatting
     if cmd == "rva":

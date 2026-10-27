@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Undefined Name Elimination**: Resolved 5 `F821` runtime name errors across `compilable_filter.py`, `cross_platform_headless_harness.py`, `parity_engine.py`, `arm_thumb_decode.py`, and `egraph_mlir_pipeline.py`.
 - **Ruff Lint Modernization**: Cleared over 1,130 lint warnings and formatting issues across `src/` and `tests/`, enforcing automated `ruff` and `isort` rules.
-- **Core Public Type Safety**: Brought all public core modules (`__init__.py`, `__main__.py`, `binary_loader.py`, `msvc_class_recovery.py`, `synthetic_symbol_exporter.py`, `compilable_filter.py`, `validator.py`) to zero mypy errors.
+- **Core Public Type Safety & Daemon Type-Checking**: Resolved 86 type errors in `ghidra_oracle.py` and brought public core modules (`__init__.py`, `__main__.py`, `binary_loader.py`, `msvc_class_recovery.py`, `synthetic_symbol_exporter.py`, `compilable_filter.py`, `validator.py`, `ghidra_oracle.py`, and lifters/acceleration/storage/compat suites - 74 modules total) to zero mypy errors.
 
 ## [0.4.0] - 2026-10-26
 
