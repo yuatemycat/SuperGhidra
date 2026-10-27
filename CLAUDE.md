@@ -6,7 +6,7 @@ Use this instruction file when operating as an autonomous reverse-engineering ag
 
 1. **NEVER use `superghidra decompile` on real functions:**
    - `superghidra decompile` is an experimental zero-JVM integer-only P-code lifter. It handles register-to-register operations (`mov`, `add`, `xor`) and returns on x86-64. Calling it on production functions with calls, branches, memory dereferences, or floats will exit non-zero.
-   - **For real decompilation, use `python ghidra_oracle.py decompile <addr>`** (or the `decompile_function` / `oracle_decompile` MCP tool).
+   - **For real decompilation, use `python -m superghidra.core.ghidra_oracle decompile <addr>`** (or the `decompile_function` / `oracle_decompile` MCP tool).
    - **To filter raw decompiler output into clean compilable C, use `superghidra filter <raw.c> -o <clean.c>`.** This strips stack canaries, simplifies stride calculations, replaces Ghidra pseudo-types (`undefined8`, `CONCAT44`, `SUB84`) with `<stdint.h>` types, and injects required standard headers.
 
 2. **Use standalone zero-JVM tools before spinning up Ghidra:**
@@ -29,18 +29,18 @@ Use this instruction file when operating as an autonomous reverse-engineering ag
 
 | Agent Goal | Correct Command / Tool | Do NOT Use |
 | :--- | :--- | :--- |
-| Check if daemon is alive | `python ghidra_oracle.py status` | Spawning a new headless JVM per query |
-| Decompile a function | `python ghidra_oracle.py decompile <addr>` (pass through `superghidra filter <raw.c> -o <clean.c>` for clean C) | `superghidra decompile` on production functions |
+| Check if daemon is alive | `python -m superghidra.core.ghidra_oracle status` | Spawning a new headless JVM per query |
+| Decompile a function | `python -m superghidra.core.ghidra_oracle decompile <addr>` (pass through `superghidra filter <raw.c> -o <clean.c>` for clean C) | `superghidra decompile` on production functions |
 | Recover MSVC RTTI / MFC classes | `superghidra rtti-recover <binary> -o classes.json` or `python -m superghidra.formats.msvc_class_recovery <binary>` | Manual vtable walking in headless Ghidra |
 | Scan ARM64 binary for `ADRP+ADD/LDR` | `python -m superghidra.acceleration.gpu_adrp_scanner <binary>` (auto-routes NumPy SIMD < 10 MB, WGPU >= 10 MB) | Single-threaded Python byte loops |
 | Seed ARM64 function entrypoints | `python -m superghidra.acceleration.gpu_function_seeder <binary>` or MCP `gpu_seed_functions` | Full linear sweep disassembler |
 | Verify equivalence of rewritten logic | `python -m superghidra.lifters.smt_pcode_verifier ...` or MCP `verify_smt_equivalence` | Guessing semantic equivalence without Z3 proof |
-| Rename a function or symbol | `python ghidra_oracle.py rename <addr> <name>` or MCP `rename_function` | Direct `.rep` file modification |
-| Add a comment to an address | `python ghidra_oracle.py comment <addr> <text>` or MCP `set_comment` | Direct `.rep` file modification |
-| Query incoming cross-references | `python ghidra_oracle.py refs <addr>` or MCP `list_xrefs` | Ad-hoc text search over binary files |
-| Inspect virtual function tables | `python ghidra_oracle.py vtable <addr> [count]` | Manual pointer math in hex editors |
-| Disassemble raw instructions | `python ghidra_oracle.py disassemble <addr> [count]` or MCP `disassemble` | Spawning fresh headless instances per block |
-| Translate VA <-> RVA | `python ghidra_oracle.py rva <addr>` or MCP `rva_translate` | Manual image base arithmetic |
+| Rename a function or symbol | `python -m superghidra.core.ghidra_oracle rename <addr> <name>` or MCP `rename_function` | Direct `.rep` file modification |
+| Add a comment to an address | `python -m superghidra.core.ghidra_oracle comment <addr> <text>` or MCP `set_comment` | Direct `.rep` file modification |
+| Query incoming cross-references | `python -m superghidra.core.ghidra_oracle refs <addr>` or MCP `list_xrefs` | Ad-hoc text search over binary files |
+| Inspect virtual function tables | `python -m superghidra.core.ghidra_oracle vtable <addr> [count]` | Manual pointer math in hex editors |
+| Disassemble raw instructions | `python -m superghidra.core.ghidra_oracle disassemble <addr> [count]` or MCP `disassemble` | Spawning fresh headless instances per block |
+| Translate VA <-> RVA | `python -m superghidra.core.ghidra_oracle rva <addr>` or MCP `rva_translate` | Manual image base arithmetic |
 | Push overlay edits to Ghidra GUI | `superghidra overlay-sync --overlay ghidra_overlay.json --out ghidra_gui_overlay_sync.py` | Telling user to restart Ghidra |
 | Manage multi-agent session forks | MCP `list_forks`, `merge_fork(auto_discard=True)`, `discard_fork` | Concurrent uncoordinated writes to main state |
 
@@ -81,18 +81,18 @@ Extract static metadata, exports, imports, and class hierarchies before starting
 Verify the persistent TCP daemon on `127.0.0.1:5073`:
 
 ```bash
-python ghidra_oracle.py status
+python -m superghidra.core.ghidra_oracle status
 ```
 
 - If the daemon is active, it responds with uptime, function count, and L2 cache hit rate.
 - If offline, `ghidra_oracle.py` client commands auto-spawn the background daemon. You can also start it manually:
   ```bash
-  python ghidra_oracle.py serve --project-dir <path_to_projects> --project-name <name> --program-name <binary> --mode balanced
+  python -m superghidra.core.ghidra_oracle serve --project-dir <path_to_projects> --project-name <name> --program-name <binary> --mode balanced
   ```
 - Keep the project in read-only mode so the human analyst can keep their Ghidra GUI open simultaneously.
 - Set the governor mode (`eco`, `balanced`, `turbo`, `auto`) based on system load:
   ```bash
-  python ghidra_oracle.py mode balanced
+  python -m superghidra.core.ghidra_oracle mode balanced
   ```
 
 ### Step 3: Iterative Decompilation & Cross-Reference Analysis
@@ -101,15 +101,15 @@ Query the warm daemon. Queries are served from the SQLite L2 cache in `< 0.01 ms
 1. **Cross-References and VTables:**
    ```bash
    # Inspect cross-references
-   python ghidra_oracle.py refs 0x140001000
+   python -m superghidra.core.ghidra_oracle refs 0x140001000
 
    # Inspect virtual method table entries
-   python ghidra_oracle.py vtable 0x140005000 16
+   python -m superghidra.core.ghidra_oracle vtable 0x140005000 16
    ```
 
 2. **Decompile Function:**
    ```bash
-   python ghidra_oracle.py decompile 0x140001000 > raw_decompile.c
+   python -m superghidra.core.ghidra_oracle decompile 0x140001000 > raw_decompile.c
    ```
 
 3. **Filter to Compilable C:**
@@ -142,10 +142,10 @@ Before proposing a logic simplification, struct definition, or symbol rename, va
 3. **Stage Mutations to Write-Overlay:**
    ```bash
    # Rename function
-   python ghidra_oracle.py rename 0x140001000 ProcessPacket
+   python -m superghidra.core.ghidra_oracle rename 0x140001000 ProcessPacket
 
    # Add comment
-   python ghidra_oracle.py comment 0x140001000 "Validated against packet header schema"
+   python -m superghidra.core.ghidra_oracle comment 0x140001000 "Validated against packet header schema"
    ```
    Edits write to `ghidra_overlay.json` without touching `.rep` project files.
 

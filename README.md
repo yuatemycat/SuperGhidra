@@ -37,7 +37,7 @@ SuperGhidra spans four distinct execution paths. Pick the entry point that match
 
 | What You Want to Do | Entry Point / Command | Requires Ghidra + JVM? | Writes to `.rep` Directly? |
 | :--- | :--- | :---: | :---: |
-| **Decompile real functions, query xrefs, or rename symbols** | `python ghidra_oracle.py <subcommand>` | **Yes** (Ghidra 11/12 + OpenJDK 21 + PyGhidra) | **No** (writes go to JSON overlay / fork journal) |
+| **Decompile real functions, query xrefs, or rename symbols** | `python -m superghidra.core.ghidra_oracle <subcommand>` | **Yes** (Ghidra 11/12 + OpenJDK 21 + PyGhidra) | **No** (writes go to JSON overlay / fork journal) |
 | **Recover MSVC RTTI, MFC `CRuntimeClass`, `Serialize()`, or PE/ELF/Mach-O headers** | `python -m superghidra.formats.msvc_class_recovery <binary>` or `superghidra rtti-recover <binary> -o classes.json` | **No** (standalone Python) | **No** (exports JSON, DWARF 5, Breakpad, or `.map`) |
 | **Connect Claude Desktop, Cursor, or Antigravity to an open target** | MCP Server (`superghidra-mcp` via [SuperghidraMCP](https://github.com/yuatemycat/SuperGhidraMCP)) | **Yes** (connects to running daemon) | **No** (commits gated by validation + overlay sync) |
 | **Run GPU/SIMD ARM64 scans, LZ4/Zstd buffer compression, or Z3 P-code checks** | Python API / standalone modules (or MCP tools) | **No** (standalone Python / NumPy / WGPU / Z3) | **No** |
@@ -45,11 +45,11 @@ SuperGhidra spans four distinct execution paths. Pick the entry point that match
 > [!WARNING]
 > **The `superghidra decompile` CLI Subcommand is an Experimental Prototype**
 >
-> Do **not** use `superghidra decompile` to decompile production binaries. The standalone `superghidra decompile` CLI subcommand invokes an experimental research prototype: on real Windows binaries, only 11 of 154 exports across four test DLLs decompile, and only 7 of those compile cleanly. It uses a zero-JVM P-code lifter restricted to a small integer-arithmetic subset (register-to-register `mov`/`add`/`xor` and `ret` on x86-64; any other instruction exits non-zero). It will exit non-zero or return incomplete output on real functions containing branches, floats, or complex calls.
+> Do **not** use `superghidra decompile` to decompile production binaries. The standalone `superghidra decompile` CLI subcommand invokes an experimental research prototype: on real Windows binaries, only 11 of 154 exports across four test DLLs decompile, and only 7 of those compile cleanly. It uses a zero-JVM P-code lifter supporting basic integer register operations, function prologues, direct calls, and preliminary ARM64 lowering (any unhandled opcode or complex control flow exits non-zero). It will exit non-zero or return incomplete output on real functions containing complex branches, floats, or unhandled instructions.
 >
 > **To decompile real functions from a Ghidra project, use the Ghidra-backed oracle:**
 > ```bash
-> python ghidra_oracle.py decompile <addr>
+> python -m superghidra.core.ghidra_oracle decompile <addr>
 > ```
 
 ## How SuperGhidra Compares to Stock Headless & Existing Ghidra MCP Bridges
@@ -120,13 +120,13 @@ Verify the daemon status or launch it with project coordinates:
 
 ```bash
 # Check daemon status (auto-reports uptime, cache hit rate, and loaded binary)
-python ghidra_oracle.py status
+python -m superghidra.core.ghidra_oracle status
 
 # Run daemon with explicit project paths
-python ghidra_oracle.py --project-dir ~/re/proj --project-name game --program-name libgame.so status
+python -m superghidra.core.ghidra_oracle --project-dir ~/re/proj --project-name game --program-name libgame.so status
 
 # Or launch as a dedicated background server on port 5073
-python ghidra_oracle.py serve --project-dir ~/re/proj --project-name game --program-name libgame.so --mode balanced
+python -m superghidra.core.ghidra_oracle serve --project-dir ~/re/proj --project-name game --program-name libgame.so --mode balanced
 ```
 
 You can also define candidate projects globally via `SUPERGHIDRA_PROJECTS="dir,name[,program]"`.
@@ -136,13 +136,13 @@ Subsequent queries execute in `< 0.01 ms` when served from the SQLite L2 cache:
 
 ```bash
 # Decompile target function by virtual address
-python ghidra_oracle.py decompile 0x140001000
+python -m superghidra.core.ghidra_oracle decompile 0x140001000
 
 # Propose function rename (committed safely to the JSON write overlay)
-python ghidra_oracle.py rename 0x140001000 ProcessPacketHeader
+python -m superghidra.core.ghidra_oracle rename 0x140001000 ProcessPacketHeader
 
 # Add an address comment
-python ghidra_oracle.py comment 0x140001000 "Validated packet parser entry point"
+python -m superghidra.core.ghidra_oracle comment 0x140001000 "Validated packet parser entry point"
 ```
 
 #### 4. Sync Overlay Back to Ghidra GUI
@@ -430,7 +430,7 @@ print(sg.SMTPcodeVerifier().verify_equivalence(ops, ops).equivalent)
 ## Troubleshooting & Common Gotchas
 
 * **`superghidra decompile` fails or outputs empty blocks on my function:**
-  You ran the standalone experimental zero-JVM integer lifter. Switch to `python ghidra_oracle.py decompile <addr>`.
+  You ran the standalone experimental zero-JVM integer lifter. Switch to `python -m superghidra.core.ghidra_oracle decompile <addr>`.
 * **`LockException: Project is locked by another process`:**
   Your `.rep` project is currently open in the Ghidra GUI. The daemon reads from the project without acquiring exclusive locks; if Ghidra holds an exclusive lock or you encounter lock contention, ensure the daemon uses a read-only session or private session fork, and sync changes back via `superghidra overlay-sync --overlay ghidra_overlay.json --out ghidra_gui_overlay_sync.py`.
 * **My renamed functions in the daemon don't show up in the Ghidra GUI:**
@@ -448,7 +448,7 @@ print(sg.SMTPcodeVerifier().verify_equivalence(ops, ops).equivalent)
 - **C++ RTTI Formats:** Class recovery targets MSVC RTTI (`CompleteObjectLocator`, `TypeDescriptor`, `ClassHierarchyDescriptor`) and MFC `CRuntimeClass`. GNU Itanium ABI C++ RTTI (`type_info`, `_vptr` prefix structures) is planned for 1.x.
 - **MFC Class Recovery Testing:** Precision and recall (100% precision, 0 false positives on non-MFC binaries such as `libcrypto-3.dll`) are verified in automated CI using synthetic redistributable PE fixtures (`sample_mfc_x64.dll`). Real commercial applications (such as WinMerge with 713 RTTI and 160 MFC classes) are evaluated manually.
 - **MCP Server Package:** The Model Context Protocol server is hosted in [`SuperghidraMCP`](https://github.com/yuatemycat/SuperGhidraMCP) and installed directly from source (`pip install git+https://github.com/yuatemycat/SuperGhidraMCP.git`); it is not currently published on PyPI. It depends on `superghidra>=0.4.0` and connects AI coding agents directly to the local daemon and standalone recovery tools.
-- **Standalone P-Code Decompilation:** The zero-JVM CLI decompiler (`superghidra decompile`) is an experimental prototype covering integer register arithmetic (11 of 154 exports decompiled, 7 compiling across four test DLLs). For production decompilation, use the Ghidra-backed daemon oracle (`python ghidra_oracle.py decompile <addr>`).
+- **Standalone P-Code Decompilation:** The zero-JVM CLI decompiler (`superghidra decompile`) is an experimental prototype supporting basic integer register operations, function prologues, direct calls, and preliminary ARM64 lowering (11 of 154 exports decompiled, 7 compiling across four test DLLs). For production decompilation, use the Ghidra-backed daemon oracle (`python -m superghidra.core.ghidra_oracle decompile <addr>`).
 - **PDB Export:** PDB export is experimental: it emits MSF 7.0 structures with prototype DBI and public symbol records, but lacks MSVC-compatible hash streams, symbol record streams, and CodeView type (TPI) streams. DWARF 5 export is the supported path for external tooling.
 - **SMT Verification Incompleteness:** The SMT checker is sound but incomplete. Floats, calls, unhandled ops and long loops return `UNKNOWN` by design to prevent false equivalence.
 - **ARM64 Lifter Instruction Surface:** The ARM64 lifter covers core integer, exclusive memory, SIMD vector math/bitwise, bitfield moves, conditional selection, and ARMv8.1-A atomics. Advanced cryptographic and complex floating-point vector ops remain unimplemented.
