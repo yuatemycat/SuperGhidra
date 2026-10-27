@@ -218,7 +218,7 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
 ### Frontier 4: Cloud Colab Headless TPU v5e / T4 Pipeline Orchestrator
 - [x] ~~**Goal:** Build an automated Google Colab deployment script that sets up `/dev/shm` RAM disks, pulls `libtarget.so`, runs JADX DEX analysis, and executes batched JAX/XLA TPU v5e systolic array inference for megafunction recovery.~~
 - [x] ~~**Impact:** Offloads massive multi-hour decompilation tasks to free cloud TPU/GPU runtimes with zero workstation CPU consumption.~~
-- [x] ~~**Implemented in:** [`colab_cloud_orchestrator.py`](src/superghidra/integrations/colab_cloud_orchestrator.py) & [`colab_cloud_orchestrator.ipynb`](colab_cloud_orchestrator.ipynb)~~
+- [x] ~~**Implemented in:** [`colab_cloud_orchestrator.py`](src/superghidra/integrations/colab_cloud_orchestrator.py) & [`colab_cloud_orchestrator.ipynb`](notebooks/colab_cloud_orchestrator.ipynb)~~
   - *Accomplished:* Multi-tier cloud profile (Free CPU, T4 GPU, TPU v5e JAX/XLA systolic arrays), ambient HF_TOKEN authentication, /content storage invariant, /dev/shm RAM disk staging, JADX G1GC bounds, Zero-JVM P-Code bfloat16 tensor packing, and EvidenceLedger gated symbol reconstruction.
 
 ### Frontier 5: Live Android Emulator Memory Introspection Sidecar
@@ -254,19 +254,19 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
 
 ### Frontier 8: Distributed Daemon Clustering (gRPC)
 - [x] ~~**Goal:** Multi-node Ghidra analysis worker orchestration over resilient gRPC protocol.~~
-- [x] ~~**Target Modules:** [superghidra/core/cluster_daemon.py](src/superghidra/core/cluster_daemon.py), root shim [cluster_daemon.py](cluster_daemon.py)~~
+- [x] ~~**Target Modules:** [superghidra/core/cluster_daemon.py](src/superghidra/core/cluster_daemon.py), root shim [cluster_daemon.py](src/superghidra/compat/cluster_daemon.py)~~
 - [x] ~~**Accomplished:** ClusterCoordinator with round-robin and load-aware task dispatching, heartbeat timeout detection, in-flight task failover, genuine gRPC and in-process fallback channels; ClusterWorkerNode async runner.~~
 - [x] ~~**Tests:** [	ests/core/test_cluster_daemon.py](tests/core/test_cluster_daemon.py) (7 passed).~~
 
 ### Frontier 9: Full IDA Pro (.idb/.i64) & Binary Ninja (.bndb) Project Database Migrator
 - [x] ~~**Goal:** Convert full project databases beyond FLIRT/TIL into SuperGhidra overlays, delta event logs, and EvidenceLedger obligations.~~
-- [x] ~~**Target Modules:** [superghidra/formats/database_migrator.py](src/superghidra/formats/database_migrator.py), root shim [database_migrator.py](database_migrator.py)~~
+- [x] ~~**Target Modules:** [superghidra/formats/database_migrator.py](src/superghidra/formats/database_migrator.py), root shim [database_migrator.py](src/superghidra/compat/database_migrator.py)~~
 - [x] ~~**Accomplished:** Container parser for 32/64-bit IDA archives (.idb, .i64, .id0, .id1, .nam, .til, tagged records) and Binary Ninja SQLite databases (.bndb). Universal Migration IR (MigratedProject) exporting to WriteOverlay, .ghidra-delta.jsonl, ReconstructionObligationLedger, and synthetic DWARF 5/PDB containers.~~
 - [x] ~~**Tests:** [	ests/formats/test_database_migrator.py](tests/formats/test_database_migrator.py) (14 passed).~~
 
 ### Frontier 10: Browser WebAssembly Decompiler UI & Wasm Pipeline
 - [x] ~~**Goal:** Dynamic WebAssembly binary emitter and interactive offline-capable client-side web application generator.~~
-- [x] ~~**Target Modules:** [superghidra/lifters/wasm_decompiler_pipeline.py](src/superghidra/lifters/wasm_decompiler_pipeline.py), root shim [wasm_decompiler_pipeline.py](wasm_decompiler_pipeline.py)~~
+- [x] ~~**Target Modules:** [superghidra/lifters/wasm_decompiler_pipeline.py](src/superghidra/lifters/wasm_decompiler_pipeline.py), root shim [wasm_decompiler_pipeline.py](src/superghidra/compat/wasm_decompiler_pipeline.py)~~
 - [x] ~~**Accomplished:** Pure-Python WebAssembly 1.0 binary module builder (WasmModuleBuilder), C AST tokenizer with RVA cross-reference jump mapping, interactive HTML5/SVG CFG and syntax-highlighted decompiler web bundle generator (export_wasm_decompiler_package), and embedded HTTP server (WasmViewerServer).~~
 - [x] ~~**Tests:** [	ests/lifters/test_wasm_decompiler_pipeline.py](tests/lifters/test_wasm_decompiler_pipeline.py) (7 passed).~~
 
