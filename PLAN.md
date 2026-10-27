@@ -268,7 +268,18 @@ The baseline specification (Sections 1 through 8) and MCP unification are implem
 - [x] ~~**Goal:** Dynamic WebAssembly binary emitter and interactive offline-capable client-side web application generator.~~
 - [x] ~~**Target Modules:** [superghidra/lifters/wasm_decompiler_pipeline.py](src/superghidra/lifters/wasm_decompiler_pipeline.py), root shim [wasm_decompiler_pipeline.py](src/superghidra/compat/wasm_decompiler_pipeline.py)~~
 - [x] ~~**Accomplished:** Pure-Python WebAssembly 1.0 binary module builder (WasmModuleBuilder), C AST tokenizer with RVA cross-reference jump mapping, interactive HTML5/SVG CFG and syntax-highlighted decompiler web bundle generator (export_wasm_decompiler_package), and embedded HTTP server (WasmViewerServer).~~
-- [x] ~~**Tests:** [	ests/lifters/test_wasm_decompiler_pipeline.py](tests/lifters/test_wasm_decompiler_pipeline.py) (7 passed).~~
+- [x] ~~**Tests:** [`tests/lifters/test_wasm_decompiler_pipeline.py`](tests/lifters/test_wasm_decompiler_pipeline.py) (7 passed).~~
+
+### Frontier 11: Agent-First Architecture & REA Integration (`superghidra[rea]`)
+- [ ] **Goal:** Unify SuperGhidra's lock-free daemon, SQLite L2 cache, and WGPU/Z3 verification pipeline with REA's agent protocols (summary-first MCP pagination, universal `EvidenceEnvelope`, cross-call high-P-code value tracing, crash-resumable bulk export, and Ghidra-free Mach-O/IL2CPP/Rust parsers).
+- [ ] **Specification:** [`docs/specs/SUPERGHIDRA_1_0_0_SPECIFICATION.md`](docs/specs/SUPERGHIDRA_1_0_0_SPECIFICATION.md)
+- [ ] **Target Modules:**
+  - `superghidra.core`: `cache.py` (`retained_evidence` table), `views.py` (`inspect_analysis_view`), `evidence_ledger.py` (`EvidenceEnvelope`, `ReconstructionObligationLedger`)
+  - `superghidra.lifters` / `acceleration`: `trace_native_values`, bounds-proven AArch64 relative jump tables
+  - `superghidra.cli`: `superghidra decompile-all --resume` with `(st_dev, st_ino)` locking and `decompile-index.json`
+  - `superghidra.formats`: `apple_dispatch.py`, `il2cpp_metadata.py`, `rust_go_metadata.py`
+  - `superghidra.integrations`: `rea_bridge.py` (`superghidra[rea]` drop-in provider bridge)
+- [ ] **Status:** Roadmap and 6 Pillars specified in [`SUPERGHIDRA_1_0_0_SPECIFICATION.md`](docs/specs/SUPERGHIDRA_1_0_0_SPECIFICATION.md); actively targeted across Milestones 1–4 for version `1.0.0`. Interim milestone tagged as `v0.5.0` ([`docs/launch/RELEASE_NOTES_v0.5.0.md`](docs/launch/RELEASE_NOTES_v0.5.0.md)).
 
 ---
 
