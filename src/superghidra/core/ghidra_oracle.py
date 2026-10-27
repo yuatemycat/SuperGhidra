@@ -2713,10 +2713,23 @@ def spawn_background_daemon(
             )
 
 
-def wait_for_daemon_ready(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: float = DAEMON_STARTUP_TIMEOUT) -> bool:
-    """Waits for the daemon to boot OpenJDK + PyGhidra and accept TCP connections."""
+def wait_for_daemon_ready(
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    timeout: float = DAEMON_STARTUP_TIMEOUT,
+    is_mock: bool = False,
+) -> bool:
+    """Waits for the daemon to boot and accept TCP connections."""
     t0 = time.time()
-    print("[*] Warming up JVM & Ghidra project (this takes ~10-15s on first boot)", end="", flush=True, file=sys.stderr)
+    if is_mock or os.environ.get("SUPERGHIDRA_MOCK_ORACLE") == "1":
+        print("[*] Starting mock daemon...", end="", flush=True, file=sys.stderr)
+    else:
+        try:
+            import pyghidra  # noqa: F401
+
+            print("[*] Warming up JVM & Ghidra project (this takes ~10-15s on first boot)", end="", flush=True, file=sys.stderr)
+        except ImportError:
+            print("[*] Starting standalone daemon...", end="", flush=True, file=sys.stderr)
     while time.time() - t0 < timeout:
         if is_daemon_online(host, port):
             print(" [OK]", file=sys.stderr)
