@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-**SuperGhidra** is an AI-native, high-throughput, GPU-accelerated binary analysis platform engineered to scale reverse engineering beyond the interactive, single-user limitations of traditional GUI tools. Built on top of the Ghidra decompiler core, SuperGhidra augments static analysis with a multi-process, client-daemon architecture exposed directly to autonomous agents via the **Model Context Protocol (MCP)** (38+4 tools).
+**SuperGhidra** is an AI-native, high-throughput, GPU-accelerated binary analysis platform engineered to scale reverse engineering beyond the interactive, single-user limitations of traditional GUI tools. Built on top of the Ghidra decompiler core, SuperGhidra augments static analysis with a multi-process, client-daemon architecture exposed directly to autonomous agents via the **Model Context Protocol (MCP)** (42 tools).
 
 While SuperGhidra dramatically accelerates reference scanning (WebGPU ADRP scanner <1.2s vs minutes on CPU) and introduces capabilities absent from standard Ghidra and IDA Pro (multi-agent CRDT/session forking, automated version delta migration, and Z3 SMT equivalence verification), a fresh decompile still mirrors stock Ghidra (7.41% strict / 27.78% lenient vs Ghidra's 8.10% / 24.54%) and trails Hex-Rays on that row (16.90% strict / 25.15% lenient). A separate gcc rescore of the dataset's shipped pseudocode, with no typedef header, reproduces IDA at 16.9% and raw Ghidra text at 8.23%. Applying `CompilableDecompilerFilter` to that same Ghidra text scores 22.62% (C 33.44%, C++ 11.96%) against IDA's 16.9% on the same 1,296 programs. Live `decompile_function` applies that filter unless the caller passes `emit_compilable=False`. 952 of those 1,296 still fail for both the filter and IDA. Section 8 records each of these measurements separately.
 
@@ -40,7 +40,7 @@ SuperGhidra is partitioned into **7 bounded domains**, decoupling disk I/O, GPU 
 flowchart TD
     subgraph AgentLayer["Agent & IPC Interface Layer"]
         LLM["AI Coding Agents (Antigravity / Claude / Cursor)"]
-        MCP["SuperghidraMCP Server (38+4 Tools)"]
+        MCP["SuperghidraMCP Server (42 Tools)"]
         ForkMgr["Session Fork & Journaling Manager"]
         LLM <--> MCP
         MCP <--> ForkMgr
@@ -245,7 +245,7 @@ IDA Pro includes **Appcall** (`ida_idd.appcall`):
 | **Pre-compiled Signature Banks** | Industry-standard FLIRT + Lumina Cloud | Local FID / BSIM (sparse NDK databases) | **MEDIUM** |
 | **C/C++ Header Parser (.TIL)** | Robust Clang-based parser + rich `.til` | Brittle C-parser; requires struct sanitization | **MEDIUM** |
 | **Native Execution Speed & RAM** | C++ native engine; ~500 MB – 1.5 GB RAM | JVM overhead; 8 GB – 16 GB RAM required | **LOW** *(Mitigated)* |
-| **AI Agent Autonomy & Tooling** | Clunky headless Python; IDA MCP (unverified LLM wrappers) | **Native MCP (38+4 tools)**; JSON-RPC sub-50ms latency | **SUPERGHIDRA WINS** *(Latency benchmarked; autonomous task benchmark unmeasured)* |
+| **AI Agent Autonomy & Tooling** | Clunky headless Python; IDA MCP (unverified LLM wrappers) | **Native MCP (42 tools)**; JSON-RPC sub-50ms latency | **SUPERGHIDRA WINS** *(Latency benchmarked; autonomous task benchmark unmeasured)* |
 | **Multi-Agent Collaboration** | Project lock conflicts; single-seat | **Private Session Forks (`merge_fork`)**; zero-lock agent branch/merge | **SUPERGHIDRA WINS** *(Architectural win; large-scale swarm benchmark unmeasured)* |
 | **Hardware Scanning Acceleration** | Multi-threaded CPU only (minutes on 60MB+) | **WebGPU / CUDA Compute Shaders** (<1.2s per 60MB sweep) | **SUPERGHIDRA WINS** *(Measured: <1.2s vs CPU minutes)* |
 | **Formal Logic Equivalence** | Manual code review | **Z3 SMT Solver Proving Engine** (`verify_smt_equivalence`) | **SUPERGHIDRA WINS** *(Measured: mathematical proof on SMT subsets)* |

@@ -46,7 +46,7 @@ Benchmark note: The 22.62% HumanEval-Decompile pass rate (25.26% on held-out tes
 Everything is open source under AGPL-3.0 with dual-OS CI (747 tests on Linux & Windows):
 
 - Core repo: https://github.com/yuatemycat/SuperGhidra
-- MCP Server (38 tools for Claude Desktop, Cursor, Antigravity): https://github.com/yuatemycat/SuperGhidraMCP
+- MCP Server (42 tools for Claude Desktop, Cursor, Antigravity): https://github.com/yuatemycat/SuperGhidraMCP
 - v0.3.1 Release: https://github.com/yuatemycat/SuperGhidra/releases/tag/v0.3.1
 
 Feedback welcome on the overlay conflict model and P-code lifter coverage!
@@ -100,9 +100,9 @@ If you've tried using AI coding agents (Claude Desktop, Cursor, Antigravity, Cla
 1. Connecting multiple agents to Ghidra's headless API or Python bridge either causes `.rep` lock collisions or corrupts the project database.
 2. Unchecked LLMs hallucinate structure definitions, rename incorrect functions, and invent nonexistent struct fields.
 
-We built **SuperGhidra** and its companion MCP server **SuperGhidraMCP** (38 tools) to provide safe, concurrent multi-agent reverse engineering:
+We built **SuperGhidra** and its companion MCP server **SuperGhidraMCP** (42 tools) to provide safe, concurrent multi-agent reverse engineering:
 
-- **Isolated Session Forks:** Agents operate on isolated forks against a warm, read-only Ghidra oracle daemon (`127.0.0.1:5073`). Reads hit a 5 µs shared-memory ring buffer or SQLite cache; writes go to a private delta journal.
+- **Isolated Session Forks:** Agents operate on isolated forks against a warm, read-only Ghidra oracle daemon (`127.0.0.1:5073`). Reads hit a shared-memory ring buffer (<50 µs) or SQLite cache; writes go to a private delta journal.
 - **Obligation Ledger Gate:** Candidate struct commits and symbol renames are gated through deterministic verification (`VTableSlotVerifier`, `FieldDisplacementVerifier`, `AllocationSizeVerifier`). If an agent hallucinates a 3-slot vtable when the binary shows 7 dereferences, the commit is rejected.
 - **Z3 P-Code Verification:** Basic block simplifications are checked for mathematical equivalence against pure-Python lifted P-code using Z3 SMT solving. If an instruction contains floats or unsupported behavior, the gate returns `UNKNOWN` and rejects the speculative rewrite.
 - **Live GUI Watcher:** All approved mutations can be watched and synced live into an open Ghidra CodeBrowser window (`superghidra overlay-sync --watch`) via atomic transactions.
@@ -139,7 +139,7 @@ Hey everyone! Just released **SuperGhidra 0.3.1** — high-performance Python to
 - 🚀 **Zero `.rep` Lock Contention:** Keeps a read-only Ghidra instance warm on `127.0.0.1:5073` (<50 µs IPC, SQLite L2 cache). Writes go to `ghidra_overlay.json` and sync live into an open Ghidra GUI window with `superghidra overlay-sync --watch`.
 - ⚡ **Pure-Python MSVC & MFC Recovery:** Recovers MSVC RTTI class trees, MFC `CRuntimeClass` descriptors, and `CArchive::Serialize()` field layouts directly from PE binaries without touching the JVM or launching Ghidra (~1s on 750+ classes).
 - 🛡️ **Formal Z3 Equivalence Gate:** Verifies rewritten C logic against lifted ARM64/x86 P-code via Z3, rejecting hallucinated agent mutations.
-- 🔌 **38-Tool MCP Server:** Built-in multi-agent session forks for Claude Desktop, Cursor, Antigravity, and Claude Code.
+- 🔌 **42-Tool MCP Server:** Built-in multi-agent session forks for Claude Desktop, Cursor, Antigravity, and Claude Code.
 
 GitHub: https://github.com/yuatemycat/SuperGhidra
 Release v0.3.1: https://github.com/yuatemycat/SuperGhidra/releases/tag/v0.3.1

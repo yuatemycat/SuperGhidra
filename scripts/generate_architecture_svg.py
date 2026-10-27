@@ -193,7 +193,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         <text x="738" y="101" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CACHE</text>
         <text x="924" y="142" fill="rgba(245,245,245,0.06)" font-size="28" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="end">03</text>
         <text x="824" y="118" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">L1 SHM &amp; L2 SQLite Cache</text>
-        <text x="824" y="134" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">64 KB SHM (5.12 µs) · &gt;100k req/s</text>
+        <text x="824" y="134" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">64 KB SHM (&lt;50 µs) · &gt;100k req/s</text>
       </g>
 
       <!-- Node 4: Agents & CLI -->
