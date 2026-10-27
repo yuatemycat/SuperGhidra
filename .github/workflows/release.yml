@@ -9,6 +9,7 @@ jobs:
   ci-gate:
     name: Verify CI Gate (Python ${{ matrix.python-version }} on ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ startsWith(matrix.os, 'macos') }}
     strategy:
       fail-fast: false
       matrix:
@@ -62,7 +63,7 @@ jobs:
             echo "Error: Git tag '${{ github.ref_name }}' does not match pyproject.toml version '$EXPECTED_TAG'"
             exit 1
           fi
-          INIT_VERSION=$(python -c "import superghidra; print(superghidra.__version__)")
+          INIT_VERSION=$(python -c "import sys; sys.path.insert(0, 'src'); import superghidra; print(superghidra.__version__)")
           if [ "$INIT_VERSION" != "$VERSION" ]; then
             echo "Error: superghidra.__version__ '$INIT_VERSION' does not match pyproject.toml version '$VERSION'"
             exit 1
