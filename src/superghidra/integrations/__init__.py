@@ -58,6 +58,9 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "generate_ghidra_python_script": ("superghidra.integrations.ghidra_gui_overlay_sync", "generate_ghidra_python_script"),
     "generate_diff_report": ("superghidra.integrations.ghidra_gui_overlay_sync", "generate_diff_report"),
     "sync_to_script": ("superghidra.integrations.ghidra_gui_overlay_sync", "sync_to_script"),
+    # REA Ecosystem Bridge (1.0.0 Milestone 6)
+    "ReaAsyncRouter": ("superghidra.integrations.rea_bridge", "ReaAsyncRouter"),
+    "ReaBridgeError": ("superghidra.integrations.rea_bridge", "ReaBridgeError"),
 }
 
 __all__ = list(_EXPORTS.keys()) + ["build_synthetic_dex_bytes", "build_synthetic_jni_elf_bytes"]

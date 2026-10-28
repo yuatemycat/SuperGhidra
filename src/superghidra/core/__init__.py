@@ -108,6 +108,11 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "TaskEnvelope": ("superghidra.core.cluster_daemon", "TaskEnvelope"),
     "ClusterTaskType": ("superghidra.core.cluster_daemon", "ClusterTaskType"),
     "WorkerStatus": ("superghidra.core.cluster_daemon", "WorkerStatus"),
+    # Crash-Resumable Bulk Decompilation (1.0.0 Milestone 4)
+    "decompile_all": ("superghidra.core.bulk_decompile", "decompile_all"),
+    "BulkDecompileRunner": ("superghidra.core.bulk_decompile", "BulkDecompileRunner"),
+    "BulkDecompileManifest": ("superghidra.core.bulk_decompile", "BulkDecompileManifest"),
+    "DirectoryLock": ("superghidra.core.bulk_decompile", "DirectoryLock"),
 }
 
 __all__ = list(_EXPORTS.keys())

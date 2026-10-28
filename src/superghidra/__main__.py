@@ -128,6 +128,25 @@ def create_parser() -> argparse.ArgumentParser:
     crate_parser.add_argument("--max-input-bytes", type=int, default=67108864, help="Admission byte budget (default: 64 MiB)")
     crate_parser.add_argument("-o", "--output", type=Path, help="Output JSON report file")
 
+    # Subcommand: trace-values
+    trace_parser = subparsers.add_parser("trace-values", help="Construct cross-call high-P-code def-use value graph")
+    trace_parser.add_argument("binary", type=Path, help="Path to target binary file")
+    trace_parser.add_argument("--procedure", required=True, help="Canonical address or symbol name to begin tracing")
+    trace_parser.add_argument("--max-depth", type=int, default=3, help="Maximum call depth (default: 3)")
+    trace_parser.add_argument("--max-nodes", type=int, default=2500, help="Maximum def-use nodes (default: 2500)")
+    trace_parser.add_argument("-o", "--output", type=Path, help="Output JSON graph file")
+
+    # Subcommand: decompile-all
+    decompile_all_parser = subparsers.add_parser("decompile-all", help="Crash-resumable batch compilable decompilation export")
+    decompile_all_parser.add_argument("binary", type=Path, help="Path to binary to decompile")
+    decompile_all_parser.add_argument("--output", "-o", type=Path, required=True, help="Destination directory for exported C files")
+    decompile_all_parser.add_argument("--filter-compilable", action="store_true", default=True, help="Apply compilable C syntax filter (default: True)")
+    decompile_all_parser.add_argument("--no-filter-compilable", dest="filter_compilable", action="store_false", help="Disable compilable C filter")
+    decompile_all_parser.add_argument("--verify-z3", action="store_true", default=False, help="Verify basic blocks with Z3 SMT solver")
+    decompile_all_parser.add_argument("--arch", choices=["x86_64", "arm64", "arm", "x86"], default=None, help="Target architecture")
+    decompile_all_parser.add_argument("--resume", action="store_true", default=True, help="Resume previous run from journal (default: True)")
+    decompile_all_parser.add_argument("--no-resume", dest="resume", action="store_false", help="Start fresh without resuming")
+
     return parser
 
 
@@ -641,6 +660,65 @@ def cmd_crate_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_trace_values(args: argparse.Namespace) -> int:
+    from superghidra.lifters.trace_values import trace_native_values
+
+    if not args.binary.is_file():
+        print(f"Error: binary file not found: {args.binary}", file=sys.stderr)
+        return 1
+
+    try:
+        report = trace_native_values(
+            binary_path_or_image=str(args.binary),
+            procedure=args.procedure,
+            max_depth=args.max_depth,
+            max_nodes=args.max_nodes,
+            output=str(args.output) if args.output else None,
+        )
+    except Exception as exc:
+        print(f"Error tracing values: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"Trace complete for {args.procedure}: "
+        f"{len(report.nodes)} nodes, {len(report.edges)} edges across {len(report.procedures_visited)} procedure(s)."
+    )
+    if args.output:
+        print(f"Saved value graph to {args.output}")
+    return 0
+
+
+def cmd_decompile_all(args: argparse.Namespace) -> int:
+    from superghidra.core.bulk_decompile import decompile_all
+
+    if not args.binary.is_file():
+        print(f"Error: binary file not found: {args.binary}", file=sys.stderr)
+        return 1
+
+    try:
+        manifest = decompile_all(
+            binary_path=args.binary,
+            output_directory=args.output,
+            filter_compilable=args.filter_compilable,
+            verify_z3=args.verify_z3,
+            arch=args.arch,
+            resume=args.resume,
+        )
+    except Exception as exc:
+        print(f"Error executing decompile-all: {exc}", file=sys.stderr)
+        return 1
+
+    counts = manifest.to_dict()["counts"]
+    print(
+        f"Decompilation export finished: "
+        f"{counts['decompiled']} decompiled, {counts['external']} external, "
+        f"{counts['skipped']} skipped, {counts['failed']} failed."
+    )
+    if manifest.circuit_breaker_tripped:
+        print("Warning: Circuit breaker tripped during run.", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
@@ -676,6 +754,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_il2cpp_recover(args)
     elif args.command == "crate-audit":
         return cmd_crate_audit(args)
+    elif args.command == "trace-values":
+        return cmd_trace_values(args)
+    elif args.command == "decompile-all":
+        return cmd_decompile_all(args)
     else:
         parser.print_help()
         return 0

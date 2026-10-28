@@ -14,6 +14,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "benchmark_scanner": ("superghidra.acceleration.gpu_adrp_scanner", "benchmark_scanner"),
     "GPUFunctionSeeder": ("superghidra.acceleration.gpu_function_seeder", "GPUFunctionSeeder"),
     "FunctionSeed": ("superghidra.acceleration.gpu_function_seeder", "FunctionSeed"),
+    # ARM64 Bounds-Proven Jump Table Recovery (1.0.0 Milestone 3)
+    "ARM64JumpTableProver": ("superghidra.acceleration.jump_table_prover", "ARM64JumpTableProver"),
+    "JumpTableCandidate": ("superghidra.acceleration.jump_table_prover", "JumpTableCandidate"),
+    "RecoveredJumpTable": ("superghidra.acceleration.jump_table_prover", "RecoveredJumpTable"),
 }
 
 __all__ = list(_EXPORTS.keys())

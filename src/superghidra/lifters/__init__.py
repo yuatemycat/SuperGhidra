@@ -63,6 +63,12 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "BlockRegion": ("superghidra.lifters.egraph_mlir_pipeline", "BlockRegion"),
     "SeqRegion": ("superghidra.lifters.egraph_mlir_pipeline", "SeqRegion"),
     "IfElseRegion": ("superghidra.lifters.egraph_mlir_pipeline", "IfElseRegion"),
+    # Inter-Procedural High-P-Code Tracing (1.0.0 Milestone 3)
+    "HighPCodeValueTracer": ("superghidra.lifters.trace_values", "HighPCodeValueTracer"),
+    "trace_native_values": ("superghidra.lifters.trace_values", "trace_native_values"),
+    "DefUseNode": ("superghidra.lifters.trace_values", "DefUseNode"),
+    "DefUseEdge": ("superghidra.lifters.trace_values", "DefUseEdge"),
+    "ValueTraceReport": ("superghidra.lifters.trace_values", "ValueTraceReport"),
 }
 
 __all__ = list(_EXPORTS.keys())
