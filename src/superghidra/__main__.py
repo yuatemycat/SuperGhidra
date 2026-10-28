@@ -108,6 +108,26 @@ def create_parser() -> argparse.ArgumentParser:
     apk_parser.add_argument("-o", "--output", type=Path, help="Output JSON report path")
     apk_parser.add_argument("--export-script", type=Path, help="Generate Ghidra Python postScript to label endpoints")
 
+    # Subcommand: apple-dispatch
+    apple_parser = subparsers.add_parser("apple-dispatch", help="Extract dyld chained fixups, Swift 5 metadata, and ObjC runtime from Mach-O")
+    apple_parser.add_argument("binary", type=Path, help="Path to Mach-O binary or FAT archive")
+    apple_parser.add_argument("--arch", choices=["x86_64", "arm64", "arm64e"], default="arm64", help="Architecture slice to select (default: arm64)")
+    apple_parser.add_argument("--max-input-bytes", type=int, default=67108864, help="Admission byte budget (default: 64 MiB)")
+    apple_parser.add_argument("-o", "--output", type=Path, help="Output JSON report file")
+
+    # Subcommand: il2cpp-recover
+    il2cpp_parser = subparsers.add_parser("il2cpp-recover", help="Extract types, methods, fields, and strings from Unity global-metadata.dat")
+    il2cpp_parser.add_argument("metadata", type=Path, help="Path to global-metadata.dat file")
+    il2cpp_parser.add_argument("--binary", type=Path, help="Optional path to native binary (libil2cpp.so, GameAssembly.dll) for RVA correlation")
+    il2cpp_parser.add_argument("--max-input-bytes", type=int, default=67108864, help="Admission byte budget (default: 64 MiB)")
+    il2cpp_parser.add_argument("-o", "--output", type=Path, help="Output JSON report file")
+
+    # Subcommand: crate-audit
+    crate_parser = subparsers.add_parser("crate-audit", help="Audit compiled Rust (.dep-v0) and Go (.go.buildinfo/pclntab) binaries")
+    crate_parser.add_argument("binary", type=Path, help="Path to compiled Rust or Go ELF/PE/Mach-O binary")
+    crate_parser.add_argument("--max-input-bytes", type=int, default=67108864, help="Admission byte budget (default: 64 MiB)")
+    crate_parser.add_argument("-o", "--output", type=Path, help="Output JSON report file")
+
     return parser
 
 
@@ -526,6 +546,101 @@ def cmd_apk_xref(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_apple_dispatch(args: argparse.Namespace) -> int:
+    from superghidra.formats.apple_dispatch import dispatch_apple_binary
+
+    if not args.binary.is_file():
+        print(f"Error: binary file not found: {args.binary}", file=sys.stderr)
+        return 1
+
+    try:
+        report = dispatch_apple_binary(
+            str(args.binary),
+            arch=args.arch,
+            max_input_bytes=args.max_input_bytes,
+        )
+    except Exception as exc:
+        print(f"Error parsing Mach-O: {exc}", file=sys.stderr)
+        return 1
+
+    counts = report.counts
+    print(
+        f"Mach-O [{report.arch} {report.bits}-bit]: "
+        f"{counts.get('chained_fixups', 0)} fixups, "
+        f"{counts.get('swift5_types', 0)} Swift types, "
+        f"{counts.get('objc_classes', 0)} ObjC classes."
+    )
+
+    if args.output:
+        args.output.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+        print(f"Saved Apple dispatch report to {args.output}")
+    return 0
+
+
+def cmd_il2cpp_recover(args: argparse.Namespace) -> int:
+    from superghidra.formats.il2cpp_metadata import recover_il2cpp_metadata
+
+    if not args.metadata.is_file():
+        print(f"Error: metadata file not found: {args.metadata}", file=sys.stderr)
+        return 1
+
+    bin_path = str(args.binary) if args.binary and args.binary.is_file() else None
+    try:
+        report = recover_il2cpp_metadata(
+            str(args.metadata),
+            binary_path_or_bytes=bin_path,
+            max_input_bytes=args.max_input_bytes,
+        )
+    except Exception as exc:
+        print(f"Error recovering IL2CPP metadata: {exc}", file=sys.stderr)
+        return 1
+
+    counts = report.counts
+    print(
+        f"Unity global-metadata.dat [v{report.version}]: "
+        f"{counts.get('assemblies', 0)} assemblies, "
+        f"{counts.get('types', 0)} types, "
+        f"{counts.get('methods', 0)} methods, "
+        f"{counts.get('string_literals', 0)} literals."
+    )
+
+    if args.output:
+        args.output.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+        print(f"Saved IL2CPP metadata report to {args.output}")
+    return 0
+
+
+def cmd_crate_audit(args: argparse.Namespace) -> int:
+    from superghidra.formats.rust_go_metadata import audit_rust_go_binary
+
+    if not args.binary.is_file():
+        print(f"Error: binary file not found: {args.binary}", file=sys.stderr)
+        return 1
+
+    try:
+        report = audit_rust_go_binary(
+            str(args.binary),
+            max_input_bytes=args.max_input_bytes,
+        )
+    except Exception as exc:
+        print(f"Error auditing binary: {exc}", file=sys.stderr)
+        return 1
+
+    rust_crates = report.rust.counts.get("crates_count", 0)
+    go_deps = report.go.counts.get("dependencies", 0)
+    print(
+        f"Binary [{report.binary_format}]: "
+        f"Rust: {rust_crates} crate(s) (commit: {report.rust.rustc_commit or 'none'}), "
+        f"Go: {report.go.go_version or 'none'} ({go_deps} deps, pclntab: {report.go.pclntab_version or 'none'})."
+    )
+
+    if args.output:
+        args.output.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+        print(f"Saved crate audit report to {args.output}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
@@ -555,6 +670,12 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_diff(args)
     elif args.command == "apk-xref":
         return cmd_apk_xref(args)
+    elif args.command == "apple-dispatch":
+        return cmd_apple_dispatch(args)
+    elif args.command == "il2cpp-recover":
+        return cmd_il2cpp_recover(args)
+    elif args.command == "crate-audit":
+        return cmd_crate_audit(args)
     else:
         parser.print_help()
         return 0
