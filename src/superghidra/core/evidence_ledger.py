@@ -22,7 +22,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-# Re-export legacy/underlying verifiers from superghidra.diff.evidence_ledger for seamless compatibility
+# Re-export legacy/underlying verifiers from superghidra.diff.evidence_ledger for backward compatibility
 from superghidra.diff.evidence_ledger import (
     AllocationSizeVerifier,
     CheckResult,

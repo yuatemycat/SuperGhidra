@@ -13,7 +13,7 @@ Implements Section 8 of GHIDRA_REFORMATION_ARCHITECTURAL_SPEC.md:
     * `turbo`: Maximum throughput. All logical CPU cores, 0ms duty cycle, locked pre-touched
       heap (4-8GB), continuous warm decompiler processes, full "decompile" action pipeline.
     * `auto`: Telemetry-driven closed-loop controller polling CPU load and free memory every 3s
-      via OperatingSystemMXBean / psutil, seamlessly scaling concurrency and downshifting
+      via OperatingSystemMXBean / psutil, dynamically scaling concurrency and downshifting
       simplification style when host CPU exceeds 70% or free RAM drops below 25%.
 - JVM & Launcher Configuration Generator (launch.properties & AppCDS):
     * Generates OpenJDK 21 Generational ZGC elastic uncommit flags (-XX:+UseZGC -XX:+ZGenerational
