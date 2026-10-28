@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "server": {
+    "name": "superghidra",
+    "version": "1.0.0",
+    "vendor": "SuperGhidra Authors",
+    "default_input_profile": "compact",
+    "default_output_profile": "compact"
+  },
+  "capabilities": {
+    "tools": true,
+    "resources": true,
+    "prompts": false,
+    "logging": true
+  },
+  "security_boundaries": {
+    "read_surface": [
+      "open_binary",
+      "analyze_function",
+      "inspect_analysis_view",
+      "trace_native_values",
+      "decompile_all",
+      "prove_equivalence",
+      "apple_dispatch",
+      "il2cpp_recover",
+      "crate_audit",
+      "inspect_binary",
+      "list_exports",
+      "list_imports",
+      "list_xrefs",
+      "search_strings",
+      "disassemble",
+      "read_bytes"
+    ],
+    "mutate_surface": [
+      "set_address_name",
+      "annotate_native_function",
+      "commit_overlay_rename",
+      "commit_struct_layout",
+      "merge_fork",
+      "discard_fork",
+      "save"
+    ],
+    "invariants": {
+      "read_only_project_db": true,
+      "isolated_fork_journals": true,
+      "gatekeeper_verification_required_on_merge": true
+    }
+  }
+}

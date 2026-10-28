@@ -46,7 +46,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Dict, Iterable, List, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 # Import DependencyCacheDAG and SemanticDeltaLog
 try:
@@ -456,6 +456,10 @@ class L2SQLiteCache:
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:
+        if self.db_path == ":memory:":
+            if not hasattr(self, "_mem_conn") or self._mem_conn is None:
+                self._mem_conn = sqlite3.connect(":memory:", check_same_thread=False)
+            return self._mem_conn
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
@@ -467,10 +471,11 @@ class L2SQLiteCache:
         try:
             yield conn
         finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+            if self.db_path != ":memory:":
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def _init_db(self) -> None:
         with self._lock:
@@ -491,6 +496,24 @@ class L2SQLiteCache:
                         conn.execute("ALTER TABLE oracle_cache ADD COLUMN program_id TEXT NOT NULL DEFAULT ''")
                     # Purge any un-scoped legacy rows written before program scoping
                     conn.execute("DELETE FROM oracle_cache WHERE program_id = ''")
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS retained_evidence (
+                            evidence_id TEXT PRIMARY KEY,
+                            target_sha256 TEXT NOT NULL,
+                            overlay_revision INTEGER NOT NULL DEFAULT 0,
+                            analysis_profile_digest TEXT NOT NULL,
+                            operation TEXT NOT NULL,
+                            canonical_address TEXT,
+                            retention_mode TEXT NOT NULL DEFAULT 'complete-record',
+                            summary_json BLOB NOT NULL,
+                            facets_json BLOB NOT NULL,
+                            created_at_ms INTEGER NOT NULL
+                        )
+                    """)
+                    conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_evidence_lookup
+                        ON retained_evidence(target_sha256, overlay_revision, operation, canonical_address)
+                    """)
                     conn.commit()
             except Exception as e:
                 logger.warning(f"Failed to initialize L2 SQLite cache at {self.db_path}: {e}")
@@ -699,6 +722,130 @@ class L2SQLiteCache:
                 logger.warning(f"L2 cache invalidate_program error for {program_id}: {e}")
                 return 0
 
+    @staticmethod
+    def _compress_payload(data_dict: Dict[str, Any]) -> bytes:
+        raw = json.dumps(data_dict).encode("utf-8")
+        try:
+            import lz4.frame
+            return b"LZ4:" + lz4.frame.compress(raw)
+        except ImportError:
+            try:
+                import zstandard as zstd
+                return b"ZSTD:" + zstd.ZstdCompressor().compress(raw)
+            except ImportError:
+                import zlib
+                return b"ZLIB:" + zlib.compress(raw)
+
+    @staticmethod
+    def _decompress_payload(blob: bytes) -> Dict[str, Any]:
+        if blob.startswith(b"LZ4:"):
+            import lz4.frame
+            raw = lz4.frame.decompress(blob[4:])
+        elif blob.startswith(b"ZSTD:"):
+            import zstandard as zstd
+            raw = zstd.ZstdDecompressor().decompress(blob[5:])
+        elif blob.startswith(b"ZLIB:"):
+            import zlib
+            raw = zlib.decompress(blob[5:])
+        else:
+            raw = blob
+        return json.loads(raw.decode("utf-8"))
+
+    @staticmethod
+    def make_evidence_id(
+        target_sha256: str,
+        overlay_revision: int,
+        analysis_profile_digest: str,
+        operation: str,
+        canonical_address: str | None = None,
+    ) -> str:
+        key = f"{target_sha256}:{overlay_revision}:{analysis_profile_digest}:{operation}:{canonical_address}"
+        return f"ev_{hashlib.sha256(key.encode('utf-8')).hexdigest()[:12]}"
+
+    def store_retained_evidence(
+        self,
+        evidence_id: str,
+        target_sha256: str,
+        overlay_revision: int,
+        analysis_profile_digest: str,
+        operation: str,
+        canonical_address: str | None,
+        summary_dict: Dict[str, Any],
+        facets_dict: Dict[str, Any],
+        retention_mode: str = "complete-record",
+    ) -> None:
+        summary_blob = self._compress_payload(summary_dict)
+        facets_blob = self._compress_payload(facets_dict)
+        now_ms = int(time.time() * 1000)
+
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO retained_evidence (
+                            evidence_id, target_sha256, overlay_revision,
+                            analysis_profile_digest, operation, canonical_address,
+                            retention_mode, summary_json, facets_json, created_at_ms
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            evidence_id,
+                            target_sha256,
+                            overlay_revision,
+                            analysis_profile_digest,
+                            operation,
+                            canonical_address,
+                            retention_mode,
+                            summary_blob,
+                            facets_blob,
+                            now_ms,
+                        ),
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to store retained evidence {evidence_id}: {e}")
+
+    def get_retained_evidence(
+        self, evidence_id: str
+    ) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    cur = conn.execute(
+                        """
+                        SELECT summary_json, facets_json FROM retained_evidence
+                        WHERE evidence_id = ? LIMIT 1
+                        """,
+                        (evidence_id,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        summary = self._decompress_payload(row[0])
+                        facets = self._decompress_payload(row[1])
+                        return summary, facets
+            except Exception as e:
+                logger.warning(f"Failed to read retained evidence {evidence_id}: {e}")
+        return None
+
+    def enforce_cache_quota(
+        self, max_bytes: int = 2 * 1024 * 1024 * 1024, max_age_days: int = 30
+    ) -> int:
+        """Enforces 30-day LRU eviction and cache quota limits."""
+        cutoff_ms = int((time.time() - max_age_days * 86400) * 1000)
+        evicted = 0
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    cur = conn.execute(
+                        "DELETE FROM retained_evidence WHERE created_at_ms < ?", (cutoff_ms,)
+                    )
+                    evicted += cur.rowcount
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Cache quota enforcement error: {e}")
+        return evicted
+
     def close(self) -> None:
         """Closes any persistent resources."""
         pass
@@ -708,6 +855,17 @@ class L2SQLiteCache:
 # ==============================================================================
 # In-Memory + JSON Write-Overlay Table
 # ==============================================================================
+
+
+_GLOBAL_L2_CACHE: Optional[L2SQLiteCache] = None
+
+
+def get_oracle_cache(db_path: str | None = None) -> L2SQLiteCache:
+    global _GLOBAL_L2_CACHE
+    if _GLOBAL_L2_CACHE is None or db_path is not None:
+        _GLOBAL_L2_CACHE = L2SQLiteCache(db_path)
+    return _GLOBAL_L2_CACHE
+
 
 class WriteOverlay:
     """
@@ -1271,6 +1429,130 @@ class GhidraOracleSession:
             "cache_capacity": self.decompile_cache.capacity,
             "message": f"Daemon resource mode updated to '{self.resource_mode}'",
         }
+
+    @staticmethod
+    def _compress_payload(data_dict: Dict[str, Any]) -> bytes:
+        raw = json.dumps(data_dict).encode("utf-8")
+        try:
+            import lz4.frame
+            return b"LZ4:" + lz4.frame.compress(raw)
+        except ImportError:
+            try:
+                import zstandard as zstd
+                return b"ZSTD:" + zstd.ZstdCompressor().compress(raw)
+            except ImportError:
+                import zlib
+                return b"ZLIB:" + zlib.compress(raw)
+
+    @staticmethod
+    def _decompress_payload(blob: bytes) -> Dict[str, Any]:
+        if blob.startswith(b"LZ4:"):
+            import lz4.frame
+            raw = lz4.frame.decompress(blob[4:])
+        elif blob.startswith(b"ZSTD:"):
+            import zstandard as zstd
+            raw = zstd.ZstdDecompressor().decompress(blob[5:])
+        elif blob.startswith(b"ZLIB:"):
+            import zlib
+            raw = zlib.decompress(blob[5:])
+        else:
+            raw = blob
+        return json.loads(raw.decode("utf-8"))
+
+    @staticmethod
+    def make_evidence_id(
+        target_sha256: str,
+        overlay_revision: int,
+        analysis_profile_digest: str,
+        operation: str,
+        canonical_address: str | None = None,
+    ) -> str:
+        key = f"{target_sha256}:{overlay_revision}:{analysis_profile_digest}:{operation}:{canonical_address}"
+        return f"ev_{hashlib.sha256(key.encode('utf-8')).hexdigest()[:12]}"
+
+    def store_retained_evidence(
+        self,
+        evidence_id: str,
+        target_sha256: str,
+        overlay_revision: int,
+        analysis_profile_digest: str,
+        operation: str,
+        canonical_address: str | None,
+        summary_dict: Dict[str, Any],
+        facets_dict: Dict[str, Any],
+        retention_mode: str = "complete-record",
+    ) -> None:
+        summary_blob = self._compress_payload(summary_dict)
+        facets_blob = self._compress_payload(facets_dict)
+        now_ms = int(time.time() * 1000)
+
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO retained_evidence (
+                            evidence_id, target_sha256, overlay_revision,
+                            analysis_profile_digest, operation, canonical_address,
+                            retention_mode, summary_json, facets_json, created_at_ms
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            evidence_id,
+                            target_sha256,
+                            overlay_revision,
+                            analysis_profile_digest,
+                            operation,
+                            canonical_address,
+                            retention_mode,
+                            summary_blob,
+                            facets_blob,
+                            now_ms,
+                        ),
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to store retained evidence {evidence_id}: {e}")
+
+    def get_retained_evidence(
+        self, evidence_id: str
+    ) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    cur = conn.execute(
+                        """
+                        SELECT summary_json, facets_json FROM retained_evidence
+                        WHERE evidence_id = ? LIMIT 1
+                        """,
+                        (evidence_id,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        summary = self._decompress_payload(row[0])
+                        facets = self._decompress_payload(row[1])
+                        return summary, facets
+            except Exception as e:
+                logger.warning(f"Failed to read retained evidence {evidence_id}: {e}")
+        return None
+
+    def enforce_cache_quota(
+        self, max_bytes: int = 2 * 1024 * 1024 * 1024, max_age_days: int = 30
+    ) -> int:
+        """Enforces 30-day LRU eviction and cache quota limits."""
+        cutoff_ms = int((time.time() - max_age_days * 86400) * 1000)
+        evicted = 0
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    cur = conn.execute(
+                        "DELETE FROM retained_evidence WHERE created_at_ms < ?", (cutoff_ms,)
+                    )
+                    evicted += cur.rowcount
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Cache quota enforcement error: {e}")
+        return evicted
 
     def close(self) -> None:
         """Cleanly releases program and closes the project."""
@@ -2162,6 +2444,130 @@ class MockGhidraOracleSession:
 
     def initialize(self) -> None:
         pass
+
+    @staticmethod
+    def _compress_payload(data_dict: Dict[str, Any]) -> bytes:
+        raw = json.dumps(data_dict).encode("utf-8")
+        try:
+            import lz4.frame
+            return b"LZ4:" + lz4.frame.compress(raw)
+        except ImportError:
+            try:
+                import zstandard as zstd
+                return b"ZSTD:" + zstd.ZstdCompressor().compress(raw)
+            except ImportError:
+                import zlib
+                return b"ZLIB:" + zlib.compress(raw)
+
+    @staticmethod
+    def _decompress_payload(blob: bytes) -> Dict[str, Any]:
+        if blob.startswith(b"LZ4:"):
+            import lz4.frame
+            raw = lz4.frame.decompress(blob[4:])
+        elif blob.startswith(b"ZSTD:"):
+            import zstandard as zstd
+            raw = zstd.ZstdDecompressor().decompress(blob[5:])
+        elif blob.startswith(b"ZLIB:"):
+            import zlib
+            raw = zlib.decompress(blob[5:])
+        else:
+            raw = blob
+        return json.loads(raw.decode("utf-8"))
+
+    @staticmethod
+    def make_evidence_id(
+        target_sha256: str,
+        overlay_revision: int,
+        analysis_profile_digest: str,
+        operation: str,
+        canonical_address: str | None = None,
+    ) -> str:
+        key = f"{target_sha256}:{overlay_revision}:{analysis_profile_digest}:{operation}:{canonical_address}"
+        return f"ev_{hashlib.sha256(key.encode('utf-8')).hexdigest()[:12]}"
+
+    def store_retained_evidence(
+        self,
+        evidence_id: str,
+        target_sha256: str,
+        overlay_revision: int,
+        analysis_profile_digest: str,
+        operation: str,
+        canonical_address: str | None,
+        summary_dict: Dict[str, Any],
+        facets_dict: Dict[str, Any],
+        retention_mode: str = "complete-record",
+    ) -> None:
+        summary_blob = self._compress_payload(summary_dict)
+        facets_blob = self._compress_payload(facets_dict)
+        now_ms = int(time.time() * 1000)
+
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO retained_evidence (
+                            evidence_id, target_sha256, overlay_revision,
+                            analysis_profile_digest, operation, canonical_address,
+                            retention_mode, summary_json, facets_json, created_at_ms
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            evidence_id,
+                            target_sha256,
+                            overlay_revision,
+                            analysis_profile_digest,
+                            operation,
+                            canonical_address,
+                            retention_mode,
+                            summary_blob,
+                            facets_blob,
+                            now_ms,
+                        ),
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Failed to store retained evidence {evidence_id}: {e}")
+
+    def get_retained_evidence(
+        self, evidence_id: str
+    ) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    cur = conn.execute(
+                        """
+                        SELECT summary_json, facets_json FROM retained_evidence
+                        WHERE evidence_id = ? LIMIT 1
+                        """,
+                        (evidence_id,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        summary = self._decompress_payload(row[0])
+                        facets = self._decompress_payload(row[1])
+                        return summary, facets
+            except Exception as e:
+                logger.warning(f"Failed to read retained evidence {evidence_id}: {e}")
+        return None
+
+    def enforce_cache_quota(
+        self, max_bytes: int = 2 * 1024 * 1024 * 1024, max_age_days: int = 30
+    ) -> int:
+        """Enforces 30-day LRU eviction and cache quota limits."""
+        cutoff_ms = int((time.time() - max_age_days * 86400) * 1000)
+        evicted = 0
+        with self._lock:
+            try:
+                with self._conn_ctx() as conn:
+                    cur = conn.execute(
+                        "DELETE FROM retained_evidence WHERE created_at_ms < ?", (cutoff_ms,)
+                    )
+                    evicted += cur.rowcount
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Cache quota enforcement error: {e}")
+        return evicted
 
     def close(self) -> None:
         pass
