@@ -61,6 +61,7 @@ gpu = ["wgpu"]
 storage = ["lz4", "zstandard"]
 frida = ["frida"]
 ghidra = ["pyghidra"]
+rea = ["mcp>=1.2.0", "pydantic>=2.7.0"]
 dev = [
     "pytest>=8.0",
     "mypy>=1.10",
@@ -73,6 +74,8 @@ all = [
     "zstandard",
     "frida",
     "pyghidra",
+    "mcp>=1.2.0",
+    "pydantic>=2.7.0",
 ]
 
 [tool.setuptools.packages.find]

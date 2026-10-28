@@ -53,6 +53,32 @@ _SUPPORTED_CORE: dict[str, tuple[str, str]] = {
     # 5. Compilable C Filter
     "CompilableDecompilerFilter": ("superghidra.core.compilable_filter", "CompilableDecompilerFilter"),
     "filter_c_code": ("superghidra.core.compilable_filter", "filter_c_code"),
+    # 7. Formats & Dispatch (1.0.0)
+    "dispatch_apple_binary": ("superghidra.formats.apple_dispatch", "dispatch_apple_binary"),
+    "AppleDispatchReport": ("superghidra.formats.apple_dispatch", "AppleDispatchReport"),
+    "recover_il2cpp_metadata": ("superghidra.formats.il2cpp_metadata", "recover_il2cpp_metadata"),
+    "IL2CPPMetadataReport": ("superghidra.formats.il2cpp_metadata", "IL2CPPMetadataReport"),
+    "audit_rust_go_binary": ("superghidra.formats.rust_go_metadata", "audit_rust_go_binary"),
+    "RustGoAuditReport": ("superghidra.formats.rust_go_metadata", "RustGoAuditReport"),
+    # 8. Evidence Ledger & Paging (1.0.0)
+    "EvidenceEnvelope": ("superghidra.core.evidence_ledger", "EvidenceEnvelope"),
+    "EpistemicStatus": ("superghidra.core.evidence_ledger", "EpistemicStatus"),
+    "ReferenceProvenance": ("superghidra.core.evidence_ledger", "ReferenceProvenance"),
+    "CoverageBoundary": ("superghidra.core.evidence_ledger", "CoverageBoundary"),
+    "inspect_analysis_view": ("superghidra.core.views", "inspect_analysis_view"),
+    # 9. Value Tracing & Jump Table Recovery (1.0.0)
+    "trace_native_values": ("superghidra.lifters.trace_values", "trace_native_values"),
+    "HighPCodeValueTracer": ("superghidra.lifters.trace_values", "HighPCodeValueTracer"),
+    "ValueTraceReport": ("superghidra.lifters.trace_values", "ValueTraceReport"),
+    "ARM64JumpTableProver": ("superghidra.acceleration.jump_table_prover", "ARM64JumpTableProver"),
+    "RecoveredJumpTable": ("superghidra.acceleration.jump_table_prover", "RecoveredJumpTable"),
+    # 10. Resumable Bulk Decompilation (1.0.0)
+    "decompile_all": ("superghidra.core.bulk_decompile", "decompile_all"),
+    "BulkDecompileRunner": ("superghidra.core.bulk_decompile", "BulkDecompileRunner"),
+    "BulkDecompileManifest": ("superghidra.core.bulk_decompile", "BulkDecompileManifest"),
+    # 11. REA Ecosystem Bridge (1.0.0)
+    "ReaAsyncRouter": ("superghidra.integrations.rea_bridge", "ReaAsyncRouter"),
+    "ReaBridgeError": ("superghidra.integrations.rea_bridge", "ReaBridgeError"),
     # 6. Exporters
     "DWARF5Exporter": ("superghidra.formats.synthetic_symbol_exporter", "DWARF5Exporter"),
     "PDBExporter": ("superghidra.formats.synthetic_symbol_exporter", "PDBExporter"),
@@ -135,6 +161,7 @@ _LEGACY_EXPORTS: dict[str, tuple[str, str]] = {
     "Varnode": ("superghidra.lifters.pcode_lifter_bridge", "Varnode"),
     "AddressSpace": ("superghidra.lifters.pcode_lifter_bridge", "AddressSpace"),
     "SMTPcodeVerifier": ("superghidra.lifters.smt_pcode_verifier", "SMTPcodeVerifier"),
+    "CIntrinsic": ("superghidra.lifters.smt_pcode_verifier", "CIntrinsic"),
     "VerificationResult": ("superghidra.lifters.smt_pcode_verifier", "VerificationResult"),
     "VerificationStatus": ("superghidra.lifters.smt_pcode_verifier", "VerificationStatus"),
     "EGraphPipeline": ("superghidra.lifters.egraph_mlir_pipeline", "EGraphPipeline"),

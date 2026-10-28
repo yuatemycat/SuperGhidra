@@ -26,7 +26,9 @@ SUPERGHIDRA_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspat
 # pyghidra-mcp source tree: SUPERGHIDRA_PYGHIDRA_MCP_SRC, else a sibling checkout.
 PYGHIDRA_MCP_SRC = os.environ.get(
     "SUPERGHIDRA_PYGHIDRA_MCP_SRC",
-    os.path.join(os.path.dirname(SUPERGHIDRA_DIR), "pyghidra-mcp", "src"),
+    os.path.join(os.path.dirname(SUPERGHIDRA_DIR), "SuperghidraMCP", "src")
+    if os.path.isdir(os.path.join(os.path.dirname(SUPERGHIDRA_DIR), "SuperghidraMCP", "src"))
+    else os.path.join(os.path.dirname(SUPERGHIDRA_DIR), "pyghidra-mcp", "src"),
 )
 
 if SUPERGHIDRA_DIR not in sys.path:
@@ -208,7 +210,9 @@ class TestMCP38ToolsAndSMTBridge(unittest.TestCase):
 
     def test_superghidra_init_exports_cintrinsic(self):
         """Verify CIntrinsic is exported from SuperGhidra.__init__."""
-        init_path = os.path.join(SUPERGHIDRA_DIR, "__init__.py")
+        init_path = os.path.join(SUPERGHIDRA_DIR, "src", "superghidra", "__init__.py")
+        if not os.path.exists(init_path):
+            init_path = os.path.join(SUPERGHIDRA_DIR, "__init__.py")
         spec = importlib.util.spec_from_file_location(
             "SuperGhidra",
             init_path,
