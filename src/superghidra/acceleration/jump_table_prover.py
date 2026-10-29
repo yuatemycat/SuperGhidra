@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 try:
     import z3
+
     HAS_Z3 = True
 except ImportError:
     HAS_Z3 = False
@@ -29,6 +30,7 @@ HAS_NUMPY = importlib.util.find_spec("numpy") is not None
 @dataclasses.dataclass
 class JumpTableCandidate:
     """Discovered candidate switch dispatch pattern in ARM64 machine code."""
+
     pc: int
     cmp_pc: int
     cmp_reg: int
@@ -48,6 +50,7 @@ class JumpTableCandidate:
 @dataclasses.dataclass
 class RecoveredJumpTable:
     """Formally bounds-proven switch jump table."""
+
     base_pc: int
     bounds_n: int
     default_target: int
@@ -160,7 +163,7 @@ class ARM64JumpTableProver:
         if num_insns < 4:
             return candidates
 
-        insns = struct.unpack(f"<{num_insns}I", code_bytes[:num_insns * 4])
+        insns = struct.unpack(f"<{num_insns}I", code_bytes[: num_insns * 4])
 
         for i in range(num_insns - 3):
             insn0 = insns[i]
@@ -175,17 +178,17 @@ class ARM64JumpTableProver:
             bound_imm = 0
 
             # 32-bit CMP imm: [31]=0, [30]=1, [29]=1, [28:24]=10001, [4:0]=11111 (WZR)
-            if (insn0 & 0xff80001f) == 0x7100001f:
+            if (insn0 & 0xFF80001F) == 0x7100001F:
                 is_cmp = True
-                cmp_reg = (insn0 >> 5) & 0x1f
-                imm12 = (insn0 >> 10) & 0xfff
+                cmp_reg = (insn0 >> 5) & 0x1F
+                imm12 = (insn0 >> 10) & 0xFFF
                 sh = (insn0 >> 22) & 1
                 bound_imm = (imm12 << 12) if sh else imm12
             # 64-bit CMP imm: [31]=1, [30]=1, [29]=1, [28:24]=10001, [4:0]=11111 (XZR)
-            elif (insn0 & 0xff80001f) == 0xf100001f:
+            elif (insn0 & 0xFF80001F) == 0xF100001F:
                 is_cmp = True
-                cmp_reg = (insn0 >> 5) & 0x1f
-                imm12 = (insn0 >> 10) & 0xfff
+                cmp_reg = (insn0 >> 5) & 0x1F
+                imm12 = (insn0 >> 10) & 0xFFF
                 sh = (insn0 >> 22) & 1
                 bound_imm = (imm12 << 12) if sh else imm12
 
@@ -195,10 +198,10 @@ class ARM64JumpTableProver:
             # insn1 should be B.cond (B.HI: cond=8 (0x8), B.HS/B.CS: cond=2 (0x2))
             insn1 = insns[i + 1]
             pc1 = pc0 + 4
-            if (insn1 & 0xff000010) != 0x54000000:
+            if (insn1 & 0xFF000010) != 0x54000000:
                 continue
 
-            cond_code = insn1 & 0x0f
+            cond_code = insn1 & 0x0F
             if cond_code == 0x8:
                 branch_cond = "HI"
             elif cond_code == 0x2:
@@ -207,7 +210,7 @@ class ARM64JumpTableProver:
                 continue
 
             # Calculate default target from B.cond imm19
-            imm19 = (insn1 >> 5) & 0x7ffff
+            imm19 = (insn1 >> 5) & 0x7FFFF
             if imm19 & 0x40000:
                 imm19 -= 0x80000
             default_target = pc1 + (imm19 << 2)
@@ -216,7 +219,7 @@ class ARM64JumpTableProver:
             base_va_found: int | None = None
             base_calc: str = "ADR"
             entry_sz: int = 4
-            load_type: str = "LDRSW"
+            load_type: str | None = None
             dispatch_pc: int = 0
             dispatch_reg: int = 0
             table_idx_reg: int | None = None
@@ -231,53 +234,53 @@ class ARM64JumpTableProver:
                 # Check for table loads first: if this instruction is the table load using cmp_reg,
                 # loading the table entry into Rt (even if Rt == cmp_reg) is the valid lookup, not a clobber.
                 is_table_load = False
-                if (cur_insn & 0xffe00c00) == 0x38600800 or (cur_insn & 0xffc00000) == 0x38400000:
-                    rn = (cur_insn >> 5) & 0x1f
-                    rm = (cur_insn >> 16) & 0x1f
+                if (cur_insn & 0xFFE00C00) == 0x38600800 or (cur_insn & 0xFFC00000) == 0x38400000:
+                    rn = (cur_insn >> 5) & 0x1F
+                    rm = (cur_insn >> 16) & 0x1F
                     if cmp_reg in (rn, rm):
                         load_type = "LDRB"
                         entry_sz = 1
                         table_idx_reg = cmp_reg
-                        table_tgt_reg = cur_insn & 0x1f
+                        table_tgt_reg = cur_insn & 0x1F
                         is_table_load = True
-                elif (cur_insn & 0xffe00c00) == 0x78600800 or (cur_insn & 0xffc00000) == 0x78400000:
-                    rn = (cur_insn >> 5) & 0x1f
-                    rm = (cur_insn >> 16) & 0x1f
+                elif (cur_insn & 0xFFE00C00) == 0x78600800 or (cur_insn & 0xFFC00000) == 0x78400000:
+                    rn = (cur_insn >> 5) & 0x1F
+                    rm = (cur_insn >> 16) & 0x1F
                     if cmp_reg in (rn, rm):
                         load_type = "LDRH"
                         entry_sz = 2
                         table_idx_reg = cmp_reg
-                        table_tgt_reg = cur_insn & 0x1f
+                        table_tgt_reg = cur_insn & 0x1F
                         is_table_load = True
-                elif (cur_insn & 0xffe00c00) == 0xb8a00800 or (cur_insn & 0xffc00000) == 0xb8800000:
-                    rn = (cur_insn >> 5) & 0x1f
-                    rm = (cur_insn >> 16) & 0x1f
+                elif (cur_insn & 0xFFE00C00) == 0xB8A00800 or (cur_insn & 0xFFC00000) == 0xB8800000:
+                    rn = (cur_insn >> 5) & 0x1F
+                    rm = (cur_insn >> 16) & 0x1F
                     if cmp_reg in (rn, rm):
                         load_type = "LDRSW"
                         entry_sz = 4
                         table_idx_reg = cmp_reg
-                        table_tgt_reg = cur_insn & 0x1f
+                        table_tgt_reg = cur_insn & 0x1F
                         is_table_load = True
-                elif (cur_insn & 0xffe00c00) == 0xf8600800 or (cur_insn & 0xffc00000) == 0xf8400000:
-                    rn = (cur_insn >> 5) & 0x1f
-                    rm = (cur_insn >> 16) & 0x1f
+                elif (cur_insn & 0xFFE00C00) == 0xF8600800 or (cur_insn & 0xFFC00000) == 0xF8400000:
+                    rn = (cur_insn >> 5) & 0x1F
+                    rm = (cur_insn >> 16) & 0x1F
                     if cmp_reg in (rn, rm):
                         load_type = "LDR"
                         entry_sz = 8
                         table_idx_reg = cmp_reg
-                        table_tgt_reg = cur_insn & 0x1f
+                        table_tgt_reg = cur_insn & 0x1F
                         is_table_load = True
 
                 # Check if cmp_reg is overwritten before table load
                 if not is_table_load and table_idx_reg is None:
-                    rd = cur_insn & 0x1f
+                    rd = cur_insn & 0x1F
                     if rd == cmp_reg and rd != 31:
                         # 1. Data-processing (immediate): [28:26] == 100 (includes ADD imm, MOVZ, MOVN, bitfield, ADR/ADRP)
                         # 2. Data-processing (register): [27:24] in (1010, 1011, 1100, 1101) -> (insn & 0x0e000000) == 0x0a000000 (includes MOV reg, ADD reg, etc.)
                         # 3. Loads writing Rt: [27:25] == 100 with bit 22 set or load opcode (LDR, LDRB, LDRH, LDRSW)
-                        is_dp_imm = (cur_insn & 0x1c000000) == 0x10000000
-                        is_dp_reg = (cur_insn & 0x0e000000) == 0x0a000000
-                        is_load = (cur_insn & 0x0a000000) == 0x08000000 and (
+                        is_dp_imm = (cur_insn & 0x1C000000) == 0x10000000
+                        is_dp_reg = (cur_insn & 0x0E000000) == 0x0A000000
+                        is_load = (cur_insn & 0x0A000000) == 0x08000000 and (
                             (cur_insn & 0x00400000) != 0 or (cur_insn & 0x38000000) in (0x18000000, 0x38000000)
                         )
                         if is_dp_imm or is_dp_reg or is_load:
@@ -285,9 +288,9 @@ class ARM64JumpTableProver:
                             break
 
                 # ADR: [31]=0, [28:24]=10000
-                if (cur_insn & 0x9f000000) == 0x10000000:
+                if (cur_insn & 0x9F000000) == 0x10000000:
                     immlo = (cur_insn >> 29) & 0x3
-                    immhi = (cur_insn >> 5) & 0x7ffff
+                    immhi = (cur_insn >> 5) & 0x7FFFF
                     imm21 = (immhi << 2) | immlo
                     if imm21 & 0x100000:
                         imm21 -= 0x200000
@@ -295,39 +298,49 @@ class ARM64JumpTableProver:
                     base_calc = "ADR"
 
                 # ADRP: [31]=1, [28:24]=10000
-                elif (cur_insn & 0x9f000000) == 0x90000000:
+                elif (cur_insn & 0x9F000000) == 0x90000000:
                     immlo = (cur_insn >> 29) & 0x3
-                    immhi = (cur_insn >> 5) & 0x7ffff
+                    immhi = (cur_insn >> 5) & 0x7FFFF
                     imm21 = (immhi << 2) | immlo
                     if imm21 & 0x100000:
                         imm21 -= 0x200000
-                    base_va_found = (cur_pc & ~0xfff) + (imm21 << 12)
+                    base_va_found = (cur_pc & ~0xFFF) + (imm21 << 12)
                     base_calc = "ADRP_ADD"
 
                 # BR (Branch to register): [31:10] = 1101011000011111000000
-                if (cur_insn & 0xfffffc1f) == 0xd61f0000:
+                if (cur_insn & 0xFFFFFC1F) == 0xD61F0000:
                     dispatch_pc = cur_pc
-                    dispatch_reg = (cur_insn >> 5) & 0x1f
+                    dispatch_reg = (cur_insn >> 5) & 0x1F
                     break
 
-            # Candidate requires both table base computation, non-clobbered cmp_reg, and explicit indirect branch (BR Xn)
-            if not cmp_reg_clobbered and base_va_found is not None and dispatch_pc != 0:
-                candidates.append(JumpTableCandidate(
-                    pc=pc0,
-                    cmp_pc=pc0,
-                    cmp_reg=cmp_reg,
-                    bound_imm=bound_imm,
-                    branch_cond=branch_cond,
-                    default_target=default_target,
-                    base_calc_type=base_calc,
-                    table_base_va=base_va_found,
-                    load_insn_type=load_type,
-                    entry_size=entry_sz,
-                    dispatch_pc=dispatch_pc,
-                    dispatch_reg=dispatch_reg,
-                    index_reg=table_idx_reg if table_idx_reg is not None else cmp_reg,
-                    table_target_reg=table_tgt_reg if table_tgt_reg is not None else dispatch_reg,
-                ))
+            # Candidate requires table base computation, verified table load indexed by cmp_reg,
+            # non-clobbered cmp_reg, and explicit indirect branch (BR Xn)
+            if (
+                not cmp_reg_clobbered
+                and base_va_found is not None
+                and dispatch_pc != 0
+                and table_idx_reg is not None
+                and table_tgt_reg is not None
+                and load_type is not None
+            ):
+                candidates.append(
+                    JumpTableCandidate(
+                        pc=pc0,
+                        cmp_pc=pc0,
+                        cmp_reg=cmp_reg,
+                        bound_imm=bound_imm,
+                        branch_cond=branch_cond,
+                        default_target=default_target,
+                        base_calc_type=base_calc,
+                        table_base_va=base_va_found,
+                        load_insn_type=load_type,
+                        entry_size=entry_sz,
+                        dispatch_pc=dispatch_pc,
+                        dispatch_reg=dispatch_reg,
+                        index_reg=table_idx_reg,
+                        table_target_reg=table_tgt_reg,
+                    )
+                )
 
         return candidates
 
@@ -374,7 +387,7 @@ class ARM64JumpTableProver:
                 if abs(val) < 0x40000000:
                     target_addr = candidate.table_base_va + (val << 2)
                 else:
-                    target_addr = val & 0xffffffff
+                    target_addr = val & 0xFFFFFFFF
             elif entry_sz == 8:
                 (val,) = struct.unpack_from("<Q", memory_data, curr_offset)
                 target_addr = val
@@ -382,7 +395,7 @@ class ARM64JumpTableProver:
                 target_addr = 0
 
             # Validate range and non-literal bounds
-            if val in (0xff, 0xffff, 0xffffffff, 0xffffffffffffffff, 0):
+            if val in (0xFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0):
                 targets.append(None)
                 unresolved += 1
             elif valid_range and not (valid_range[0] <= target_addr <= valid_range[1]):

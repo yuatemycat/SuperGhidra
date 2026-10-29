@@ -44,6 +44,7 @@ def test_directory_lock_stale_recovery(tmp_path: Path):
 
     # Fabricate a stale lock from a dead PID
     import json
+
     stale_payload = {
         "st_dev": 0,
         "st_ino": 0,
@@ -94,10 +95,7 @@ def test_directory_lock_concurrent_barrier_stress(tmp_path: Path):
     for _ in range(5):
         barrier = mp.Barrier(6)
         queue = mp.Queue()
-        procs = [
-            mp.Process(target=_concurrent_lock_worker, args=(lock_dir, barrier, queue))
-            for _ in range(6)
-        ]
+        procs = [mp.Process(target=_concurrent_lock_worker, args=(lock_dir, barrier, queue)) for _ in range(6)]
         for p in procs:
             p.start()
         for p in procs:
@@ -124,8 +122,8 @@ def test_public_api_star_import():
 def test_apple_dispatch_chained_fixup_import_bound(tmp_path: Path):
     """Verify chained fixup parser handles malformed unbounded imports count without DoS."""
     header = bytearray(b"\x00" * 256)
-    struct.pack_into("<I", header, 0, 0xfeedfacf)
-    struct.pack_into("<II", header, 4, 0x0100000c, 0)
+    struct.pack_into("<I", header, 0, 0xFEEDFACF)
+    struct.pack_into("<II", header, 4, 0x0100000C, 0)
     struct.pack_into("<II", header, 12, 2, 1)
     struct.pack_into("<I", header, 20, 16)
 
@@ -134,7 +132,13 @@ def test_apple_dispatch_chained_fixup_import_bound(tmp_path: Path):
 
     fixups_hdr = struct.pack(
         "<7I",
-        0, 0, 28, 28, 10000000, 1, 0,
+        0,
+        0,
+        28,
+        28,
+        10000000,
+        1,
+        0,
     )
     header[64 : 64 + 28] = fixups_hdr
 
@@ -149,8 +153,8 @@ def test_apple_dispatch_chained_fixup_import_bound(tmp_path: Path):
 def test_apple_dispatch_addend64_high32_offset(tmp_path: Path):
     """Verify DYLD_CHAINED_IMPORT_ADDEND64 unpacks name_offset from bits 32..63."""
     header = bytearray(b"\x00" * 256)
-    struct.pack_into("<I", header, 0, 0xfeedfacf)
-    struct.pack_into("<II", header, 4, 0x0100000c, 0)
+    struct.pack_into("<I", header, 0, 0xFEEDFACF)
+    struct.pack_into("<II", header, 4, 0x0100000C, 0)
     struct.pack_into("<II", header, 12, 2, 1)
     struct.pack_into("<I", header, 20, 16)
 
@@ -306,19 +310,19 @@ def test_arm64_jump_table_prover_clobber_detection():
     # 20: default target
 
     # 1. Clobbered by MOV x1, x2 (0xaa0203e1)
-    insns_mov = [0x71001c3f, 0x540000a8, 0xaa0203e1, 0x10000102, 0xb8a17843, 0xd61f0060]
+    insns_mov = [0x71001C3F, 0x540000A8, 0xAA0203E1, 0x10000102, 0xB8A17843, 0xD61F0060]
     code_mov = struct.pack(f"<{len(insns_mov)}I", *insns_mov)
     cands_mov = prover.scan_candidates(code_mov, base_va=0x1000)
     assert len(cands_mov) == 0, "MOV into cmp_reg must clobber candidate"
 
     # 2. Clobbered by ADD x1, x1, x2 (0x8b020021)
-    insns_add = [0x71001c3f, 0x540000a8, 0x8b020021, 0x10000102, 0xb8a17843, 0xd61f0060]
+    insns_add = [0x71001C3F, 0x540000A8, 0x8B020021, 0x10000102, 0xB8A17843, 0xD61F0060]
     code_add = struct.pack(f"<{len(insns_add)}I", *insns_add)
     cands_add = prover.scan_candidates(code_add, base_va=0x1000)
     assert len(cands_add) == 0, "ADD reg into cmp_reg must clobber candidate"
 
     # 3. Clobbered by MOVZ x1, #7 (0xd28000e1)
-    insns_movz = [0x71001c3f, 0x540000a8, 0xd28000e1, 0x10000102, 0xb8a17843, 0xd61f0060]
+    insns_movz = [0x71001C3F, 0x540000A8, 0xD28000E1, 0x10000102, 0xB8A17843, 0xD61F0060]
     code_movz = struct.pack(f"<{len(insns_movz)}I", *insns_movz)
     cands_movz = prover.scan_candidates(code_movz, base_va=0x1000)
     assert len(cands_movz) == 0, "MOVZ into cmp_reg must clobber candidate"
@@ -329,7 +333,7 @@ def test_arm64_jump_table_prover_clobber_detection():
     # 8: ADR X9, #32 (0x10000109)
     # 12: LDRSW X8, [X9, X8, LSL #2] (0xb8a87928)
     # 16: BR X8 (0xd61f0100)
-    insns_rt_eq_cmp = [0x71001d1f, 0x540000a8, 0x10000109, 0xb8a87928, 0xd61f0100]
+    insns_rt_eq_cmp = [0x71001D1F, 0x540000A8, 0x10000109, 0xB8A87928, 0xD61F0100]
     code_rt_eq_cmp = struct.pack(f"<{len(insns_rt_eq_cmp)}I", *insns_rt_eq_cmp)
     cands_rt_eq_cmp = prover.scan_candidates(code_rt_eq_cmp, base_va=0x1000)
     assert len(cands_rt_eq_cmp) == 1, "Table load into Rt == cmp_reg must be recognized as valid candidate"
@@ -338,7 +342,13 @@ def test_arm64_jump_table_prover_clobber_detection():
     assert cands_rt_eq_cmp[0].table_target_reg == 8
 
     # 5. Clobbered by unrelated load into cmp_reg before table load (LDR X8, [SP, #16])
-    insns_ldr_clobber = [0x71001d1f, 0x540000a8, 0xf9400be8, 0x10000109, 0xb8a87928, 0xd61f0100]
+    insns_ldr_clobber = [0x71001D1F, 0x540000A8, 0xF9400BE8, 0x10000109, 0xB8A87928, 0xD61F0100]
     code_ldr_clobber = struct.pack(f"<{len(insns_ldr_clobber)}I", *insns_ldr_clobber)
     cands_ldr_clobber = prover.scan_candidates(code_ldr_clobber, base_va=0x1000)
     assert len(cands_ldr_clobber) == 0, "Unrelated LDR into cmp_reg before table load must clobber"
+
+    # 6. Absence of table load instruction (e.g. branch directly without indexed table load) must return 0 candidates
+    insns_no_table_load = [0x71001D1F, 0x540000A8, 0x10000109, 0xD61F0120]
+    code_no_table_load = struct.pack(f"<{len(insns_no_table_load)}I", *insns_no_table_load)
+    cands_no_table_load = prover.scan_candidates(code_no_table_load, base_va=0x1000)
+    assert len(cands_no_table_load) == 0, "Absence of table load instruction must not produce a candidate"
