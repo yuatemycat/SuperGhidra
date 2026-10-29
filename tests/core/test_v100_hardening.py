@@ -287,3 +287,38 @@ def test_evidence_ledger_infinity_and_width_preservation():
     )
     assert res_misaligned_old.passed is False
     assert "misaligned" in res_misaligned_old.message.lower()
+
+
+def test_arm64_jump_table_prover_clobber_detection():
+    """Verify candidate scanner rejects cmp_reg overwritten by MOV, ADD reg, or MOVZ before table load."""
+    import struct
+
+    from superghidra.acceleration.jump_table_prover import ARM64JumpTableProver
+
+    prover = ARM64JumpTableProver()
+
+    # Base valid sequence:
+    # 0: CMP W1, #7 (0x71001c3f)
+    # 4: B.HI default (0x540000a8 -> +20 bytes)
+    # 8: ADR X2, #32 (0x10000102)
+    # 12: LDRSW X3, [X2, X1, LSL #2] (0xb8a17843)
+    # 16: BR X3 (0xd61f0060)
+    # 20: default target
+
+    # 1. Clobbered by MOV x1, x2 (0xaa0203e1)
+    insns_mov = [0x71001c3f, 0x540000a8, 0xaa0203e1, 0x10000102, 0xb8a17843, 0xd61f0060]
+    code_mov = struct.pack(f"<{len(insns_mov)}I", *insns_mov)
+    cands_mov = prover.scan_candidates(code_mov, base_va=0x1000)
+    assert len(cands_mov) == 0, "MOV into cmp_reg must clobber candidate"
+
+    # 2. Clobbered by ADD x1, x1, x2 (0x8b020021)
+    insns_add = [0x71001c3f, 0x540000a8, 0x8b020021, 0x10000102, 0xb8a17843, 0xd61f0060]
+    code_add = struct.pack(f"<{len(insns_add)}I", *insns_add)
+    cands_add = prover.scan_candidates(code_add, base_va=0x1000)
+    assert len(cands_add) == 0, "ADD reg into cmp_reg must clobber candidate"
+
+    # 3. Clobbered by MOVZ x1, #7 (0xd28000e1)
+    insns_movz = [0x71001c3f, 0x540000a8, 0xd28000e1, 0x10000102, 0xb8a17843, 0xd61f0060]
+    code_movz = struct.pack(f"<{len(insns_movz)}I", *insns_movz)
+    cands_movz = prover.scan_candidates(code_movz, base_va=0x1000)
+    assert len(cands_movz) == 0, "MOVZ into cmp_reg must clobber candidate"

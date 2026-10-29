@@ -230,14 +230,19 @@ class ARM64JumpTableProver:
 
                 # Check if cmp_reg is overwritten before table load
                 if table_idx_reg is None:
-                    # ADR / ADRP into cmp_reg
-                    if (cur_insn & 0x1f000000) in (0x10000000, 0x90000000) and (cur_insn & 0x1f) == cmp_reg:
-                        cmp_reg_clobbered = True
-                        break
-                    # ALU or MOV into cmp_reg (Rd in [4:0], excluding ZR=31)
-                    if (cur_insn & 0x11000000) in (0x11000000, 0x0b000000) and (cur_insn & 0x1f) == cmp_reg and (cur_insn & 0x1f) != 31:
-                        cmp_reg_clobbered = True
-                        break
+                    rd = cur_insn & 0x1f
+                    if rd == cmp_reg and rd != 31:
+                        # 1. Data-processing (immediate): [28:26] == 100 (includes ADD imm, MOVZ, MOVN, bitfield, ADR/ADRP)
+                        # 2. Data-processing (register): [27:24] in (1010, 1011, 1100, 1101) -> (insn & 0x0e000000) == 0x0a000000 (includes MOV reg, ADD reg, etc.)
+                        # 3. Loads writing Rt: [27:25] == 100 with bit 22 set or load opcode (LDR, LDRB, LDRH, LDRSW)
+                        is_dp_imm = (cur_insn & 0x1c000000) == 0x10000000
+                        is_dp_reg = (cur_insn & 0x0e000000) == 0x0a000000
+                        is_load = (cur_insn & 0x0a000000) == 0x08000000 and (
+                            (cur_insn & 0x00400000) != 0 or (cur_insn & 0x38000000) in (0x18000000, 0x38000000)
+                        )
+                        if is_dp_imm or is_dp_reg or is_load:
+                            cmp_reg_clobbered = True
+                            break
 
                 # ADR: [31]=0, [28:24]=10000
                 if (cur_insn & 0x9f000000) == 0x10000000:
