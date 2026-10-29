@@ -350,3 +350,118 @@ def test_compiler_pattern_clobbered_add_fails_safe():
         memory_base_va=cand.table_base_va,
     )
     assert recovered.proven is False
+
+
+def test_add_unrelated_base_register_fails_safe():
+    """15. ADD where other operand is not table base fails provenance proof."""
+    prover = ARM64JumpTableProver()
+    # ADD X1, X5, X2 (0x8B0200A1: adds unrelated X5 instead of table base X1)
+    add_x1_x5_x2 = 0x8B0200A1
+    ldrsw_x2_insn = 0xB8A0D822
+    insns = [
+        _encode_cmp_imm_32(0, 4),
+        _encode_b_cond(8, 20),
+        _encode_adr(1, 0x20),
+        ldrsw_x2_insn,
+        add_x1_x5_x2,
+        _encode_br(1),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.target_flows_to_dispatch is False
+
+    table_data = struct.pack("<5i", 10, 20, 30, 40, 50)
+    recovered = prover.recover_jump_table(
+        candidate=cand,
+        memory_data=table_data,
+        memory_base_va=cand.table_base_va,
+    )
+    assert recovered.proven is False
+
+
+def test_table_base_overwritten_before_add_fails_safe():
+    """16. Table base clobbered before relative ADD fails provenance proof."""
+    prover = ARM64JumpTableProver()
+    ldrsw_x2_insn = 0xB8A0D822
+    # MOVZ X1, #0 (0xD2800001: overwrites X1 table base with 0)
+    movz_x1_0 = 0xD2800001
+    add_x1_x1_x2 = 0x8B020021
+    insns = [
+        _encode_cmp_imm_32(0, 4),
+        _encode_b_cond(8, 20),
+        _encode_adr(1, 0x20),
+        ldrsw_x2_insn,
+        movz_x1_0,
+        add_x1_x1_x2,
+        _encode_br(1),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.target_flows_to_dispatch is False
+
+    table_data = struct.pack("<5i", 10, 20, 30, 40, 50)
+    recovered = prover.recover_jump_table(
+        candidate=cand,
+        memory_data=table_data,
+        memory_base_va=cand.table_base_va,
+    )
+    assert recovered.proven is False
+
+
+def test_table_load_base_is_index_register_fails_safe():
+    """17. Table load using index register as base register is rejected."""
+    prover = ARM64JumpTableProver()
+    # LDRSW X2, [X0, X1, SXTW #2] (0xB8A1D802: Rn=0 (cmp_reg), Rm=1)
+    ldrsw_base_is_index = 0xB8A1D802
+    add_x1_x1_x2 = 0x8B020021
+    insns = [
+        _encode_cmp_imm_32(0, 4),
+        _encode_b_cond(8, 20),
+        _encode_adr(1, 0x20),
+        ldrsw_base_is_index,
+        add_x1_x1_x2,
+        _encode_br(1),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+    # Load's base register is cmp_reg and does not match table base, candidate rejected
+    assert len(candidates) == 0
+
+
+def test_table_base_clobbered_before_load_fails_safe():
+    """18. Table base overwritten before table load is rejected."""
+    prover = ARM64JumpTableProver()
+    ldrsw_x2_insn = 0xB8A0D822
+    movz_x1_0 = 0xD2800001
+    add_x1_x1_x2 = 0x8B020021
+    insns = [
+        _encode_cmp_imm_32(0, 4),
+        _encode_b_cond(8, 20),
+        _encode_adr(1, 0x20),
+        movz_x1_0,
+        ldrsw_x2_insn,
+        add_x1_x1_x2,
+        _encode_br(1),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+    assert len(candidates) == 0
+
+
+def test_prove_bounds_base_matches_cmp_reg_fails_safe():
+    """19. prove_bounds explicitly fails if table_base_reg == cmp_reg."""
+    prover = ARM64JumpTableProver()
+    n, proven = prover.prove_bounds(
+        bound_imm=4,
+        cond="HI",
+        cmp_reg=0,
+        index_reg=0,
+        table_target_reg=1,
+        dispatch_reg=1,
+        table_base_reg=0,  # base matches cmp_reg!
+    )
+    assert proven is False

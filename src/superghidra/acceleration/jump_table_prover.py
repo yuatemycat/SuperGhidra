@@ -46,6 +46,7 @@ class JumpTableCandidate:
     index_reg: int = 0
     table_target_reg: int = 0
     target_flows_to_dispatch: bool = False
+    table_base_reg: int | None = None
 
 
 @dataclasses.dataclass
@@ -90,7 +91,8 @@ class ARM64JumpTableProver:
         index_reg: int | None = None,
         table_target_reg: int | None = None,
         dispatch_reg: int | None = None,
-        target_flows_to_dispatch: bool = False,
+        target_flows_to_dispatch: bool | None = None,
+        table_base_reg: int | None = None,
     ) -> Tuple[int, bool]:
         """Proves exact case count N and register dataflow using Z3 formal verification.
 
@@ -113,7 +115,13 @@ class ARM64JumpTableProver:
         if cmp_reg != index_reg:
             return expected_n, False
 
+        # Soundness Gate 1.5: Table base register cannot be the index/comparison register
+        if table_base_reg is not None and cmp_reg is not None and table_base_reg == cmp_reg:
+            return expected_n, False
+
         # Soundness Gate 2: Table target loaded must flow to dispatch register
+        if target_flows_to_dispatch is False:
+            return expected_n, False
         if table_target_reg != dispatch_reg and not target_flows_to_dispatch:
             return expected_n, False
 
@@ -220,6 +228,8 @@ class ARM64JumpTableProver:
             # Search forward up to 8 instructions for table base load and table lookup
             base_va_found: int | None = None
             base_calc: str = "ADR"
+            table_base_reg: int | None = None
+            base_regs: set[int] = set()
             entry_sz: int = 4
             load_type: str | None = None
             dispatch_pc: int = 0
@@ -235,95 +245,20 @@ class ARM64JumpTableProver:
                 cur_insn = insns[j]
                 cur_pc = base_va + j * 4
 
-                # Check for table loads first: if this instruction is the table load using cmp_reg,
-                # loading the table entry into Rt (even if Rt == cmp_reg) is the valid lookup, not a clobber.
-                is_table_load = False
-                if (cur_insn & 0xFFE00C00) == 0x38600800:
-                    rm = (cur_insn >> 16) & 0x1F
-                    if rm == cmp_reg:
-                        load_type = "LDRB"
-                        entry_sz = 1
-                        table_idx_reg = rm
-                        table_tgt_reg = cur_insn & 0x1F
-                        is_table_load = True
-                elif (cur_insn & 0xFFE00C00) == 0x78600800:
-                    rm = (cur_insn >> 16) & 0x1F
-                    if rm == cmp_reg:
-                        load_type = "LDRH"
-                        entry_sz = 2
-                        table_idx_reg = rm
-                        table_tgt_reg = cur_insn & 0x1F
-                        is_table_load = True
-                elif (cur_insn & 0xFFE00C00) == 0xB8A00800:
-                    rm = (cur_insn >> 16) & 0x1F
-                    if rm == cmp_reg:
-                        load_type = "LDRSW"
-                        entry_sz = 4
-                        table_idx_reg = rm
-                        table_tgt_reg = cur_insn & 0x1F
-                        is_table_load = True
-                elif (cur_insn & 0xFFE00C00) == 0xF8600800:
-                    rm = (cur_insn >> 16) & 0x1F
-                    if rm == cmp_reg:
-                        load_type = "LDR"
-                        entry_sz = 8
-                        table_idx_reg = rm
-                        table_tgt_reg = cur_insn & 0x1F
-                        is_table_load = True
-
-                if is_table_load and table_tgt_reg is not None:
-                    flow_regs = {table_tgt_reg}
-                    continue
-
-                # Once table load has occurred, track register dataflow to dispatch register
-                if table_tgt_reg is not None:
-                    rd = cur_insn & 0x1F
-                    rn = (cur_insn >> 5) & 0x1F
-                    rm = (cur_insn >> 16) & 0x1F
-
-                    is_add_shifted = (cur_insn & 0x7F200000) == 0x0B000000
-                    is_add_extended = (cur_insn & 0x7FE00000) == 0x0B200000
-                    is_add_imm = (cur_insn & 0x7F800000) == 0x11000000
-                    is_orr_shifted = (cur_insn & 0x7F200000) == 0x2A000000
-
-                    if is_add_shifted or is_add_extended or is_orr_shifted:
-                        if rn in flow_regs or rm in flow_regs:
-                            flow_regs.add(rd)
-                        elif rd in flow_regs:
-                            flow_regs.discard(rd)
-                    elif is_add_imm:
-                        if rn in flow_regs:
-                            flow_regs.add(rd)
-                        elif rd in flow_regs:
-                            flow_regs.discard(rd)
-                    else:
-                        if (cur_insn & 0xFFFFFC1F) != 0xD61F0000 and rd != 31:
-                            is_dp_imm = (cur_insn & 0x1C000000) == 0x10000000
-                            is_dp_reg = (cur_insn & 0x0E000000) == 0x0A000000
-                            is_load = (cur_insn & 0x0A000000) == 0x08000000 and (
-                                (cur_insn & 0x00400000) != 0 or (cur_insn & 0x38000000) in (0x18000000, 0x38000000)
-                            )
-                            if is_dp_imm or is_dp_reg or is_load:
-                                flow_regs.discard(rd)
-
-                # Check if cmp_reg is overwritten before table load
-                if not is_table_load and table_idx_reg is None:
-                    rd = cur_insn & 0x1F
-                    if rd == cmp_reg and rd != 31:
-                        # 1. Data-processing (immediate): [28:26] == 100 (includes ADD imm, MOVZ, MOVN, bitfield, ADR/ADRP)
-                        # 2. Data-processing (register): [27:24] in (1010, 1011, 1100, 1101) -> (insn & 0x0e000000) == 0x0a000000 (includes MOV reg, ADD reg, etc.)
-                        # 3. Loads writing Rt: [27:25] == 100 with bit 22 set or load opcode (LDR, LDRB, LDRH, LDRSW)
-                        is_dp_imm = (cur_insn & 0x1C000000) == 0x10000000
-                        is_dp_reg = (cur_insn & 0x0E000000) == 0x0A000000
-                        is_load = (cur_insn & 0x0A000000) == 0x08000000 and (
-                            (cur_insn & 0x00400000) != 0 or (cur_insn & 0x38000000) in (0x18000000, 0x38000000)
-                        )
-                        if is_dp_imm or is_dp_reg or is_load:
-                            cmp_reg_clobbered = True
-                            break
+                # BR (Branch to register): [31:10] = 1101011000011111000000
+                if (cur_insn & 0xFFFFFC1F) == 0xD61F0000:
+                    dispatch_pc = cur_pc
+                    dispatch_reg = (cur_insn >> 5) & 0x1F
+                    if dispatch_reg in flow_regs:
+                        target_flows_to_dispatch = True
+                    break
 
                 # ADR: [31]=0, [28:24]=10000
                 if (cur_insn & 0x9F000000) == 0x10000000:
+                    rd = cur_insn & 0x1F
+                    if rd == cmp_reg and table_idx_reg is None:
+                        cmp_reg_clobbered = True
+                        break
                     immlo = (cur_insn >> 29) & 0x3
                     immhi = (cur_insn >> 5) & 0x7FFFF
                     imm21 = (immhi << 2) | immlo
@@ -331,9 +266,16 @@ class ARM64JumpTableProver:
                         imm21 -= 0x200000
                     base_va_found = cur_pc + imm21
                     base_calc = "ADR"
+                    table_base_reg = rd
+                    base_regs = {rd}
+                    continue
 
                 # ADRP: [31]=1, [28:24]=10000
                 elif (cur_insn & 0x9F000000) == 0x90000000:
+                    rd = cur_insn & 0x1F
+                    if rd == cmp_reg and table_idx_reg is None:
+                        cmp_reg_clobbered = True
+                        break
                     immlo = (cur_insn >> 29) & 0x3
                     immhi = (cur_insn >> 5) & 0x7FFFF
                     imm21 = (immhi << 2) | immlo
@@ -341,14 +283,138 @@ class ARM64JumpTableProver:
                         imm21 -= 0x200000
                     base_va_found = (cur_pc & ~0xFFF) + (imm21 << 12)
                     base_calc = "ADRP_ADD"
+                    table_base_reg = rd
+                    base_regs = {rd}
+                    continue
 
-                # BR (Branch to register): [31:10] = 1101011000011111000000
-                if (cur_insn & 0xFFFFFC1F) == 0xD61F0000:
-                    dispatch_pc = cur_pc
-                    dispatch_reg = (cur_insn >> 5) & 0x1F
-                    if dispatch_reg in flow_regs or (table_tgt_reg is not None and dispatch_reg == table_tgt_reg):
-                        target_flows_to_dispatch = True
-                    break
+                # Table loads (LDRB, LDRH, LDRSW, LDR)
+                is_load_pattern = False
+                ld_type: str | None = None
+                ld_sz = 4
+                if (cur_insn & 0xFFE00C00) == 0x38600800:
+                    is_load_pattern = True
+                    ld_type = "LDRB"
+                    ld_sz = 1
+                elif (cur_insn & 0xFFE00C00) == 0x78600800:
+                    is_load_pattern = True
+                    ld_type = "LDRH"
+                    ld_sz = 2
+                elif (cur_insn & 0xFFE00C00) == 0xB8A00800:
+                    is_load_pattern = True
+                    ld_type = "LDRSW"
+                    ld_sz = 4
+                elif (cur_insn & 0xFFE00C00) == 0xF8600800:
+                    is_load_pattern = True
+                    ld_type = "LDR"
+                    ld_sz = 8
+
+                if is_load_pattern:
+                    rd = cur_insn & 0x1F
+                    rn = (cur_insn >> 5) & 0x1F
+                    rm = (cur_insn >> 16) & 0x1F
+
+                    # Soundness checks:
+                    # 1. Base register cannot be index register (rn != cmp_reg)
+                    # 2. Offset register must match compared index register (rm == cmp_reg)
+                    # 3. Base register must be table address from ADR/ADRP (rn in base_regs)
+                    if rn != cmp_reg and rm == cmp_reg and rn in base_regs and table_idx_reg is None:
+                        load_type = ld_type
+                        entry_sz = ld_sz
+                        table_idx_reg = rm
+                        table_tgt_reg = rd
+                        flow_regs = {rd}
+                        if rd in base_regs:
+                            base_regs.discard(rd)
+                    else:
+                        if rd == cmp_reg and table_idx_reg is None:
+                            cmp_reg_clobbered = True
+                            break
+                        flow_regs.discard(rd)
+                        base_regs.discard(rd)
+                    continue
+
+                # ADD (shifted register) or ADD (extended register)
+                is_add_shifted = (cur_insn & 0x7F200000) == 0x0B000000
+                is_add_extended = (cur_insn & 0x7FE00000) == 0x0B200000
+                if is_add_shifted or is_add_extended:
+                    rd = cur_insn & 0x1F
+                    rn = (cur_insn >> 5) & 0x1F
+                    rm = (cur_insn >> 16) & 0x1F
+                    if table_tgt_reg is not None and (
+                        (rn in flow_regs and rm in base_regs) or (rm in flow_regs and rn in base_regs)
+                    ):
+                        flow_regs.add(rd)
+                        if rd in base_regs:
+                            base_regs.discard(rd)
+                    else:
+                        flow_regs.discard(rd)
+                        base_regs.discard(rd)
+                    if rd == cmp_reg and table_idx_reg is None:
+                        cmp_reg_clobbered = True
+                        break
+                    continue
+
+                # ADD (immediate)
+                is_add_imm = (cur_insn & 0x7F800000) == 0x11000000
+                if is_add_imm:
+                    rd = cur_insn & 0x1F
+                    rn = (cur_insn >> 5) & 0x1F
+                    imm12 = (cur_insn >> 10) & 0xFFF
+                    sh = (cur_insn >> 22) & 1
+                    imm = (imm12 << 12) if sh else imm12
+                    if base_calc == "ADRP_ADD" and rn in base_regs and table_idx_reg is None:
+                        base_va_found = (base_va_found or 0) + imm
+                        base_regs.add(rd)
+                        table_base_reg = rd
+                    elif table_tgt_reg is not None and rn in flow_regs:
+                        flow_regs.add(rd)
+                        if rd in base_regs:
+                            base_regs.discard(rd)
+                    else:
+                        flow_regs.discard(rd)
+                        base_regs.discard(rd)
+                    if rd == cmp_reg and table_idx_reg is None:
+                        cmp_reg_clobbered = True
+                        break
+                    continue
+
+                # ORR (shifted register, MOV Xd, Xm)
+                is_orr_shifted = (cur_insn & 0x7F200000) == 0x2A000000
+                if is_orr_shifted:
+                    rd = cur_insn & 0x1F
+                    rn = (cur_insn >> 5) & 0x1F
+                    rm = (cur_insn >> 16) & 0x1F
+                    if rn == 31:  # MOV Xd, Xm
+                        if rm in flow_regs:
+                            flow_regs.add(rd)
+                        else:
+                            flow_regs.discard(rd)
+                        if rm in base_regs:
+                            base_regs.add(rd)
+                        else:
+                            base_regs.discard(rd)
+                    else:
+                        flow_regs.discard(rd)
+                        base_regs.discard(rd)
+                    if rd == cmp_reg and table_idx_reg is None:
+                        cmp_reg_clobbered = True
+                        break
+                    continue
+
+                # General clobber check for other instructions writing to registers
+                rd = cur_insn & 0x1F
+                if rd != 31:
+                    is_dp_imm = (cur_insn & 0x1C000000) == 0x10000000
+                    is_dp_reg = (cur_insn & 0x0E000000) == 0x0A000000
+                    is_load = (cur_insn & 0x0A000000) == 0x08000000 and (
+                        (cur_insn & 0x00400000) != 0 or (cur_insn & 0x38000000) in (0x18000000, 0x38000000)
+                    )
+                    if is_dp_imm or is_dp_reg or is_load:
+                        if rd == cmp_reg and table_idx_reg is None:
+                            cmp_reg_clobbered = True
+                            break
+                        flow_regs.discard(rd)
+                        base_regs.discard(rd)
 
             # Candidate requires table base computation, verified table load indexed by cmp_reg,
             # non-clobbered cmp_reg, and explicit indirect branch (BR Xn)
@@ -377,6 +443,7 @@ class ARM64JumpTableProver:
                         index_reg=table_idx_reg,
                         table_target_reg=table_tgt_reg,
                         target_flows_to_dispatch=target_flows_to_dispatch,
+                        table_base_reg=table_base_reg,
                     )
                 )
 
@@ -398,6 +465,7 @@ class ARM64JumpTableProver:
             table_target_reg=candidate.table_target_reg,
             dispatch_reg=candidate.dispatch_reg,
             target_flows_to_dispatch=candidate.target_flows_to_dispatch,
+            table_base_reg=candidate.table_base_reg,
         )
         targets: List[int | None] = []
         unresolved = 0
