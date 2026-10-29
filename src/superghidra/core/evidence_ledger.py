@@ -16,11 +16,8 @@ Implements:
 from __future__ import annotations
 
 import enum
-import hashlib
-import json
-import time
-from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Tuple
 
 # Re-export legacy/underlying verifiers from superghidra.diff.evidence_ledger for backward compatibility
 from superghidra.diff.evidence_ledger import (
@@ -31,8 +28,10 @@ from superghidra.diff.evidence_ledger import (
     ObligationStatus,
     ObligationType,
     ProofObligation,
-    ReconstructionObligationLedger as DiffObligationLedger,
     VTableSlotVerifier,
+)
+from superghidra.diff.evidence_ledger import (
+    ReconstructionObligationLedger as DiffObligationLedger,
 )
 
 if not hasattr(CheckResult, "reason"):
@@ -79,7 +78,7 @@ class CoverageBoundary:
     decoded_count: int
     omitted_count: int
     truncated: bool
-    reason: Optional[str] = None
+    reason: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -133,20 +132,31 @@ class ReconstructionObligationLedger:
     before staging edits to the main session overlay.
     """
 
-    def __init__(self, target_sha256: str = "", overlay_revision: int = 0):
+    def __init__(
+        self,
+        target_sha256: str = "",
+        overlay_revision: int = 0,
+        ledger_file: str | None = None,
+        **kwargs: Any,
+    ):
+        self.ledger_file = ledger_file
         self.target_sha256 = target_sha256
         self.overlay_revision = overlay_revision
         self.vtable_verifier = VTableSlotVerifier()
         self.alloc_verifier = AllocationSizeVerifier()
         self.field_verifier = FieldDisplacementVerifier()
         self.diff_ledger = DiffObligationLedger()
+        self._obligations: List[Any] = []
+
+    def list_obligations(self) -> List[Any]:
+        return self._obligations
 
     def verify_struct_layout(
         self,
         struct_name: str,
         struct_size: int,
         fields: List[Tuple[str, int, int]],  # (name, offset, size)
-        allocation_source: Optional[Tuple[str, int]] = None,  # (source, size)
+        allocation_source: Tuple[str, int] | None = None,  # (source, size)
     ) -> CheckResult:
         """Verifies struct field natural alignment, overlap collisions, and allocation bounds."""
         # 1. Allocation bounds
@@ -164,6 +174,18 @@ class ReconstructionObligationLedger:
         # 2. Field displacement and alignment
         field_objs = []
         for fname, foff, fsz in fields:
+            if foff < 0:
+                return CheckResult(
+                    check_name="negative_offset",
+                    passed=False,
+                    message=f"Field '{fname}' at offset 0x{foff:x} is negative",
+                )
+            if fsz <= 0:
+                return CheckResult(
+                    check_name="invalid_size",
+                    passed=False,
+                    message=f"Field '{fname}' has invalid non-positive size {fsz}",
+                )
             # check natural alignment
             if fsz in (2, 4, 8) and (foff % fsz != 0):
                 return CheckResult(
@@ -199,7 +221,7 @@ class ReconstructionObligationLedger:
         vtable_address: int,
         slot_index: int,
         pointer_size: int = 8,
-        expected_slots: Optional[int] = None,
+        expected_slots: int | None = None,
     ) -> CheckResult:
         """Verifies vtable slot alignment and bounds."""
         evidence: Dict[str, Any] = {
@@ -233,14 +255,34 @@ class ReconstructionObligationLedger:
         threshold: float = 0.80,
     ) -> CheckResult:
         """Verifies that cross-version struct rewrite preserves memory access width and CFG similarity."""
+        import math
+
+        if math.isnan(cosine_similarity):
+            return CheckResult(
+                check_name="similarity_gate",
+                passed=False,
+                message="CFG cosine similarity is NaN",
+            )
         if cosine_similarity < threshold:
             return CheckResult(
                 check_name="similarity_gate",
                 passed=False,
                 message=f"CFG cosine similarity {cosine_similarity:.2f} is below threshold {threshold:.2f}",
             )
+        if old_offset < 0 or new_offset < 0:
+            return CheckResult(
+                check_name="negative_offset",
+                passed=False,
+                message=f"Struct offsets must be non-negative: old=0x{old_offset:x}, new=0x{new_offset:x}",
+            )
+        if access_width not in (1, 2, 4, 8, 16):
+            return CheckResult(
+                check_name="access_width",
+                passed=False,
+                message=f"Access width {access_width} is not a valid scalar power of two",
+            )
         # Offset must be naturally aligned to access width
-        if access_width in (2, 4, 8) and (new_offset % access_width != 0):
+        if (old_offset % access_width == 0) and (new_offset % access_width != 0):
             return CheckResult(
                 check_name="access_width_alignment",
                 passed=False,

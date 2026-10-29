@@ -1,15 +1,13 @@
 """Unit tests for SuperGhidra REA Ecosystem Bridge (20 test cases)."""
 
 import asyncio
-import json
-import os
 import time
 from pathlib import Path
+
 import pytest
 
 from superghidra.integrations.rea_bridge import (
     ReaAsyncRouter,
-    ReaBridgeError,
 )
 
 

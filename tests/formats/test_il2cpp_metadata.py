@@ -18,14 +18,11 @@ Unit tests for superghidra.formats.il2cpp_metadata:
 from __future__ import annotations
 
 import struct
-from pathlib import Path
 
 import pytest
 
 from superghidra.formats.il2cpp_metadata import (
     IL2CPP_METADATA_MAGIC,
-    SUPPORTED_VERSIONS,
-    Il2CppMetadataReport,
     recover_il2cpp_metadata,
 )
 

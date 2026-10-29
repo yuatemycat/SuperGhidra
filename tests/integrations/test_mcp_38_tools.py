@@ -92,6 +92,15 @@ EXPECTED_EXTRA_TOOLS = [
     "deflatten_control_flow",
     "query_binary_dataflow",
     "solve_global_type_lattice",
+    "sync_fork",
+    "get_session_info",
+    "resolve_conflict",
+    "inspect_analysis_view",
+    "trace_native_values",
+    "decompile_all",
+    "apple_dispatch",
+    "il2cpp_recover",
+    "crate_audit",
 ]
 
 

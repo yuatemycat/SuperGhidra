@@ -11,7 +11,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 from superghidra.core.evidence_ledger import (
     CoverageBoundary,
@@ -71,7 +71,7 @@ class DefUseEdge:
     source_id: str
     target_id: str
     edge_type: str  # "intra_procedural", "call_param_bind", "callee_return_bind", "memory_alias"
-    param_ordinal: Optional[int] = None
+    param_ordinal: int | None = None
     epistemic_status: str = "observed"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -172,7 +172,7 @@ class HighPCodeValueTracer:
 
     def __init__(
         self,
-        procedure_provider: Optional[Callable[[str], Any]] = None,
+        procedure_provider: Callable[[str], Any] | None = None,
         max_depth: int = MAX_DEPTH_DEFAULT,
         max_nodes: int = MAX_NODES_DEFAULT,
     ) -> None:
@@ -190,8 +190,8 @@ class HighPCodeValueTracer:
         self,
         binary_path: str,
         root_procedure: str,
-        initial_ops: Optional[List[PcodeOp]] = None,
-        ast_dead_info: Optional[Dict[int, Tuple[bool, bool]]] = None,
+        initial_ops: List[PcodeOp] | None = None,
+        ast_dead_info: Dict[int, Tuple[bool, bool]] | None = None,
     ) -> ValueTraceReport:
         """Executes inter-procedural value tracing starting from root_procedure."""
         self._visited_procs.clear()
@@ -230,9 +230,9 @@ class HighPCodeValueTracer:
         self,
         proc_id: str,
         depth: int,
-        pcode_ops: Optional[List[PcodeOp]] = None,
-        ast_dead_info: Optional[Dict[int, Tuple[bool, bool]]] = None,
-    ) -> Optional[ProcedureDossier]:
+        pcode_ops: List[PcodeOp] | None = None,
+        ast_dead_info: Dict[int, Tuple[bool, bool]] | None = None,
+    ) -> ProcedureDossier | None:
         """Traces a single procedure and recurses into statically resolved callees."""
         if proc_id in self._visited_procs:
             return None  # Cycle-safe single-attempt memoization
@@ -346,7 +346,7 @@ class HighPCodeValueTracer:
                     ))
 
             # Register output node
-            out_node_id: Optional[str] = None
+            out_node_id: str | None = None
             if op.output:
                 out_id = f"{proc_id}_{op_idx}_out"
                 out_role = "stack_local_store" if is_stack_store else "def"
@@ -379,7 +379,7 @@ class HighPCodeValueTracer:
             # Inter-procedural call detection
             if op.opcode == PcodeOpcode.CALL:
                 # First input is target address/symbol
-                target_proc: Optional[str] = None
+                target_proc: str | None = None
                 call_args: List[str] = []
                 if len(inputs) > 0:
                     tgt_inp = inputs[0]
@@ -449,7 +449,7 @@ class HighPCodeValueTracer:
         dossier.nodes = [n for n in self._node_registry.values() if n.procedure == proc_id]
         return dossier
 
-    def _varnode_key(self, vn: Optional[Varnode]) -> str:
+    def _varnode_key(self, vn: Varnode | None) -> str:
         if vn is None:
             return ""
         if vn.name:
@@ -470,10 +470,10 @@ def trace_native_values(
     procedure: str,
     max_depth: int = MAX_DEPTH_DEFAULT,
     max_nodes: int = MAX_NODES_DEFAULT,
-    output: Optional[str] = None,
-    procedure_provider: Optional[Callable[[str], Any]] = None,
-    pcode_ops: Optional[List[PcodeOp]] = None,
-    ast_dead_info: Optional[Dict[int, Tuple[bool, bool]]] = None,
+    output: str | None = None,
+    procedure_provider: Callable[[str], Any] | None = None,
+    pcode_ops: List[PcodeOp] | None = None,
+    ast_dead_info: Dict[int, Tuple[bool, bool]] | None = None,
 ) -> ValueTraceReport:
     """Main programmatic entry point for high-P-code cross-call value tracing."""
     tracer = HighPCodeValueTracer(

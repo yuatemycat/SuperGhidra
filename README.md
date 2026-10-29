@@ -27,7 +27,7 @@ python -m superghidra.formats.serialize_trace target.dll CMyDoc
 Want an AI agent (Claude Desktop, Claude Code, Cursor, Antigravity) driving Ghidra without GUI lockups? Install the MCP server and point it at your project; see [Agent & MCP Configuration](#agent--mcp-configuration-claude-desktop-cursor-antigravity) for the config block. `GHIDRA_INSTALL_DIR` and `JAVA_HOME` must be set (Ghidra 11/12 + OpenJDK 21):
 
 ```bash
-pip install git+https://github.com/yuatemycat/SuperGhidraMCP.git
+pip install superghidra-mcp
 claude mcp add superghidra -- superghidra-mcp -t stdio --project-path <path_to_gpr_or_binary>
 ```
 
@@ -171,7 +171,7 @@ SuperGhidra exposes 42 specialized reverse-engineering tools via the Model Conte
 Install the MCP server from source:
 
 ```bash
-pip install git+https://github.com/yuatemycat/SuperGhidraMCP.git
+pip install superghidra-mcp
 ```
 
 ### Claude Desktop (`claude_desktop_config.json`)
@@ -354,6 +354,7 @@ pip install "superghidra[gpu]"       # WGPU compute shaders (ADRP/prologue sweep
 pip install "superghidra[storage]"   # LZ4 & Zstandard 16 KB page compression
 pip install "superghidra[ghidra]"    # PyGhidra bridge & JVM headless bindings
 pip install "superghidra[frida]"     # Live emulator runtime inspection
+pip install "superghidra[rea]"       # REA ecosystem adapter and MCP protocol bridge
 ```
 
 **From source (development):**
@@ -447,7 +448,7 @@ print(sg.SMTPcodeVerifier().verify_equivalence(ops, ops).equivalent)
 - **Objective-C Runtime Recovery:** Currently recovers classes, methods, and ivars from traditional 64-bit Mach-O binaries with direct pointers (`__objc_classlist`, `__objc_const`). Binaries using modern macOS / iOS dyld chained fixups (`LC_DYLD_CHAINED_FIXUPS`) are not yet dereferenced and are planned for 1.x.
 - **C++ RTTI Formats:** Class recovery targets MSVC RTTI (`CompleteObjectLocator`, `TypeDescriptor`, `ClassHierarchyDescriptor`) and MFC `CRuntimeClass`. GNU Itanium ABI C++ RTTI (`type_info`, `_vptr` prefix structures) is planned for 1.x.
 - **MFC Class Recovery Testing:** Precision and recall (100% precision, 0 false positives on non-MFC binaries such as `libcrypto-3.dll`) are verified in automated CI using synthetic redistributable PE fixtures (`sample_mfc_x64.dll`). Real commercial applications (such as WinMerge with 713 RTTI and 160 MFC classes) are evaluated manually.
-- **MCP Server Package:** The Model Context Protocol server is hosted in [`SuperghidraMCP`](https://github.com/yuatemycat/SuperGhidraMCP) and installed directly from source (`pip install git+https://github.com/yuatemycat/SuperGhidraMCP.git`); it is not currently published on PyPI. It depends on `superghidra>=0.4.0` and connects AI coding agents directly to the local daemon and standalone recovery tools.
+- **MCP Server Package:** The Model Context Protocol server is hosted in [`SuperghidraMCP`](https://github.com/yuatemycat/SuperGhidraMCP) and installed directly from source (`pip install superghidra-mcp`); it is not currently published on PyPI. It depends on `superghidra>=0.4.0` and connects AI coding agents directly to the local daemon and standalone recovery tools.
 - **Standalone P-Code Decompilation:** The zero-JVM CLI decompiler (`superghidra decompile`) is an experimental prototype supporting basic integer register operations, function prologues, direct calls, and preliminary ARM64 lowering (11 of 154 exports decompiled, 7 compiling across four test DLLs). For production decompilation, use the Ghidra-backed daemon oracle (`python -m superghidra.core.ghidra_oracle decompile <addr>`).
 - **PDB Export:** PDB export is experimental: it emits MSF 7.0 structures with prototype DBI and public symbol records, but lacks MSVC-compatible hash streams, symbol record streams, and CodeView type (TPI) streams. DWARF 5 export is the supported path for external tooling.
 - **SMT Verification Incompleteness:** The SMT checker is sound but incomplete. Floats, calls, unhandled ops and long loops return `UNKNOWN` by design to prevent false equivalence.

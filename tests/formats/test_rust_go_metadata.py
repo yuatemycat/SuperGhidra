@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import struct
 import zlib
-from pathlib import Path
 
 import pytest
 
@@ -28,7 +27,6 @@ from superghidra.formats.rust_go_metadata import (
     PCLNTAB_MAGIC_116,
     PCLNTAB_MAGIC_118,
     PCLNTAB_MAGIC_120,
-    RustGoReport,
     audit_rust_go_binary,
 )
 

@@ -57,9 +57,11 @@ _SUPPORTED_CORE: dict[str, tuple[str, str]] = {
     "dispatch_apple_binary": ("superghidra.formats.apple_dispatch", "dispatch_apple_binary"),
     "AppleDispatchReport": ("superghidra.formats.apple_dispatch", "AppleDispatchReport"),
     "recover_il2cpp_metadata": ("superghidra.formats.il2cpp_metadata", "recover_il2cpp_metadata"),
-    "IL2CPPMetadataReport": ("superghidra.formats.il2cpp_metadata", "IL2CPPMetadataReport"),
+    "Il2CppMetadataReport": ("superghidra.formats.il2cpp_metadata", "Il2CppMetadataReport"),
+    "IL2CPPMetadataReport": ("superghidra.formats.il2cpp_metadata", "Il2CppMetadataReport"),
     "audit_rust_go_binary": ("superghidra.formats.rust_go_metadata", "audit_rust_go_binary"),
-    "RustGoAuditReport": ("superghidra.formats.rust_go_metadata", "RustGoAuditReport"),
+    "CrateAuditReport": ("superghidra.formats.rust_go_metadata", "CrateAuditReport"),
+    "RustGoAuditReport": ("superghidra.formats.rust_go_metadata", "CrateAuditReport"),
     # 8. Evidence Ledger & Paging (1.0.0)
     "EvidenceEnvelope": ("superghidra.core.evidence_ledger", "EvidenceEnvelope"),
     "EpistemicStatus": ("superghidra.core.evidence_ledger", "EpistemicStatus"),

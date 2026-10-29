@@ -13,11 +13,10 @@ library RVAs (libil2cpp.so / GameAssembly.dll) without starting Ghidra.
 
 from __future__ import annotations
 
-import os
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List
 
 __all__ = [
     "IL2CPP_METADATA_MAGIC",
@@ -75,7 +74,7 @@ class Il2CppMethodDefinition:
     parameters: List[Il2CppParameterDefinition] = field(default_factory=list)
     slot: int = 0
     token: int = 0
-    native_rva: Optional[int] = None
+    native_rva: int | None = None
     epistemic_status: str = "observed"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -197,8 +196,8 @@ class _MetadataReader:
 
 
 def recover_il2cpp_metadata(
-    metadata_path_or_bytes: Union[str, Path, bytes],
-    binary_path_or_bytes: Optional[Union[str, Path, bytes]] = None,
+    metadata_path_or_bytes: str | Path | bytes,
+    binary_path_or_bytes: str | Path | bytes | None = None,
     max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES,
 ) -> Il2CppMetadataReport:
     """
@@ -360,8 +359,7 @@ def recover_il2cpp_metadata(
             param_start = reader.i32(moff + 12)
             token = reader.u32(moff + 24)
             slot = reader.u16(moff + 32)
-            param_count = reader.u16(moff + 34)
-
+            param_count = min(reader.u16(moff + 34), 256)
             params: List[Il2CppParameterDefinition] = []
             for p in range(param_count):
                 params.append(get_param(param_start + p))
@@ -510,3 +508,7 @@ def _correlate_method_pointers(
                     if rva != 0:
                         m.native_rva = rva
                         m.epistemic_status = "inferred"
+
+
+# Backward-compatibility alias
+IL2CPPMetadataReport = Il2CppMetadataReport

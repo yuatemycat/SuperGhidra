@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-10-28
+
+### Added
+- **Persistent Evidence Ledger & View Paging (Milestone 1 & 2)**: Added SQLite L2 `retained_evidence` table with 30-day LRU eviction quota (`enforce_cache_quota`), structured `EvidenceEnvelope`, and 9-facet pagination (`inspect_analysis_view`) returning summary-first views under 2,048 UTF-8 bytes for MCP agents.
+- **Reconstruction Obligation Ledger & Gatekeeper**: Formal verification gatekeeper (`ReconstructionObligationLedger`) validating struct layout alignments, non-negative field offsets, vtable slot bounds, CFG cosine similarity gates, and cross-version struct rewrite memory access width preservation.
+- **Inter-procedural High-P-Code Value Tracing (Milestone 3)**: Forward and backward dataflow tracing (`trace_native_values`) across High-P-Code def-use chains, tracking parameter origins, constants, and taint sets across up to 32 call frames.
+- **Bounds-Proven ARM64 Jump Table Recovery**: Recovers multi-target switch dispatch tables from AArch64 `CMP`, `B.cond`, and `BR` indirect branches. Includes shift decoding (`lsl #12`), indirect branch verification, and formal Z3 bounds proof (`ARM64JumpTableProver`).
+- **Crash-Resumable Whole-Binary Decompilation (Milestone 4)**: Added `decompile_all` with append-only JSONL progress journaling, PID & inode directory locking with automatic stale lock recovery, 64 KB chunked SHA-256 integrity verification, external import filtering, and a 5-consecutive-error circuit breaker.
+- **Ghidra-Free Standalone Parsers (Milestone 5)**:
+  - Mach-O Dyld Chained Fixups (`superghidra.formats.apple_dispatch`): Complete standalone chained fixup rebasing (including ARM64e PAC strip), Swift 5 type metadata, and 64-bit Objective-C class hierarchy extraction.
+  - Unity IL2CPP Metadata (`superghidra.formats.il2cpp_metadata`): Standalone parser for `global-metadata.dat` across versions 24 through 39 with bounded parameter counts and native ELF/PE RVA correlation.
+  - Rust & Go Metadata (`superghidra.formats.rust_go_metadata`): Standalone parser for Rust Cargo dependency trees (`.dep-v0`) and Go `pclntab` runtime function tables and build information.
+- **REA Ecosystem Provider Bridge (Milestone 6)**: Added `ReaAsyncRouter` and `superghidra[rea]` extra providing in-process async integration with the Reverse Engineering Assistant (REA) ecosystem.
+
+### Fixed
+- **Stale Lock Recovery & Atomic Acquisition**: Resolved high-severity directory lock contention bug in `bulk_decompile.py` where dead process PIDs returned alive on POSIX platforms; implemented atomic `os.open` lockfile creation.
+- **Public Export Parity**: Resolved star-import crashes (`from superghidra import *`) by mapping canonical `Il2CppMetadataReport` and `CrateAuditReport` with backward-compatibility aliases.
+- **Dyld Chained Fixups Hardening**: Corrected 16-byte struct unpack and symbol name offset derivation in `DYLD_CHAINED_IMPORT_ADDEND64`; added upper admission limit (65,536 entries) to prevent DoS on truncated payloads.
+- **Jump Table Immediate & Branch Decoding**: Decoded optional `lsl #12` shift amounts on ARM64 `CMP` immediate instructions and enforced presence of indirect branch (`BR`) instructions for jump table candidates.
+- **Evidence Gatekeeper Tightening**: Enforced non-negative struct offsets, rejected NaN similarity scores, and added memory access width and natural alignment checks to cross-version rewrites.
+- **Mypy Cleanliness**: Resolved 13 type errors in `ghidra_oracle.py`, achieving 0 mypy errors across all 76 source modules.
+
 ## [0.5.0] - 2026-10-27
 
 ### Added

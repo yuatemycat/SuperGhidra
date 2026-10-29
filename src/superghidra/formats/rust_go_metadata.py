@@ -20,7 +20,7 @@ import struct
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 __all__ = [
     "RustCrateInfo",
@@ -46,7 +46,7 @@ PCLNTAB_MAGIC_120 = 0xFFFFFFF1
 class RustCrateInfo:
     name: str
     version: str
-    source: Optional[str] = None
+    source: str | None = None
     features: List[str] = field(default_factory=list)
     dependencies: List[str] = field(default_factory=list)
 
@@ -63,9 +63,9 @@ class RustCrateInfo:
 @dataclass
 class CrateAuditReport:
     has_audit_data: bool
-    package_name: Optional[str] = None
-    package_version: Optional[str] = None
-    rustc_commit: Optional[str] = None
+    package_name: str | None = None
+    package_version: str | None = None
+    rustc_commit: str | None = None
     crates: List[RustCrateInfo] = field(default_factory=list)
     counts: Dict[str, int] = field(default_factory=dict)
     epistemic_status: str = "observed"
@@ -85,9 +85,9 @@ class CrateAuditReport:
 @dataclass
 class GoModuleInfo:
     path: str
-    version: Optional[str] = None
-    sum: Optional[str] = None
-    replacement: Optional[str] = None
+    version: str | None = None
+    sum: str | None = None
+    replacement: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -110,12 +110,12 @@ class GoBuildSetting:
 @dataclass
 class GoBuildInfoReport:
     has_buildinfo: bool
-    go_version: Optional[str] = None
-    main_path: Optional[str] = None
-    main_module: Optional[GoModuleInfo] = None
+    go_version: str | None = None
+    main_path: str | None = None
+    main_module: GoModuleInfo | None = None
     dependencies: List[GoModuleInfo] = field(default_factory=list)
     build_settings: List[GoBuildSetting] = field(default_factory=list)
-    pclntab_version: Optional[str] = None
+    pclntab_version: str | None = None
     function_count: int = 0
     counts: Dict[str, int] = field(default_factory=dict)
     epistemic_status: str = "observed"
@@ -265,7 +265,7 @@ def _find_sections(data: bytes) -> Dict[str, bytes]:
 
 def _recover_rust_metadata(data: bytes, sections: Dict[str, bytes], limitations: List[str]) -> CrateAuditReport:
     """Parses .dep-v0 section and extracts Rust toolchain commit hashes."""
-    dep_section: Optional[bytes] = None
+    dep_section: bytes | None = None
     for sname in (".dep-v0", ".dep_v0", "dep-v0", "rust_metadata"):
         if sname in sections:
             dep_section = sections[sname]
@@ -280,8 +280,8 @@ def _recover_rust_metadata(data: bytes, sections: Dict[str, bytes], limitations:
             pass
 
     has_audit = False
-    pkg_name: Optional[str] = None
-    pkg_ver: Optional[str] = None
+    pkg_name: str | None = None
+    pkg_ver: str | None = None
     crates: List[RustCrateInfo] = []
 
     if dep_section is not None and len(dep_section) > 0:
@@ -320,7 +320,7 @@ def _recover_rust_metadata(data: bytes, sections: Dict[str, bytes], limitations:
             limitations.append(f"Failed to decode .dep-v0 payload: {e}")
 
     # Extract rustc commit hash from string tables or rodata: /rustc/<40-hex>/
-    rustc_commit: Optional[str] = None
+    rustc_commit: str | None = None
     rustc_match = re.search(rb"/rustc/([0-9a-fA-F]{40})/", data)
     if rustc_match:
         rustc_commit = rustc_match.group(1).decode("ascii")
@@ -348,10 +348,10 @@ def _recover_rust_metadata(data: bytes, sections: Dict[str, bytes], limitations:
 # Go Metadata Recovery (.go.buildinfo & pclntab)
 # -----------------------------------------------------------------------------
 
-def _parse_go_modinfo(raw_text: str) -> Tuple[Optional[str], Optional[GoModuleInfo], List[GoModuleInfo], List[GoBuildSetting]]:
+def _parse_go_modinfo(raw_text: str) -> Tuple[str | None, GoModuleInfo | None, List[GoModuleInfo], List[GoBuildSetting]]:
     """Parses standard Go buildinfo key-value module lines."""
-    main_path: Optional[str] = None
-    main_mod: Optional[GoModuleInfo] = None
+    main_path: str | None = None
+    main_mod: GoModuleInfo | None = None
     deps: List[GoModuleInfo] = []
     settings: List[GoBuildSetting] = []
 
@@ -390,12 +390,12 @@ def _parse_go_modinfo(raw_text: str) -> Tuple[Optional[str], Optional[GoModuleIn
 def _recover_go_metadata(data: bytes, sections: Dict[str, bytes], limitations: List[str]) -> GoBuildInfoReport:
     """Locates and parses Go buildinfo signature and pclntab headers."""
     has_buildinfo = False
-    go_version: Optional[str] = None
-    main_path: Optional[str] = None
-    main_mod: Optional[GoModuleInfo] = None
+    go_version: str | None = None
+    main_path: str | None = None
+    main_mod: GoModuleInfo | None = None
     deps: List[GoModuleInfo] = []
     settings: List[GoBuildSetting] = []
-    pclntab_ver: Optional[str] = None
+    pclntab_ver: str | None = None
     func_count: int = 0
 
     # 1. Search for \xff Go buildinf:
@@ -488,7 +488,7 @@ def _recover_go_metadata(data: bytes, sections: Dict[str, bytes], limitations: L
 # -----------------------------------------------------------------------------
 
 def audit_rust_go_binary(
-    binary_path_or_bytes: Union[str, Path, bytes],
+    binary_path_or_bytes: str | Path | bytes,
     max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES,
 ) -> RustGoReport:
     """
@@ -550,3 +550,10 @@ def audit_rust_go_binary(
         limitations=limitations,
         epistemic_status=epistemic,
     )
+
+
+audit_crates_and_go = audit_rust_go_binary
+
+
+# Backward-compatibility alias
+RustGoAuditReport = CrateAuditReport

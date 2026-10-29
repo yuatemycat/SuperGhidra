@@ -33,9 +33,6 @@ Unit tests for superghidra.core.views and L2 retained evidence paging:
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import pytest
 
 from superghidra.core.ghidra_oracle import L2SQLiteCache

@@ -1,9 +1,9 @@
 """Unit test suite for crash-resumable bulk decompiler (15 test cases)."""
 
-import hashlib
 import json
 import os
 from pathlib import Path
+
 import pytest
 
 from superghidra.core.bulk_decompile import (
@@ -12,7 +12,6 @@ from superghidra.core.bulk_decompile import (
     LockContentionError,
     TargetMismatchError,
     decompile_all,
-    hash_file_chunks,
     is_process_alive,
 )
 

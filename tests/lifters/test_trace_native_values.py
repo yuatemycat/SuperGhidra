@@ -1,10 +1,8 @@
 """Unit test suite for inter-procedural high-P-code value tracing (16 test cases)."""
 
 import json
-import pytest
 from unittest.mock import MagicMock
 
-from superghidra.core.evidence_ledger import EpistemicStatus
 from superghidra.lifters.pcode_lifter_bridge import (
     AddressSpace,
     PcodeOp,
@@ -14,9 +12,6 @@ from superghidra.lifters.pcode_lifter_bridge import (
 from superghidra.lifters.trace_values import (
     HighPCodeValueTracer,
     trace_native_values,
-    MAX_PCODE_OPS_PER_PROCEDURE,
-    MAX_INPUTS_PER_OP,
-    MAX_DEF_USE_EDGES,
 )
 
 
@@ -328,7 +323,7 @@ def test_cli_trace_values_invocation(tmp_path):
         output=str(out_file),
     )
     assert out_file.exists()
-    with open(out_file, "r", encoding="utf-8") as f:
+    with open(out_file, encoding="utf-8") as f:
         data = json.load(f)
     assert data["root_procedure"] == "0x1000"
     assert "nodes" in data

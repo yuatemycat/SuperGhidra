@@ -8,23 +8,14 @@ set_address_name, annotate_native_function) and provides SuperGhidra extension t
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import json
 import logging
-import os
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Tuple
 
 from superghidra.core.bulk_decompile import decompile_all
 from superghidra.core.compilable_filter import CompilableDecompilerFilter
-from superghidra.core.evidence_ledger import (
-    CoverageBoundary,
-    EpistemicStatus,
-    EvidenceEnvelope,
-    ReferenceProvenance,
-)
 from superghidra.core.ghidra_oracle import (
     L2SQLiteCache,
     WriteOverlay,
@@ -57,8 +48,8 @@ class ReaAsyncRouter:
 
     def __init__(
         self,
-        cache_dir: Optional[Union[str, Path]] = None,
-        overlay_path: Optional[Union[str, Path]] = None,
+        cache_dir: str | Path | None = None,
+        overlay_path: str | Path | None = None,
         daemon_url: str = "http://127.0.0.1:5073",
     ) -> None:
         self.cache_dir = Path(cache_dir) if cache_dir else Path.home() / ".superghidra" / "cache"
@@ -77,7 +68,7 @@ class ReaAsyncRouter:
     async def open_binary(
         self,
         binary_path: str,
-        arch: Optional[str] = None,
+        arch: str | None = None,
         load_debug_info: bool = True,
     ) -> Dict[str, Any]:
         """Opens and indexes a binary for analysis."""
@@ -326,7 +317,7 @@ class ReaAsyncRouter:
     async def sg_z3_prove(
         self,
         pcode_ops: List[Any],
-        c_ast: Optional[Any] = None,
+        c_ast: Any | None = None,
     ) -> Dict[str, Any]:
         """Formally verifies basic block equivalence using Z3 SMT solver."""
         return {
@@ -375,7 +366,7 @@ class ReaAsyncRouter:
     async def sg_serialize_trace(
         self,
         binary_path: str,
-        trace_data: Optional[Dict[str, Any]] = None,
+        trace_data: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Serializes execution trace into compact format."""
         from superghidra.formats.serialize_trace import trace_serialize_functions

@@ -19,11 +19,19 @@ Unit tests for superghidra.formats.apple_dispatch:
 from __future__ import annotations
 
 import struct
+
 import pytest
 
 from superghidra.formats.apple_dispatch import (
-    CPU_SUBTYPE_ARM64E,
+    BIND_OPCODE_DO_BIND,
+    BIND_OPCODE_DONE,
+    BIND_OPCODE_SET_DYLIB_ORDINAL_IMM,
+    BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB,
+    BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM,
+    BIND_OPCODE_SET_TYPE_IMM,
+    BIND_TYPE_POINTER,
     CPU_SUBTYPE_ARM64_ALL,
+    CPU_SUBTYPE_ARM64E,
     CPU_TYPE_ARM64,
     CPU_TYPE_X86_64,
     DYLD_CHAINED_IMPORT,
@@ -32,21 +40,12 @@ from superghidra.formats.apple_dispatch import (
     LC_DYLD_INFO_ONLY,
     LC_SEGMENT_64,
     MH_MAGIC_64,
-    REBASE_OPCODE_DONE,
     REBASE_OPCODE_DO_REBASE_IMM_TIMES,
+    REBASE_OPCODE_DONE,
     REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB,
     REBASE_OPCODE_SET_TYPE_IMM,
     REBASE_TYPE_POINTER,
-    BIND_OPCODE_DONE,
-    BIND_OPCODE_DO_BIND,
-    BIND_OPCODE_SET_DYLIB_ORDINAL_IMM,
-    BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB,
-    BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM,
-    BIND_OPCODE_SET_TYPE_IMM,
-    BIND_TYPE_POINTER,
-    AppleDispatchReport,
     dispatch_apple_binary,
-    extract_macho_slice,
 )
 
 

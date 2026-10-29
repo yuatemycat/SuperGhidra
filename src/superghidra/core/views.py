@@ -25,8 +25,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Literal
 
 FACETS = (
     "compilable_c",
@@ -59,7 +59,7 @@ class InspectAnalysisViewRequest:
     facet: FacetType
     offset: int = 0
     limit: int = 64
-    filter_expr: Optional[str] = None
+    filter_expr: str | None = None
 
     def __post_init__(self) -> None:
         if self.offset < 0:
@@ -79,7 +79,7 @@ class InspectAnalysisViewResponse:
     limit: int
     truncated: bool
     items: List[Any]
-    filter_expr: Optional[str] = None
+    filter_expr: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -142,7 +142,7 @@ def compact_tool_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
 
 def inspect_analysis_view(
     req: InspectAnalysisViewRequest,
-    cache_instance: Optional[Any] = None,
+    cache_instance: Any | None = None,
 ) -> InspectAnalysisViewResponse:
     """
     Pages a specific facet from SQLite L2 retained evidence using parent_evidence_id.

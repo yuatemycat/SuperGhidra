@@ -125,7 +125,7 @@ jobs:
           . test_venv/bin/activate
           python -c "import superghidra; print('Version:', superghidra.__version__)"
           python -c "import superghidra; missing = [k for k in superghidra._SUPPORTED_CORE if not hasattr(superghidra, k)]; assert not missing, f'Missing: {missing}'"
-          python -c "import superghidra; assert len(superghidra.__all__) == 33"
+          python -c "import superghidra; assert len(superghidra.__all__) == 56"
           superghidra version
           superghidra rtti-recover $GITHUB_WORKSPACE/tests/fixtures/binaries/sample_x64.dll -o /tmp/clean_env/recovered.json
           python -c "import json; data = json.load(open('/tmp/clean_env/recovered.json')); assert 'rtti_classes' in data"

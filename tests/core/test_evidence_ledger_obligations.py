@@ -22,13 +22,10 @@ Unit tests for superghidra.core.evidence_ledger:
 
 from __future__ import annotations
 
-import pytest
-
 from superghidra.core.evidence_ledger import (
     CoverageBoundary,
     EpistemicStatus,
     EvidenceEnvelope,
-    ForkMergeConflict,
     ReconstructionObligationLedger,
     ReferenceProvenance,
 )

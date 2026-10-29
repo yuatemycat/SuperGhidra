@@ -10,12 +10,11 @@ conformances, and Objective-C 64-bit runtime structures without starting Ghidra.
 
 from __future__ import annotations
 
-import os
 import struct
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 __all__ = [
     "ChainedFixupEntry",
@@ -133,10 +132,10 @@ class ChainedFixupEntry:
     kind: str  # "rebase", "bind", "auth_rebase", "auth_bind"
     target: int = 0
     ordinal: int = 0
-    symbol_name: Optional[str] = None
-    library: Optional[str] = None
+    symbol_name: str | None = None
+    library: str | None = None
     addend: int = 0
-    auth_key: Optional[str] = None  # "IA", "IB", "DA", "DB"
+    auth_key: str | None = None  # "IA", "IB", "DA", "DB"
     diversity: int = 0
     addr_diversity: bool = False
 
@@ -191,7 +190,7 @@ class ChainedFixupsReport:
 class Swift5Method:
     address: int
     flags: int = 0
-    name: Optional[str] = None
+    name: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -227,7 +226,7 @@ class Swift5TypeDescriptor:
 class Swift5ProtocolConformance:
     protocol_name: str
     type_name: str
-    type_binding: Optional[str] = None
+    type_binding: str | None = None
     address: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
@@ -258,7 +257,7 @@ class Swift5Report:
 @dataclass
 class ObjCMethod:
     name: str
-    types: Optional[str] = None
+    types: str | None = None
     imp: int = 0
     is_class_method: bool = False
 
@@ -274,7 +273,7 @@ class ObjCMethod:
 @dataclass
 class ObjCIvar:
     name: str
-    type_encoding: Optional[str] = None
+    type_encoding: str | None = None
     offset: int = 0
     size: int = 0
 
@@ -325,7 +324,7 @@ class ObjCProtocol:
 class ObjCClass:
     name: str
     address: int
-    superclass: Optional[str] = None
+    superclass: str | None = None
     instance_size: int = 0
     instance_methods: List[ObjCMethod] = field(default_factory=list)
     class_methods: List[ObjCMethod] = field(default_factory=list)
@@ -426,9 +425,9 @@ class MachOSlice:
         self.sections: List[MachOSection] = []
         self.libraries: List[str] = []
         self.image_base: int = 0
-        self.chained_fixups_cmd: Optional[Tuple[int, int]] = None  # (dataoff, datasize)
-        self.dyld_info_cmd: Optional[Tuple[int, int, int, int, int, int, int, int, int, int]] = None
-        self.symtab_cmd: Optional[Tuple[int, int, int, int]] = None  # symoff, nsyms, stroff, strsize
+        self.chained_fixups_cmd: Tuple[int, int] | None = None  # (dataoff, datasize)
+        self.dyld_info_cmd: Tuple[int, int, int, int, int, int, int, int, int, int] | None = None
+        self.symtab_cmd: Tuple[int, int, int, int] | None = None  # symoff, nsyms, stroff, strsize
 
         self._parse_header_and_commands()
 
@@ -547,7 +546,7 @@ class MachOSlice:
             off += cmdsize
 
     @staticmethod
-    def _read_cstr(buf: bytes, offset: int, max_len: int = 1024) -> Optional[str]:
+    def _read_cstr(buf: bytes, offset: int, max_len: int = 1024) -> str | None:
         if offset >= len(buf):
             return None
         sub = buf[offset : offset + max_len]
@@ -556,13 +555,13 @@ class MachOSlice:
             return sub[:idx].decode("utf-8", errors="replace")
         return sub.decode("utf-8", errors="replace")
 
-    def section_for_va(self, va: int) -> Optional[MachOSection]:
+    def section_for_va(self, va: int) -> MachOSection | None:
         for sec in self.sections:
             if sec.addr <= va < sec.addr + max(sec.size, 1):
                 return sec
         return None
 
-    def va_to_offset(self, va: int) -> Optional[int]:
+    def va_to_offset(self, va: int) -> int | None:
         sec = self.section_for_va(va)
         if sec is not None:
             delta = va - sec.addr
@@ -575,7 +574,7 @@ class MachOSlice:
                     return seg.fileoff + delta
         return None
 
-    def offset_to_va(self, offset: int) -> Optional[int]:
+    def offset_to_va(self, offset: int) -> int | None:
         for sec in self.sections:
             if sec.size and sec.offset <= offset < sec.offset + sec.size:
                 return sec.addr + (offset - sec.offset)
@@ -591,7 +590,7 @@ class MachOSlice:
         avail = len(self.data) - off
         return self.data[off : off + min(size, avail)]
 
-    def read_c_string(self, va: int, limit: int = 1024) -> Optional[str]:
+    def read_c_string(self, va: int, limit: int = 1024) -> str | None:
         raw = self.read_va(va, limit)
         if not raw:
             return None
@@ -600,10 +599,10 @@ class MachOSlice:
             return raw[:idx].decode("utf-8", errors="replace")
         return raw.decode("utf-8", errors="replace")
 
-    def read_c_string_at_offset(self, offset: int, limit: int = 1024) -> Optional[str]:
+    def read_c_string_at_offset(self, offset: int, limit: int = 1024) -> str | None:
         return self._read_cstr(self.data, offset, limit)
 
-    def get_section(self, segname: str, sectname: str) -> Optional[MachOSection]:
+    def get_section(self, segname: str, sectname: str) -> MachOSection | None:
         for s in self.sections:
             if s.segname == segname and s.sectname == sectname:
                 return s
@@ -761,8 +760,20 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
         else:
             symbols_pool = raw_symbols
 
-    for i in range(imports_count):
-        sym_name: Optional[str] = None
+    # Enforce admission check and upper bound on chained imports table
+    entry_sz = 4
+    if imports_format == DYLD_CHAINED_IMPORT_ADDEND:
+        entry_sz = 8
+    elif imports_format == DYLD_CHAINED_IMPORT_ADDEND64:
+        entry_sz = 16
+    max_possible = max(0, (datasize - imports_offset) // entry_sz) if imports_offset < datasize else 0
+    max_chained_limit = 65536
+    bounded_count = min(imports_count, max_chained_limit, max_possible)
+    if imports_count > bounded_count:
+        limitations.append(f"Chained fixups import count clamped from {imports_count} to {bounded_count}")
+
+    for i in range(bounded_count):
+        sym_name: str | None = None
         if imports_format == DYLD_CHAINED_IMPORT:
             imp_off = fixup_base + imports_offset + i * 4
             if imp_off + 4 <= len(slice_macho.data):
@@ -778,7 +789,7 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
         elif imports_format == DYLD_CHAINED_IMPORT_ADDEND64:
             imp_off = fixup_base + imports_offset + i * 16
             if imp_off + 16 <= len(slice_macho.data):
-                _, _, _, name_offset, _ = struct.unpack_from("<HHIQq", slice_macho.data, imp_off)
+                name_offset, _meta, _addend = struct.unpack_from("<IIq", slice_macho.data, imp_off)
                 sym_name = MachOSlice._read_cstr(symbols_pool, name_offset)
 
         imports.append(sym_name or f"import_{i}")
@@ -811,7 +822,7 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
                 f"<{page_count}H", slice_macho.data, page_starts_offset
             )
 
-            target_seg: Optional[MachOSegment] = None
+            target_seg: MachOSegment | None = None
             if s < len(slice_macho.segments):
                 target_seg = slice_macho.segments[s]
 
@@ -1110,7 +1121,7 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
         end = bind_off + bind_size
         seg_idx = 0
         seg_offset = 0
-        sym_name: Optional[str] = None
+        sym_name: str | None = None
         dylib_ord = 0
         addend = 0
 
@@ -1367,8 +1378,8 @@ def _recover_swift5_metadata(slice_macho: MachOSlice, limitations: List[str]) ->
             # Type name / raw binding preservation
             type_target_va = conf_va + 4 + type_rel
             is_indirect = bool(type_rel & 1)
-            raw_binding: Optional[str] = None
-            resolved_tname: Optional[str] = None
+            raw_binding: str | None = None
+            resolved_tname: str | None = None
 
             if is_indirect:
                 ptr_bytes = slice_macho.read_va(type_target_va & ~1, 8)
@@ -1534,7 +1545,7 @@ def _recover_objc_metadata(slice_macho: MachOSlice, limitations: List[str]) -> O
             "<IIIIQQQQQQQ", ro_raw[:72]
         )
 
-        super_name: Optional[str] = None
+        super_name: str | None = None
         if super_va:
             if super_va in class_map:
                 super_name = class_map[super_va]
@@ -1738,3 +1749,6 @@ def dispatch_apple_binary(
         limitations=limitations,
         epistemic_status="observed",
     )
+
+
+parse_apple_dispatch = dispatch_apple_binary

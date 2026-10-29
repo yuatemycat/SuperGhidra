@@ -9,6 +9,7 @@ manifest responses for MCP agents.
 from __future__ import annotations
 
 import dataclasses
+import errno
 import hashlib
 import json
 import logging
@@ -16,7 +17,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Set
 
 from superghidra.core.compilable_filter import CompilableDecompilerFilter
 
@@ -57,11 +58,18 @@ def is_process_alive(pid: int) -> bool:
         else:
             os.kill(pid, 0)
             return True
-    except (ProcessLookupError, PermissionError):
-        return True
-    except OSError:
+    except ProcessLookupError:
+        # Process does not exist (ESRCH)
         return False
-
+    except PermissionError:
+        # Process exists but belongs to another user (EPERM)
+        return True
+    except OSError as exc:
+        if exc.errno == errno.ESRCH:
+            return False
+        if exc.errno == errno.EPERM:
+            return True
+        return False
 
 def hash_file_chunks(file_path: Path, chunk_size: int = CHUNK_SIZE) -> str:
     """Computes SHA-256 of a file using bounded memory chunks."""
@@ -90,29 +98,55 @@ class DirectoryLock:
         st_ino = getattr(stat, "st_ino", 0)
         cur_pid = os.getpid()
 
-        if self.lock_file.exists():
-            try:
-                data = json.loads(self.lock_file.read_text(encoding="utf-8"))
-                holder_pid = data.get("holder_pid")
-                if holder_pid and holder_pid != cur_pid:
-                    if is_process_alive(holder_pid):
-                        raise LockContentionError(
-                            f"Directory '{self.directory}' is locked by active PID {holder_pid}"
-                        )
-                    else:
-                        logger.warning("Recovering stale lock from terminated PID %s", holder_pid)
-            except (json.JSONDecodeError, OSError):
-                # Malformed lock file from hard crash, recover
-                pass
-
         payload = {
             "st_dev": st_dev,
             "st_ino": st_ino,
             "holder_pid": cur_pid,
             "created_at": time.time(),
         }
-        self.lock_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        self._locked = True
+        encoded = json.dumps(payload, indent=2).encode("utf-8")
+
+        for attempt in range(2):
+            if self.lock_file.exists():
+                try:
+                    data = json.loads(self.lock_file.read_text(encoding="utf-8"))
+                    holder_pid = data.get("holder_pid")
+                    if holder_pid and holder_pid != cur_pid:
+                        if is_process_alive(holder_pid):
+                            raise LockContentionError(
+                                f"Directory '{self.directory}' is locked by active PID {holder_pid}"
+                            )
+                        logger.warning("Recovering stale lock from terminated PID %s", holder_pid)
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+                try:
+                    self.lock_file.unlink()
+                except OSError:
+                    pass
+
+            try:
+                fd = os.open(
+                    str(self.lock_file),
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                    0o644,
+                )
+                try:
+                    os.write(fd, encoded)
+                finally:
+                    os.close(fd)
+                self._locked = True
+                return
+            except FileExistsError:
+                if attempt == 0:
+                    continue
+                raise LockContentionError(
+                    f"Directory '{self.directory}' is locked by another concurrent process"
+                )
+
+        raise LockContentionError(
+            f"Directory '{self.directory}' is locked by another concurrent process"
+        )
 
     def release(self) -> None:
         if self._locked and self.lock_file.exists():
@@ -170,14 +204,14 @@ class BulkDecompileRunner:
 
     def __init__(
         self,
-        binary_path: Union[str, Path],
-        output_directory: Union[str, Path],
+        binary_path: str | Path,
+        output_directory: str | Path,
         filter_compilable: bool = True,
         verify_z3: bool = False,
-        arch: Optional[str] = None,
+        arch: str | None = None,
         resume: bool = True,
-        decompiler_fn: Optional[Callable[[str, Any], str]] = None,
-        functions_provider: Optional[Callable[[Path], List[Dict[str, Any]]]] = None,
+        decompiler_fn: Callable[[str, Any], str] | None = None,
+        functions_provider: Callable[[Path], List[Dict[str, Any]]] | None = None,
     ) -> None:
         self.binary_path = Path(binary_path)
         self.output_directory = Path(output_directory)
@@ -199,7 +233,7 @@ class BulkDecompileRunner:
 
         target_sha256 = hash_file_chunks(self.binary_path) if self.binary_path.is_file() else "0" * 64
         profile_digest = hashlib.sha256(
-            f"{self.filter_compilable}:{self.verify_z3}:{self.arch}".encode("utf-8")
+            f"{self.filter_compilable}:{self.verify_z3}:{self.arch}".encode()
         ).hexdigest()[:16]
 
         with DirectoryLock(self.output_directory):
@@ -387,14 +421,14 @@ class BulkDecompileRunner:
 
 
 def decompile_all(
-    binary_path: Union[str, Path],
-    output_directory: Union[str, Path],
+    binary_path: str | Path,
+    output_directory: str | Path,
     filter_compilable: bool = True,
     verify_z3: bool = False,
-    arch: Optional[str] = None,
+    arch: str | None = None,
     resume: bool = True,
-    decompiler_fn: Optional[Callable[[str, Any], str]] = None,
-    functions_provider: Optional[Callable[[Path], List[Dict[str, Any]]]] = None,
+    decompiler_fn: Callable[[str, Any], str] | None = None,
+    functions_provider: Callable[[Path], List[Dict[str, Any]]] | None = None,
 ) -> BulkDecompileManifest:
     """Main programmatic entry point for crash-resumable batch decompilation."""
     runner = BulkDecompileRunner(
@@ -408,3 +442,7 @@ def decompile_all(
         functions_provider=functions_provider,
     )
     return runner.run()
+
+
+BulkDecompiler = BulkDecompileRunner
+

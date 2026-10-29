@@ -46,7 +46,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Set, Tuple
 
 # Import DependencyCacheDAG and SemanticDeltaLog
 try:
@@ -453,6 +453,7 @@ class L2SQLiteCache:
             db_path = os.path.join(cache_dir, L2_CACHE_FILENAME)
         self.db_path = db_path
         self._lock = threading.Lock()
+        self._mem_conn: sqlite3.Connection | None = None
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -808,7 +809,7 @@ class L2SQLiteCache:
 
     def get_retained_evidence(
         self, evidence_id: str
-    ) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]] | None:
         with self._lock:
             try:
                 with self._conn_ctx() as conn:
@@ -857,7 +858,7 @@ class L2SQLiteCache:
 # ==============================================================================
 
 
-_GLOBAL_L2_CACHE: Optional[L2SQLiteCache] = None
+_GLOBAL_L2_CACHE: L2SQLiteCache | None = None
 
 
 def get_oracle_cache(db_path: str | None = None) -> L2SQLiteCache:
@@ -1486,9 +1487,9 @@ class GhidraOracleSession:
         facets_blob = self._compress_payload(facets_dict)
         now_ms = int(time.time() * 1000)
 
-        with self._lock:
+        with self.l2_cache._lock:
             try:
-                with self._conn_ctx() as conn:
+                with self.l2_cache._conn_ctx() as conn:
                     conn.execute(
                         """
                         INSERT OR REPLACE INTO retained_evidence (
@@ -1516,10 +1517,10 @@ class GhidraOracleSession:
 
     def get_retained_evidence(
         self, evidence_id: str
-    ) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
-        with self._lock:
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]] | None:
+        with self.l2_cache._lock:
             try:
-                with self._conn_ctx() as conn:
+                with self.l2_cache._conn_ctx() as conn:
                     cur = conn.execute(
                         """
                         SELECT summary_json, facets_json FROM retained_evidence
@@ -1542,9 +1543,9 @@ class GhidraOracleSession:
         """Enforces 30-day LRU eviction and cache quota limits."""
         cutoff_ms = int((time.time() - max_age_days * 86400) * 1000)
         evicted = 0
-        with self._lock:
+        with self.l2_cache._lock:
             try:
-                with self._conn_ctx() as conn:
+                with self.l2_cache._conn_ctx() as conn:
                     cur = conn.execute(
                         "DELETE FROM retained_evidence WHERE created_at_ms < ?", (cutoff_ms,)
                     )
@@ -2501,9 +2502,9 @@ class MockGhidraOracleSession:
         facets_blob = self._compress_payload(facets_dict)
         now_ms = int(time.time() * 1000)
 
-        with self._lock:
+        with self.l2_cache._lock:
             try:
-                with self._conn_ctx() as conn:
+                with self.l2_cache._conn_ctx() as conn:
                     conn.execute(
                         """
                         INSERT OR REPLACE INTO retained_evidence (
@@ -2531,10 +2532,10 @@ class MockGhidraOracleSession:
 
     def get_retained_evidence(
         self, evidence_id: str
-    ) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
-        with self._lock:
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]] | None:
+        with self.l2_cache._lock:
             try:
-                with self._conn_ctx() as conn:
+                with self.l2_cache._conn_ctx() as conn:
                     cur = conn.execute(
                         """
                         SELECT summary_json, facets_json FROM retained_evidence
@@ -2557,9 +2558,9 @@ class MockGhidraOracleSession:
         """Enforces 30-day LRU eviction and cache quota limits."""
         cutoff_ms = int((time.time() - max_age_days * 86400) * 1000)
         evicted = 0
-        with self._lock:
+        with self.l2_cache._lock:
             try:
-                with self._conn_ctx() as conn:
+                with self.l2_cache._conn_ctx() as conn:
                     cur = conn.execute(
                         "DELETE FROM retained_evidence WHERE created_at_ms < ?", (cutoff_ms,)
                     )

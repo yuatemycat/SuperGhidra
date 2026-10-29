@@ -1,12 +1,10 @@
 """Unit tests for ARM64 Jump-Table Bounds Prover (12 test cases)."""
 
 import struct
-import pytest
 
 from superghidra.acceleration.jump_table_prover import (
     ARM64JumpTableProver,
     JumpTableCandidate,
-    RecoveredJumpTable,
 )
 
 

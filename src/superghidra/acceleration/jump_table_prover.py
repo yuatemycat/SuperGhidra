@@ -11,7 +11,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import struct
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,9 @@ try:
 except ImportError:
     HAS_Z3 = False
 
-try:
-    import numpy as np
-    HAS_NUMPY = True
-except ImportError:
-    HAS_NUMPY = False
+import importlib.util
+
+HAS_NUMPY = importlib.util.find_spec("numpy") is not None
 
 
 @dataclasses.dataclass
@@ -53,7 +51,7 @@ class RecoveredJumpTable:
     default_target: int
     entry_size: int
     table_va: int
-    targets: List[Optional[int]]
+    targets: List[int | None]
     unresolved_cases: int
     proven: bool
     data_sources: Dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -93,7 +91,7 @@ class ARM64JumpTableProver:
             expected_n = bound_imm + 1
 
         if not HAS_Z3:
-            return expected_n, True
+            return expected_n, False
 
         try:
             solver = z3.Solver()
@@ -149,12 +147,16 @@ class ARM64JumpTableProver:
             if (insn0 & 0xff80001f) == 0x7100001f:
                 is_cmp = True
                 cmp_reg = (insn0 >> 5) & 0x1f
-                bound_imm = (insn0 >> 10) & 0xfff
+                imm12 = (insn0 >> 10) & 0xfff
+                sh = (insn0 >> 22) & 1
+                bound_imm = (imm12 << 12) if sh else imm12
             # 64-bit CMP imm: [31]=1, [30]=1, [29]=1, [28:24]=10001, [4:0]=11111 (XZR)
             elif (insn0 & 0xff80001f) == 0xf100001f:
                 is_cmp = True
                 cmp_reg = (insn0 >> 5) & 0x1f
-                bound_imm = (insn0 >> 10) & 0xfff
+                imm12 = (insn0 >> 10) & 0xfff
+                sh = (insn0 >> 22) & 1
+                bound_imm = (imm12 << 12) if sh else imm12
 
             if not is_cmp or bound_imm <= 0:
                 continue
@@ -180,7 +182,7 @@ class ARM64JumpTableProver:
             default_target = pc1 + (imm19 << 2)
 
             # Search forward up to 8 instructions for table base load and table lookup
-            base_va_found: Optional[int] = None
+            base_va_found: int | None = None
             base_calc: str = "ADR"
             entry_sz: int = 4
             load_type: str = "LDRSW"
@@ -236,7 +238,8 @@ class ARM64JumpTableProver:
                     dispatch_reg = (cur_insn >> 5) & 0x1f
                     break
 
-            if base_va_found is not None:
+            # Candidate requires both table base computation and explicit indirect branch (BR Xn)
+            if base_va_found is not None and dispatch_pc != 0:
                 candidates.append(JumpTableCandidate(
                     pc=pc0,
                     cmp_pc=pc0,
@@ -248,7 +251,7 @@ class ARM64JumpTableProver:
                     table_base_va=base_va_found,
                     load_insn_type=load_type,
                     entry_size=entry_sz,
-                    dispatch_pc=dispatch_pc or pc0 + 16,
+                    dispatch_pc=dispatch_pc,
                     dispatch_reg=dispatch_reg,
                 ))
 
@@ -259,11 +262,11 @@ class ARM64JumpTableProver:
         candidate: JumpTableCandidate,
         memory_data: bytes,
         memory_base_va: int = 0,
-        valid_range: Optional[Tuple[int, int]] = None,
+        valid_range: Tuple[int, int] | None = None,
     ) -> RecoveredJumpTable:
         """Extracts and verifies all N jump table targets."""
         bounds_n, proven = self.prove_bounds(candidate.bound_imm, candidate.branch_cond)
-        targets: List[Optional[int]] = []
+        targets: List[int | None] = []
         unresolved = 0
 
         table_offset = candidate.table_base_va - memory_base_va
