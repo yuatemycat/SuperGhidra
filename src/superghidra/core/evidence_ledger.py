@@ -57,18 +57,18 @@ __all__ = [
 
 
 class EpistemicStatus(str, enum.Enum):
-    OBSERVED = "observed"     # Direct bytes, symbol table entries, or debug symbols
-    INFERRED = "inferred"     # Heuristics: CFG feature matches, candidates, decompiled types
-    UNKNOWN = "unknown"       # Unresolved indirect calls, Z3 float/loop bailouts, missing data
+    OBSERVED = "observed"  # Direct bytes, symbol table entries, or debug symbols
+    INFERRED = "inferred"  # Heuristics: CFG feature matches, candidates, decompiled types
+    UNKNOWN = "unknown"  # Unresolved indirect calls, Z3 float/loop bailouts, missing data
 
 
 class ReferenceProvenance(str, enum.Enum):
-    ANALYSIS = "analysis"                 # Ghidra auto-analyzer or SuperGhidra static pass
-    DEFAULT = "default"                   # Default platform/loader assumption
-    IMPORTED = "imported"                 # DWARF 5, PDB, IDA .til, or FLIRT .sig match
-    USER_DEFINED = "user_defined"         # Committed JSON overlay or human annotation
-    SMT_PROVEN = "smt_proven"             # Verified equivalent by SuperGhidra's Z3 P-code prover
-    OVERLAY_PENDING = "overlay_pending"   # Staged in an unmerged agent fork journal
+    ANALYSIS = "analysis"  # Ghidra auto-analyzer or SuperGhidra static pass
+    DEFAULT = "default"  # Default platform/loader assumption
+    IMPORTED = "imported"  # DWARF 5, PDB, IDA .til, or FLIRT .sig match
+    USER_DEFINED = "user_defined"  # Committed JSON overlay or human annotation
+    SMT_PROVEN = "smt_proven"  # Verified equivalent by SuperGhidra's Z3 P-code prover
+    OVERLAY_PENDING = "overlay_pending"  # Staged in an unmerged agent fork journal
 
 
 @dataclass
@@ -107,8 +107,12 @@ class EvidenceEnvelope:
             "evidence_id": self.evidence_id,
             "target_sha256": self.target_sha256,
             "overlay_revision": self.overlay_revision,
-            "epistemic_status": self.epistemic_status.value if isinstance(self.epistemic_status, EpistemicStatus) else str(self.epistemic_status),
-            "provenance": self.provenance.value if isinstance(self.provenance, ReferenceProvenance) else str(self.provenance),
+            "epistemic_status": self.epistemic_status.value
+            if isinstance(self.epistemic_status, EpistemicStatus)
+            else str(self.epistemic_status),
+            "provenance": self.provenance.value
+            if isinstance(self.provenance, ReferenceProvenance)
+            else str(self.provenance),
             "data": self.data,
             "coverage": [c.to_dict() if hasattr(c, "to_dict") else c for c in self.coverage],
             "limitations": self.limitations,
@@ -118,7 +122,9 @@ class EvidenceEnvelope:
 @dataclass
 class ForkMergeConflict:
     canonical_address: str
-    conflict_type: str  # "conflict_stale_base", "vtable_gate_failure", "displacement_gate_failure", "syntax_gate_failure"
+    conflict_type: (
+        str  # "conflict_stale_base", "vtable_gate_failure", "displacement_gate_failure", "syntax_gate_failure"
+    )
     before_value: Any
     staged_value: Any
     current_value: Any
@@ -210,10 +216,12 @@ class ReconstructionObligationLedger:
                 return CheckResult(
                     check_name="field_overlap",
                     passed=False,
-                    message=f"Field '{cur[0]}' [0x{cur[1]:x}-0x{cur[1]+cur[2]:x}) overlaps with '{nxt[0]}' at 0x{nxt[1]:x}",
+                    message=f"Field '{cur[0]}' [0x{cur[1]:x}-0x{cur[1] + cur[2]:x}) overlaps with '{nxt[0]}' at 0x{nxt[1]:x}",
                 )
 
-        return CheckResult(check_name="struct_layout", passed=True, message="Struct layout passed all verification checks")
+        return CheckResult(
+            check_name="struct_layout", passed=True, message="Struct layout passed all verification checks"
+        )
 
     def verify_vtable(
         self,
@@ -239,9 +247,13 @@ class ReconstructionObligationLedger:
             filtered = filter_c_code(c_code)
             # Basic sanity checks: balanced braces and parens
             if filtered.count("{") != filtered.count("}"):
-                return CheckResult(check_name="compilable_c_syntax", passed=False, message="Unbalanced braces in C output")
+                return CheckResult(
+                    check_name="compilable_c_syntax", passed=False, message="Unbalanced braces in C output"
+                )
             if filtered.count("(") != filtered.count(")"):
-                return CheckResult(check_name="compilable_c_syntax", passed=False, message="Unbalanced parentheses in C output")
+                return CheckResult(
+                    check_name="compilable_c_syntax", passed=False, message="Unbalanced parentheses in C output"
+                )
             return CheckResult(check_name="compilable_c_syntax", passed=True, message="Code passed syntax check")
         except Exception as e:
             return CheckResult(check_name="compilable_c_syntax", passed=False, message=f"Syntax filter error: {e}")
@@ -255,7 +267,15 @@ class ReconstructionObligationLedger:
         threshold: float = 0.80,
         new_access_width: int | None = None,
     ) -> CheckResult:
-        """Verifies that cross-version struct rewrite preserves memory access width and CFG similarity."""
+        """Verifies that cross-version struct rewrite preserves natural alignment and CFG similarity.
+
+        Note:
+            Access width preservation (new_access_width == access_width) is verified only
+            when new_access_width is explicitly provided. When omitted (None), callers
+            performing preliminary offset shift queries without full AST decompilation
+            are permitted, while natural alignment of both old and new offsets against
+            access_width is still strictly enforced.
+        """
         import math
 
         if math.isnan(cosine_similarity) or math.isinf(cosine_similarity) or not (0.0 <= cosine_similarity <= 1.0):
