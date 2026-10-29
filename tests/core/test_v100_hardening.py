@@ -231,6 +231,10 @@ def test_jump_table_prover_register_parity():
     )
     assert proven_mismatch is False
 
+    # Calling prove_bounds without explicit register tracking arguments must fail proof
+    n_default, proven_default = prover.prove_bounds(5, "HI")
+    assert proven_default is False
+
 
 def test_evidence_ledger_infinity_and_width_preservation():
     """Verify ReconstructionObligationLedger rejects infinity similarity and detects width changes."""
@@ -273,3 +277,13 @@ def test_evidence_ledger_infinity_and_width_preservation():
     )
     assert res_width_change.passed is False
     assert "access width" in res_width_change.message.lower()
+
+    # 4. Misaligned old offset (e.g. offset 2 to 6 with width 4) must fail natural alignment
+    res_misaligned_old = ledger.verify_cross_version_rewrite(
+        old_offset=2,
+        new_offset=6,
+        access_width=4,
+        cosine_similarity=0.95,
+    )
+    assert res_misaligned_old.passed is False
+    assert "misaligned" in res_misaligned_old.message.lower()

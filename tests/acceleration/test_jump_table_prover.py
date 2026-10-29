@@ -33,7 +33,7 @@ def _encode_br(rn: int) -> int:
 def test_cmp_b_hi_bounds_proof():
     """1. B.HI (unsigned greater than imm) bounds proof yields N = imm + 1."""
     prover = ARM64JumpTableProver()
-    n, proven = prover.prove_bounds(bound_imm=7, cond="HI")
+    n, proven = prover.prove_bounds(bound_imm=7, cond="HI", cmp_reg=0, index_reg=0, table_target_reg=1, dispatch_reg=1)
     assert n == 8
     assert proven is True
 
@@ -41,7 +41,7 @@ def test_cmp_b_hi_bounds_proof():
 def test_cmp_b_hs_bounds_proof():
     """2. B.HS (unsigned greater or equal to imm) bounds proof yields N = imm."""
     prover = ARM64JumpTableProver()
-    n, proven = prover.prove_bounds(bound_imm=8, cond="HS")
+    n, proven = prover.prove_bounds(bound_imm=8, cond="HS", cmp_reg=0, index_reg=0, table_target_reg=1, dispatch_reg=1)
     assert n == 8
     assert proven is True
 

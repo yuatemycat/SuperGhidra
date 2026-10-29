@@ -289,8 +289,14 @@ class ReconstructionObligationLedger:
                 message=f"Access width changed across versions from {access_width} to {new_access_width}",
             )
         effective_new_width = new_access_width if new_access_width is not None else access_width
-        # Offset must be naturally aligned to access width
-        if (old_offset % access_width == 0) and (new_offset % effective_new_width != 0):
+        # Both original and rewritten offsets must be naturally aligned to access width
+        if old_offset % access_width != 0:
+            return CheckResult(
+                check_name="access_width_alignment",
+                passed=False,
+                message=f"Original offset 0x{old_offset:x} is misaligned for access width {access_width}",
+            )
+        if new_offset % effective_new_width != 0:
             return CheckResult(
                 check_name="access_width_alignment",
                 passed=False,

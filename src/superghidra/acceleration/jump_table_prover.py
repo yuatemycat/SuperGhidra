@@ -82,10 +82,10 @@ class ARM64JumpTableProver:
         self,
         bound_imm: int,
         cond: str,
-        cmp_reg: int = 0,
-        index_reg: int = 0,
-        table_target_reg: int = 0,
-        dispatch_reg: int = 0,
+        cmp_reg: int | None = None,
+        index_reg: int | None = None,
+        table_target_reg: int | None = None,
+        dispatch_reg: int | None = None,
     ) -> Tuple[int, bool]:
         """Proves exact case count N and register dataflow using Z3 formal verification.
 
@@ -99,6 +99,10 @@ class ARM64JumpTableProver:
             expected_n = bound_imm
         else:
             expected_n = bound_imm + 1
+
+        # Soundness Gate 0: Register arguments must be explicitly provided
+        if cmp_reg is None or index_reg is None or table_target_reg is None or dispatch_reg is None:
+            return expected_n, False
 
         # Soundness Gate 1: Table index register must match compared register
         if cmp_reg != index_reg:
@@ -219,9 +223,21 @@ class ARM64JumpTableProver:
             table_tgt_reg: int | None = None
 
             lookahead_limit = min(num_insns, i + 10)
+            cmp_reg_clobbered = False
             for j in range(i + 2, lookahead_limit):
                 cur_insn = insns[j]
                 cur_pc = base_va + j * 4
+
+                # Check if cmp_reg is overwritten before table load
+                if table_idx_reg is None:
+                    # ADR / ADRP into cmp_reg
+                    if (cur_insn & 0x1f000000) in (0x10000000, 0x90000000) and (cur_insn & 0x1f) == cmp_reg:
+                        cmp_reg_clobbered = True
+                        break
+                    # ALU or MOV into cmp_reg (Rd in [4:0], excluding ZR=31)
+                    if (cur_insn & 0x11000000) in (0x11000000, 0x0b000000) and (cur_insn & 0x1f) == cmp_reg and (cur_insn & 0x1f) != 31:
+                        cmp_reg_clobbered = True
+                        break
 
                 # ADR: [31]=0, [28:24]=10000
                 if (cur_insn & 0x9f000000) == 0x10000000:
@@ -283,8 +299,8 @@ class ARM64JumpTableProver:
                     dispatch_reg = (cur_insn >> 5) & 0x1f
                     break
 
-            # Candidate requires both table base computation and explicit indirect branch (BR Xn)
-            if base_va_found is not None and dispatch_pc != 0:
+            # Candidate requires both table base computation, non-clobbered cmp_reg, and explicit indirect branch (BR Xn)
+            if not cmp_reg_clobbered and base_va_found is not None and dispatch_pc != 0:
                 candidates.append(JumpTableCandidate(
                     pc=pc0,
                     cmp_pc=pc0,
