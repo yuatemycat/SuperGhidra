@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-10-29
+
+### Fixed
+- **ARM64 Jump Table Prover Register Clobber Detection**: Corrected instruction bitmask in `ARM64JumpTableProver.scan_candidates` to detect data-processing register instructions (`MOV x1, x2`, `ADD x1, x1, x2`), data-processing immediate instructions (`MOVZ x1, #7`), and load operations clobbering the compare register between `CMP` and the jump table index calculation.
+- **Evidence Gatekeeper Natural Alignment**: Enforced that struct rewrites must verify natural alignment of old field offsets (`offset % width == 0`) before permitting cross-version offset migrations.
+
 ## [1.0.1] - 2026-10-29
 
 ### Fixed
