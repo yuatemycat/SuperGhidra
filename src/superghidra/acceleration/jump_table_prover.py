@@ -228,8 +228,48 @@ class ARM64JumpTableProver:
                 cur_insn = insns[j]
                 cur_pc = base_va + j * 4
 
+                # Check for table loads first: if this instruction is the table load using cmp_reg,
+                # loading the table entry into Rt (even if Rt == cmp_reg) is the valid lookup, not a clobber.
+                is_table_load = False
+                if (cur_insn & 0xffe00c00) == 0x38600800 or (cur_insn & 0xffc00000) == 0x38400000:
+                    rn = (cur_insn >> 5) & 0x1f
+                    rm = (cur_insn >> 16) & 0x1f
+                    if cmp_reg in (rn, rm):
+                        load_type = "LDRB"
+                        entry_sz = 1
+                        table_idx_reg = cmp_reg
+                        table_tgt_reg = cur_insn & 0x1f
+                        is_table_load = True
+                elif (cur_insn & 0xffe00c00) == 0x78600800 or (cur_insn & 0xffc00000) == 0x78400000:
+                    rn = (cur_insn >> 5) & 0x1f
+                    rm = (cur_insn >> 16) & 0x1f
+                    if cmp_reg in (rn, rm):
+                        load_type = "LDRH"
+                        entry_sz = 2
+                        table_idx_reg = cmp_reg
+                        table_tgt_reg = cur_insn & 0x1f
+                        is_table_load = True
+                elif (cur_insn & 0xffe00c00) == 0xb8a00800 or (cur_insn & 0xffc00000) == 0xb8800000:
+                    rn = (cur_insn >> 5) & 0x1f
+                    rm = (cur_insn >> 16) & 0x1f
+                    if cmp_reg in (rn, rm):
+                        load_type = "LDRSW"
+                        entry_sz = 4
+                        table_idx_reg = cmp_reg
+                        table_tgt_reg = cur_insn & 0x1f
+                        is_table_load = True
+                elif (cur_insn & 0xffe00c00) == 0xf8600800 or (cur_insn & 0xffc00000) == 0xf8400000:
+                    rn = (cur_insn >> 5) & 0x1f
+                    rm = (cur_insn >> 16) & 0x1f
+                    if cmp_reg in (rn, rm):
+                        load_type = "LDR"
+                        entry_sz = 8
+                        table_idx_reg = cmp_reg
+                        table_tgt_reg = cur_insn & 0x1f
+                        is_table_load = True
+
                 # Check if cmp_reg is overwritten before table load
-                if table_idx_reg is None:
+                if not is_table_load and table_idx_reg is None:
                     rd = cur_insn & 0x1f
                     if rd == cmp_reg and rd != 31:
                         # 1. Data-processing (immediate): [28:26] == 100 (includes ADD imm, MOVZ, MOVN, bitfield, ADR/ADRP)
@@ -263,40 +303,6 @@ class ARM64JumpTableProver:
                         imm21 -= 0x200000
                     base_va_found = (cur_pc & ~0xfff) + (imm21 << 12)
                     base_calc = "ADRP_ADD"
-
-                # Check for table loads
-                # LDRB (register): [31:22] = 0011100001 (0x0e1) or similar
-                # LDRH (register): [31:22] = 0111100001
-                # LDRSW (register): [31:22] = 1011100010
-                # LDR 64-bit: [31:22] = 1111100001
-                if (cur_insn & 0xffe00c00) == 0x38600800 or (cur_insn & 0xffc00000) == 0x38400000:
-                    load_type = "LDRB"
-                    entry_sz = 1
-                    rn = (cur_insn >> 5) & 0x1f
-                    rm = (cur_insn >> 16) & 0x1f
-                    table_idx_reg = cmp_reg if cmp_reg in (rn, rm) else rm
-                    table_tgt_reg = cur_insn & 0x1f
-                elif (cur_insn & 0xffe00c00) == 0x78600800 or (cur_insn & 0xffc00000) == 0x78400000:
-                    load_type = "LDRH"
-                    entry_sz = 2
-                    rn = (cur_insn >> 5) & 0x1f
-                    rm = (cur_insn >> 16) & 0x1f
-                    table_idx_reg = cmp_reg if cmp_reg in (rn, rm) else rm
-                    table_tgt_reg = cur_insn & 0x1f
-                elif (cur_insn & 0xffe00c00) == 0xb8a00800 or (cur_insn & 0xffc00000) == 0xb8800000:
-                    load_type = "LDRSW"
-                    entry_sz = 4
-                    rn = (cur_insn >> 5) & 0x1f
-                    rm = (cur_insn >> 16) & 0x1f
-                    table_idx_reg = cmp_reg if cmp_reg in (rn, rm) else rm
-                    table_tgt_reg = cur_insn & 0x1f
-                elif (cur_insn & 0xffe00c00) == 0xf8600800 or (cur_insn & 0xffc00000) == 0xf8400000:
-                    load_type = "LDR"
-                    entry_sz = 8
-                    rn = (cur_insn >> 5) & 0x1f
-                    rm = (cur_insn >> 16) & 0x1f
-                    table_idx_reg = cmp_reg if cmp_reg in (rn, rm) else rm
-                    table_tgt_reg = cur_insn & 0x1f
 
                 # BR (Branch to register): [31:10] = 1101011000011111000000
                 if (cur_insn & 0xfffffc1f) == 0xd61f0000:

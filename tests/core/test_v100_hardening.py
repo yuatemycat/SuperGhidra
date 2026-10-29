@@ -322,3 +322,23 @@ def test_arm64_jump_table_prover_clobber_detection():
     code_movz = struct.pack(f"<{len(insns_movz)}I", *insns_movz)
     cands_movz = prover.scan_candidates(code_movz, base_va=0x1000)
     assert len(cands_movz) == 0, "MOVZ into cmp_reg must clobber candidate"
+
+    # 4. Compiler idiom where table load writes into the same register as index (Rt == cmp_reg)
+    # 0: CMP W8, #7 (0x71001d1f)
+    # 4: B.HI default (0x540000a8)
+    # 8: ADR X9, #32 (0x10000109)
+    # 12: LDRSW X8, [X9, X8, LSL #2] (0xb8a87928)
+    # 16: BR X8 (0xd61f0100)
+    insns_rt_eq_cmp = [0x71001d1f, 0x540000a8, 0x10000109, 0xb8a87928, 0xd61f0100]
+    code_rt_eq_cmp = struct.pack(f"<{len(insns_rt_eq_cmp)}I", *insns_rt_eq_cmp)
+    cands_rt_eq_cmp = prover.scan_candidates(code_rt_eq_cmp, base_va=0x1000)
+    assert len(cands_rt_eq_cmp) == 1, "Table load into Rt == cmp_reg must be recognized as valid candidate"
+    assert cands_rt_eq_cmp[0].cmp_reg == 8
+    assert cands_rt_eq_cmp[0].index_reg == 8
+    assert cands_rt_eq_cmp[0].table_target_reg == 8
+
+    # 5. Clobbered by unrelated load into cmp_reg before table load (LDR X8, [SP, #16])
+    insns_ldr_clobber = [0x71001d1f, 0x540000a8, 0xf9400be8, 0x10000109, 0xb8a87928, 0xd61f0100]
+    code_ldr_clobber = struct.pack(f"<{len(insns_ldr_clobber)}I", *insns_ldr_clobber)
+    cands_ldr_clobber = prover.scan_candidates(code_ldr_clobber, base_va=0x1000)
+    assert len(cands_ldr_clobber) == 0, "Unrelated LDR into cmp_reg before table load must clobber"
