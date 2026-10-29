@@ -16,7 +16,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 # ==============================================================================
 # Supported Stable Core API

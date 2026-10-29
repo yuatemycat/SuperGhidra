@@ -234,40 +234,36 @@ class ARM64JumpTableProver:
                 # Check for table loads first: if this instruction is the table load using cmp_reg,
                 # loading the table entry into Rt (even if Rt == cmp_reg) is the valid lookup, not a clobber.
                 is_table_load = False
-                if (cur_insn & 0xFFE00C00) == 0x38600800 or (cur_insn & 0xFFC00000) == 0x38400000:
-                    rn = (cur_insn >> 5) & 0x1F
+                if (cur_insn & 0xFFE00C00) == 0x38600800:
                     rm = (cur_insn >> 16) & 0x1F
-                    if cmp_reg in (rn, rm):
+                    if rm == cmp_reg:
                         load_type = "LDRB"
                         entry_sz = 1
-                        table_idx_reg = cmp_reg
+                        table_idx_reg = rm
                         table_tgt_reg = cur_insn & 0x1F
                         is_table_load = True
-                elif (cur_insn & 0xFFE00C00) == 0x78600800 or (cur_insn & 0xFFC00000) == 0x78400000:
-                    rn = (cur_insn >> 5) & 0x1F
+                elif (cur_insn & 0xFFE00C00) == 0x78600800:
                     rm = (cur_insn >> 16) & 0x1F
-                    if cmp_reg in (rn, rm):
+                    if rm == cmp_reg:
                         load_type = "LDRH"
                         entry_sz = 2
-                        table_idx_reg = cmp_reg
+                        table_idx_reg = rm
                         table_tgt_reg = cur_insn & 0x1F
                         is_table_load = True
-                elif (cur_insn & 0xFFE00C00) == 0xB8A00800 or (cur_insn & 0xFFC00000) == 0xB8800000:
-                    rn = (cur_insn >> 5) & 0x1F
+                elif (cur_insn & 0xFFE00C00) == 0xB8A00800:
                     rm = (cur_insn >> 16) & 0x1F
-                    if cmp_reg in (rn, rm):
+                    if rm == cmp_reg:
                         load_type = "LDRSW"
                         entry_sz = 4
-                        table_idx_reg = cmp_reg
+                        table_idx_reg = rm
                         table_tgt_reg = cur_insn & 0x1F
                         is_table_load = True
-                elif (cur_insn & 0xFFE00C00) == 0xF8600800 or (cur_insn & 0xFFC00000) == 0xF8400000:
-                    rn = (cur_insn >> 5) & 0x1F
+                elif (cur_insn & 0xFFE00C00) == 0xF8600800:
                     rm = (cur_insn >> 16) & 0x1F
-                    if cmp_reg in (rn, rm):
+                    if rm == cmp_reg:
                         load_type = "LDR"
                         entry_sz = 8
-                        table_idx_reg = cmp_reg
+                        table_idx_reg = rm
                         table_tgt_reg = cur_insn & 0x1F
                         is_table_load = True
 

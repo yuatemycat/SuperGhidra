@@ -352,3 +352,33 @@ def test_arm64_jump_table_prover_clobber_detection():
     code_no_table_load = struct.pack(f"<{len(insns_no_table_load)}I", *insns_no_table_load)
     cands_no_table_load = prover.scan_candidates(code_no_table_load, base_va=0x1000)
     assert len(cands_no_table_load) == 0, "Absence of table load instruction must not produce a candidate"
+    # 7. Inverted base vs index operand confusion:
+    # 0: CMP W0, #5 (0x7100141f)
+    # 4: B.HI default (0x540000a8)
+    # 8: ADR X1, #32 (0x10000101)
+    # 12: LDRSW X2, [X0, X1, LSL #2] (0xb8a17802 -> Rn=0 (base), Rm=1 (index))
+    # 16: BR X2 (0xd61f0040)
+    insns_inverted = [0x7100141F, 0x540000A8, 0x10000101, 0xB8A17802, 0xD61F0040]
+    code_inverted = struct.pack(f"<{len(insns_inverted)}I", *insns_inverted)
+    cands_inverted = prover.scan_candidates(code_inverted, base_va=0x1000)
+    assert len(cands_inverted) == 0, "Inverted load where cmp_reg is base Rn rather than index Rm must be rejected"
+
+    # 8. Correct compiler standard where cmp_reg is index Rm:
+    # 0: CMP W0, #5 (0x7100141f)
+    # 4: B.HI default (0x540000a8)
+    # 8: ADR X1, #32 (0x10000101)
+    # 12: LDRSW X2, [X1, X0, LSL #2] (0xb8a07822 -> Rn=1 (base), Rm=0 (index))
+    # 16: BR X2 (0xd61f0040)
+    insns_correct = [0x7100141F, 0x540000A8, 0x10000101, 0xB8A07822, 0xD61F0040]
+    code_correct = struct.pack(f"<{len(insns_correct)}I", *insns_correct)
+    cands_correct = prover.scan_candidates(code_correct, base_va=0x1000)
+    assert len(cands_correct) == 1, "Compiler standard table load with Rm == cmp_reg must produce candidate"
+    assert cands_correct[0].cmp_reg == 0
+    assert cands_correct[0].index_reg == 0
+    assert cands_correct[0].table_target_reg == 2
+
+    # 9. Unindexed immediate load (LDUR X2, [X0, #16]) must not produce candidate
+    insns_imm_load = [0x7100141F, 0x540000A8, 0x10000101, 0xF8410002, 0xD61F0040]
+    code_imm_load = struct.pack(f"<{len(insns_imm_load)}I", *insns_imm_load)
+    cands_imm_load = prover.scan_candidates(code_imm_load, base_va=0x1000)
+    assert len(cands_imm_load) == 0, "Unindexed immediate load must not be accepted as jump table load"

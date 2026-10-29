@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-10-29
+
+### Fixed
+- **ARM64 Jump Table Prover Base-vs-Index Operand Parity**: Fixed candidate scanner in `ARM64JumpTableProver.scan_candidates` to require `rm == cmp_reg` on register-offset loads, rejecting false-positive candidates where `cmp_reg` was the table base register `Rn` instead of the index register `Rm` (e.g. `ldrsw x2, [x0, x1, lsl #2]`). Excluded unindexed immediate loads (`0x38400000`, `0x78400000`, `0xb8800000`, `0xf8400000`) from jump table candidate discovery.
+
 ## [1.0.3] - 2026-10-29
 
 ### Fixed

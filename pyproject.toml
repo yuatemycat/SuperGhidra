@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "superghidra"
-version = "1.0.3"
+version = "1.0.4"
 description = "SuperGhidra: Autonomous Agent Reverse Engineering, Lock-Free Ghidra Daemon & C++ Recovery Suite"
 readme = "README.md"
 license = "AGPL-3.0-or-later"

@@ -10,24 +10,24 @@ from superghidra.acceleration.jump_table_prover import (
 
 def _encode_cmp_imm_32(rn: int, imm12: int) -> int:
     """Encodes CMP Wn, #imm12 (SUBS WZR, Wn, #imm12)."""
-    return 0x7100001f | ((imm12 & 0xfff) << 10) | ((rn & 0x1f) << 5)
+    return 0x7100001F | ((imm12 & 0xFFF) << 10) | ((rn & 0x1F) << 5)
 
 
 def _encode_b_cond(cond: int, imm19: int) -> int:
     """Encodes B.cond #imm19 (0x54000000 | (imm19 << 5) | cond)."""
-    return 0x54000000 | ((imm19 & 0x7ffff) << 5) | (cond & 0xf)
+    return 0x54000000 | ((imm19 & 0x7FFFF) << 5) | (cond & 0xF)
 
 
 def _encode_adr(rd: int, imm21: int) -> int:
     """Encodes ADR Xd, #imm21."""
     immlo = imm21 & 0x3
-    immhi = (imm21 >> 2) & 0x7ffff
-    return 0x10000000 | (immlo << 29) | (immhi << 5) | (rd & 0x1f)
+    immhi = (imm21 >> 2) & 0x7FFFF
+    return 0x10000000 | (immlo << 29) | (immhi << 5) | (rd & 0x1F)
 
 
 def _encode_br(rn: int) -> int:
     """Encodes BR Xn."""
-    return 0xd61f0000 | ((rn & 0x1f) << 5)
+    return 0xD61F0000 | ((rn & 0x1F) << 5)
 
 
 def test_cmp_b_hi_bounds_proof():
@@ -49,19 +49,19 @@ def test_cmp_b_hs_bounds_proof():
 def test_adr_table_base_load():
     """3. Parses ADR table base offset accurately."""
     # PC = 0x1008, table at 0x1100 -> offset = 0xf8
-    adr_insn = _encode_adr(1, 0xf8)
+    adr_insn = _encode_adr(1, 0xF8)
     insns = [
         _encode_cmp_imm_32(0, 4),
         _encode_b_cond(8, 20),  # B.HI default (+80 bytes)
         adr_insn,
-        0x38616802,  # LDRB W2, [X0, X1]
+        0x38606822,  # LDRB W2, [X1, X0]
         _encode_br(2),
     ]
     code = struct.pack(f"<{len(insns)}I", *insns)
     prover = ARM64JumpTableProver()
     candidates = prover.scan_candidates(code, base_va=0x1000)
     assert len(candidates) == 1
-    assert candidates[0].table_base_va == 0x1008 + 0xf8
+    assert candidates[0].table_base_va == 0x1008 + 0xF8
     assert candidates[0].base_calc_type == "ADR"
 
 
@@ -73,7 +73,7 @@ def test_adrp_add_table_base_load():
         _encode_cmp_imm_32(0, 5),
         _encode_b_cond(8, 15),
         adrp_insn,
-        0x38616802,
+        0x38606822,  # LDRB W2, [X1, X0]
         _encode_br(2),
     ]
     code = struct.pack(f"<{len(insns)}I", *insns)
@@ -189,7 +189,7 @@ def test_default_target_identification():
         _encode_cmp_imm_32(0, 3),
         b_hi,
         _encode_adr(1, 0x40),
-        0x38616802,
+        0x38606822,  # LDRB W2, [X1, X0]
         _encode_br(2),
     ]
     code = struct.pack(f"<{len(insns)}I", *insns)
@@ -246,7 +246,7 @@ def test_non_literal_invalid_maps_to_null():
         dispatch_reg=2,
     )
     # Middle byte is 0xFF (sentinel/invalid)
-    memory_data = bytes([12, 0xff, 14])
+    memory_data = bytes([12, 0xFF, 14])
     table = prover.recover_jump_table(candidate, memory_data=memory_data, memory_base_va=0x2000)
     assert table.targets[0] is not None
     assert table.targets[1] is None
@@ -259,10 +259,10 @@ def test_full_recovery_integration():
     prover = ARM64JumpTableProver()
     insns = [
         _encode_cmp_imm_32(0, 3),  # CMP W0, #3 -> 4 cases
-        _encode_b_cond(8, 25),      # B.HI default
-        _encode_adr(1, 0x20),       # ADR X1, #32
-        0x38616802,                 # LDRB W2, [X0, X1]
-        _encode_br(2),              # BR X2
+        _encode_b_cond(8, 25),  # B.HI default
+        _encode_adr(1, 0x20),  # ADR X1, #32
+        0x38606822,  # LDRB W2, [X1, X0]                 # LDRB W2, [X0, X1]
+        _encode_br(2),  # BR X2
     ]
     code = struct.pack(f"<{len(insns)}I", *insns)
     candidates = prover.scan_candidates(code, base_va=0x1000)
