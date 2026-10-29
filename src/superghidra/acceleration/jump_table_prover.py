@@ -41,6 +41,8 @@ class JumpTableCandidate:
     entry_size: int
     dispatch_pc: int
     dispatch_reg: int
+    index_reg: int = 0
+    table_target_reg: int = 0
 
 
 @dataclasses.dataclass
@@ -76,8 +78,16 @@ class ARM64JumpTableProver:
     def __init__(self, use_gpu: bool = False) -> None:
         self.use_gpu = use_gpu
 
-    def prove_bounds(self, bound_imm: int, cond: str) -> Tuple[int, bool]:
-        """Proves exact case count N using Z3 or formal unsigned arithmetic.
+    def prove_bounds(
+        self,
+        bound_imm: int,
+        cond: str,
+        cmp_reg: int = 0,
+        index_reg: int = 0,
+        table_target_reg: int = 0,
+        dispatch_reg: int = 0,
+    ) -> Tuple[int, bool]:
+        """Proves exact case count N and register dataflow using Z3 formal verification.
 
         For CMP Wn, #imm:
         - B.HI default: takes branch if x > imm (unsigned). Valid cases: 0..imm. N = imm + 1.
@@ -90,30 +100,47 @@ class ARM64JumpTableProver:
         else:
             expected_n = bound_imm + 1
 
+        # Soundness Gate 1: Table index register must match compared register
+        if cmp_reg != index_reg:
+            return expected_n, False
+
+        # Soundness Gate 2: Table target loaded must flow to dispatch register
+        if table_target_reg != dispatch_reg:
+            return expected_n, False
+
         if not HAS_Z3:
             return expected_n, False
 
         try:
+            # Formal verification: prove that under the fallthrough condition,
+            # (1) index is strictly within [0, expected_n), AND
+            # (2) any out-of-bounds index (>= expected_n) MUST take the escape branch.
             solver = z3.Solver()
             x = z3.BitVec("x", 32)
             imm_val = z3.BitVecVal(bound_imm, 32)
 
             if cond.upper() == "HI":
-                # Fallthrough condition: ULE(x, imm_val)
+                branch_taken = z3.UGT(x, imm_val)
                 fallthrough = z3.ULE(x, imm_val)
             else:
-                # Fallthrough condition: ULT(x, imm_val)
+                branch_taken = z3.UGE(x, imm_val)
                 fallthrough = z3.ULT(x, imm_val)
 
-            # Test upper bound
-            solver.push()
-            solver.add(fallthrough)
-            solver.add(z3.UGE(x, z3.BitVecVal(expected_n, 32)))
-            # If unsatisfiable, no valid case can be >= expected_n
-            is_sound = solver.check() == z3.unsat
-            solver.pop()
+            # Test 1: Can fallthrough ever execute with x >= expected_n?
+            s1 = z3.Solver()
+            s1.add(fallthrough)
+            s1.add(z3.UGE(x, z3.BitVecVal(expected_n, 32)))
+            if s1.check() != z3.unsat:
+                return expected_n, False
 
-            return expected_n, is_sound
+            # Test 2: Can x >= expected_n ever fail to take the escape branch?
+            s2 = z3.Solver()
+            s2.add(z3.UGE(x, z3.BitVecVal(expected_n, 32)))
+            s2.add(z3.Not(branch_taken))
+            if s2.check() != z3.unsat:
+                return expected_n, False
+
+            return expected_n, True
         except Exception as exc:
             logger.debug("Z3 bounds proof error: %s", exc)
             return expected_n, False
@@ -188,6 +215,8 @@ class ARM64JumpTableProver:
             load_type: str = "LDRSW"
             dispatch_pc: int = 0
             dispatch_reg: int = 0
+            table_idx_reg: int | None = None
+            table_tgt_reg: int | None = None
 
             lookahead_limit = min(num_insns, i + 10)
             for j in range(i + 2, lookahead_limit):
@@ -222,15 +251,31 @@ class ARM64JumpTableProver:
                 if (cur_insn & 0xffe00c00) == 0x38600800 or (cur_insn & 0xffc00000) == 0x38400000:
                     load_type = "LDRB"
                     entry_sz = 1
+                    rn = (cur_insn >> 5) & 0x1f
+                    rm = (cur_insn >> 16) & 0x1f
+                    table_idx_reg = cmp_reg if cmp_reg in (rn, rm) else rm
+                    table_tgt_reg = cur_insn & 0x1f
                 elif (cur_insn & 0xffe00c00) == 0x78600800 or (cur_insn & 0xffc00000) == 0x78400000:
                     load_type = "LDRH"
                     entry_sz = 2
+                    rn = (cur_insn >> 5) & 0x1f
+                    rm = (cur_insn >> 16) & 0x1f
+                    table_idx_reg = cmp_reg if cmp_reg in (rn, rm) else rm
+                    table_tgt_reg = cur_insn & 0x1f
                 elif (cur_insn & 0xffe00c00) == 0xb8a00800 or (cur_insn & 0xffc00000) == 0xb8800000:
                     load_type = "LDRSW"
                     entry_sz = 4
+                    rn = (cur_insn >> 5) & 0x1f
+                    rm = (cur_insn >> 16) & 0x1f
+                    table_idx_reg = cmp_reg if cmp_reg in (rn, rm) else rm
+                    table_tgt_reg = cur_insn & 0x1f
                 elif (cur_insn & 0xffe00c00) == 0xf8600800 or (cur_insn & 0xffc00000) == 0xf8400000:
                     load_type = "LDR"
                     entry_sz = 8
+                    rn = (cur_insn >> 5) & 0x1f
+                    rm = (cur_insn >> 16) & 0x1f
+                    table_idx_reg = cmp_reg if cmp_reg in (rn, rm) else rm
+                    table_tgt_reg = cur_insn & 0x1f
 
                 # BR (Branch to register): [31:10] = 1101011000011111000000
                 if (cur_insn & 0xfffffc1f) == 0xd61f0000:
@@ -253,6 +298,8 @@ class ARM64JumpTableProver:
                     entry_size=entry_sz,
                     dispatch_pc=dispatch_pc,
                     dispatch_reg=dispatch_reg,
+                    index_reg=table_idx_reg if table_idx_reg is not None else cmp_reg,
+                    table_target_reg=table_tgt_reg if table_tgt_reg is not None else dispatch_reg,
                 ))
 
         return candidates
@@ -265,7 +312,14 @@ class ARM64JumpTableProver:
         valid_range: Tuple[int, int] | None = None,
     ) -> RecoveredJumpTable:
         """Extracts and verifies all N jump table targets."""
-        bounds_n, proven = self.prove_bounds(candidate.bound_imm, candidate.branch_cond)
+        bounds_n, proven = self.prove_bounds(
+            bound_imm=candidate.bound_imm,
+            cond=candidate.branch_cond,
+            cmp_reg=candidate.cmp_reg,
+            index_reg=candidate.index_reg,
+            table_target_reg=candidate.table_target_reg,
+            dispatch_reg=candidate.dispatch_reg,
+        )
         targets: List[int | None] = []
         unresolved = 0
 

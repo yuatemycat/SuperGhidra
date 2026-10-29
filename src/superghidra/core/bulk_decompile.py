@@ -84,11 +84,12 @@ def hash_file_chunks(file_path: Path, chunk_size: int = CHUNK_SIZE) -> str:
 
 
 class DirectoryLock:
-    """Exclusive directory lock tracking st_dev, st_ino, and holder_pid."""
+    """Exclusive directory lock tracking st_dev, st_ino, and holder_pid with kernel advisory locking."""
 
     def __init__(self, directory: Path) -> None:
         self.directory = Path(directory)
         self.lock_file = self.directory / ".superghidra.lock"
+        self._fd: int | None = None
         self._locked = False
 
     def acquire(self) -> None:
@@ -98,63 +99,106 @@ class DirectoryLock:
         st_ino = getattr(stat, "st_ino", 0)
         cur_pid = os.getpid()
 
-        payload = {
-            "st_dev": st_dev,
-            "st_ino": st_ino,
-            "holder_pid": cur_pid,
-            "created_at": time.time(),
-        }
-        encoded = json.dumps(payload, indent=2).encode("utf-8")
-
-        for attempt in range(2):
-            if self.lock_file.exists():
-                try:
-                    data = json.loads(self.lock_file.read_text(encoding="utf-8"))
-                    holder_pid = data.get("holder_pid")
-                    if holder_pid and holder_pid != cur_pid:
-                        if is_process_alive(holder_pid):
-                            raise LockContentionError(
-                                f"Directory '{self.directory}' is locked by active PID {holder_pid}"
-                            )
-                        logger.warning("Recovering stale lock from terminated PID %s", holder_pid)
-                except (json.JSONDecodeError, OSError):
-                    pass
-
-                try:
-                    self.lock_file.unlink()
-                except OSError:
-                    pass
-
+        fd = os.open(str(self.lock_file), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+                os.lseek(fd, 4096, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError, PermissionError):
+            holder_pid = None
             try:
-                fd = os.open(
-                    str(self.lock_file),
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                    0o644,
-                )
-                try:
-                    os.write(fd, encoded)
-                finally:
-                    os.close(fd)
-                self._locked = True
-                return
-            except FileExistsError:
-                if attempt == 0:
-                    continue
-                raise LockContentionError(
-                    f"Directory '{self.directory}' is locked by another concurrent process"
-                )
+                os.lseek(fd, 0, os.SEEK_SET)
+                raw = os.read(fd, 1024)
+                if raw:
+                    data = json.loads(raw.decode("utf-8"))
+                    holder_pid = data.get("holder_pid")
+            except Exception:
+                pass
+            os.close(fd)
+            raise LockContentionError(
+                f"Directory '{self.directory}' is locked by active PID {holder_pid}"
+            )
 
-        raise LockContentionError(
-            f"Directory '{self.directory}' is locked by another concurrent process"
-        )
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            raw = os.read(fd, 1024)
+            if raw:
+                try:
+                    data = json.loads(raw.decode("utf-8"))
+                    existing_pid = data.get("holder_pid")
+                    if existing_pid and existing_pid != cur_pid and is_process_alive(existing_pid):
+                        if sys.platform == "win32":
+                            import msvcrt
+                            os.lseek(fd, 4096, os.SEEK_SET)
+                            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                        else:
+                            import fcntl
+                            fcntl.flock(fd, fcntl.LOCK_UN)
+                        os.close(fd)
+                        raise LockContentionError(
+                            f"Directory '{self.directory}' is locked by active PID {existing_pid}"
+                        )
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+
+            payload = {
+                "st_dev": st_dev,
+                "st_ino": st_ino,
+                "holder_pid": cur_pid,
+                "created_at": time.time(),
+            }
+            encoded = json.dumps(payload, indent=2).encode("utf-8")
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.write(fd, encoded)
+            os.fsync(fd)
+            self._fd = fd
+            self._locked = True
+        except LockContentionError:
+            raise
+        except Exception:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+                    os.lseek(fd, 4096, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            raise
 
     def release(self) -> None:
-        if self._locked and self.lock_file.exists():
+        if self._locked and self._fd is not None:
             try:
-                self.lock_file.unlink()
-            except OSError:
+                if sys.platform == "win32":
+                    import msvcrt
+                    os.lseek(self._fd, 4096, os.SEEK_SET)
+                    msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+            except Exception:
                 pass
+            try:
+                os.close(self._fd)
+            except Exception:
+                pass
+            self._fd = None
             self._locked = False
+            try:
+                self.lock_file.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def __enter__(self) -> DirectoryLock:
         self.acquire()
@@ -162,7 +206,6 @@ class DirectoryLock:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.release()
-
 
 @dataclasses.dataclass
 class BulkDecompileManifest:

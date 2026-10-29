@@ -253,15 +253,16 @@ class ReconstructionObligationLedger:
         access_width: int,
         cosine_similarity: float,
         threshold: float = 0.80,
+        new_access_width: int | None = None,
     ) -> CheckResult:
         """Verifies that cross-version struct rewrite preserves memory access width and CFG similarity."""
         import math
 
-        if math.isnan(cosine_similarity):
+        if math.isnan(cosine_similarity) or math.isinf(cosine_similarity) or not (0.0 <= cosine_similarity <= 1.0):
             return CheckResult(
                 check_name="similarity_gate",
                 passed=False,
-                message="CFG cosine similarity is NaN",
+                message=f"CFG cosine similarity {cosine_similarity} is invalid (must be a finite real in [0.0, 1.0])",
             )
         if cosine_similarity < threshold:
             return CheckResult(
@@ -281,12 +282,19 @@ class ReconstructionObligationLedger:
                 passed=False,
                 message=f"Access width {access_width} is not a valid scalar power of two",
             )
+        if new_access_width is not None and new_access_width != access_width:
+            return CheckResult(
+                check_name="access_width_preservation",
+                passed=False,
+                message=f"Access width changed across versions from {access_width} to {new_access_width}",
+            )
+        effective_new_width = new_access_width if new_access_width is not None else access_width
         # Offset must be naturally aligned to access width
-        if (old_offset % access_width == 0) and (new_offset % access_width != 0):
+        if (old_offset % access_width == 0) and (new_offset % effective_new_width != 0):
             return CheckResult(
                 check_name="access_width_alignment",
                 passed=False,
-                message=f"Rewritten offset 0x{new_offset:x} is misaligned for access width {access_width}",
+                message=f"Rewritten offset 0x{new_offset:x} is misaligned for access width {effective_new_width}",
             )
         return CheckResult(check_name="cross_version_rewrite", passed=True, message="Rewrite passed formal gates")
 

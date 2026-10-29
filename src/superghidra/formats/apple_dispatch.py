@@ -789,7 +789,7 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
         elif imports_format == DYLD_CHAINED_IMPORT_ADDEND64:
             imp_off = fixup_base + imports_offset + i * 16
             if imp_off + 16 <= len(slice_macho.data):
-                name_offset, _meta, _addend = struct.unpack_from("<IIq", slice_macho.data, imp_off)
+                _meta, name_offset, _addend = struct.unpack_from("<IIq", slice_macho.data, imp_off)
                 sym_name = MachOSlice._read_cstr(symbols_pool, name_offset)
 
         imports.append(sym_name or f"import_{i}")

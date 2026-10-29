@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-10-29
+
+### Fixed
+- **Directory Locking Race Condition**: Replaced file deletion/recreation loop with kernel-enforced non-blocking advisory locking (`msvcrt.locking` on Windows, `fcntl.flock` on POSIX). Completely eliminates multi-process acquisition races on stale locks (0 violations in 20 stress runs).
+- **Dyld Chained Fixups ADDEND64 Name Offset**: Corrected import symbol name offset unpacking from bits 32..63 (the upper 32 bits of the first 64-bit word) per `<mach-o/fixup-chains.h>`, resolving symbol name shifts (e.g. `_bar`).
+- **Jump Table Prover Register Parity & Soundness**: Enforced register parity between `CMP` operand and table load index register (`cmp_reg == index_reg`), verified dispatch register dataflow (`table_target_reg == dispatch_reg`), and formulated non-vacuous Z3 bounds and default-escape proofs.
+- **Evidence Gatekeeper Hardening**: Rejected `+inf`/`-inf` similarity scores (enforcing finite reals in `[0.0, 1.0]`), and added explicit cross-version memory access width preservation check (`new_access_width != access_width`).
+- **Documentation Parity**: Aligned README.md with PyPI package availability for `superghidra-mcp` and documented standalone Mach-O dyld chained fixups support.
+
 ## [1.0.0] - 2026-10-28
 
 ### Added

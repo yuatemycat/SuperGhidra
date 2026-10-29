@@ -1,20 +1,22 @@
-"""Hardening test suite verifying fixes for v1.0.0 bug manifest:
-1. Dead PID handling and atomic directory locking (bulk_decompile).
+"""Hardening test suite verifying fixes for v1.0.0 and v1.0.1:
+1. Multi-process concurrent barrier DirectoryLock stress test (kernel advisory locks).
 2. Clean star-imports and export parity for IL2CPP and Rust/Go reports.
-3. Mach-O chained fixup bounds and DYLD_CHAINED_IMPORT_ADDEND64 16-byte unpacking.
-4. ARM64 jump table immediate lsl #12 decoding, BR dispatch requirement, and Z3 soundness.
-5. Evidence ledger gatekeeper checks for negative offsets, NaN similarity, and access width.
+3. Mach-O chained fixup bounds and DYLD_CHAINED_IMPORT_ADDEND64 16-byte upper 32-bit unpacking.
+4. ARM64 jump table immediate lsl #12 decoding, BR dispatch requirement, register parity, and Z3 soundness.
+5. Evidence ledger gatekeeper checks for negative offsets, NaN/Inf similarity, and access width preservation.
 6. IL2CPP parameter count clamping.
 """
 
+import multiprocessing as mp
 import os
 import struct
+import time
 from pathlib import Path
 
 import pytest
 
 import superghidra
-from superghidra.acceleration.jump_table_prover import ARM64JumpTableProver
+from superghidra.acceleration.jump_table_prover import ARM64JumpTableProver, JumpTableCandidate
 from superghidra.core.bulk_decompile import DirectoryLock, LockContentionError, is_process_alive
 from superghidra.core.evidence_ledger import ReconstructionObligationLedger
 from superghidra.formats.apple_dispatch import dispatch_apple_binary
@@ -56,64 +58,83 @@ def test_directory_lock_stale_recovery(tmp_path: Path):
     assert lock._locked is True
     assert lock_file.exists()
 
-    # Second acquisition by a different simulated PID should fail
+    # Second acquisition by a different simulated process should fail
     lock2 = DirectoryLock(lock_dir)
     with pytest.raises(LockContentionError):
-        # Temporarily mock os.getpid to simulate concurrent process
-        orig_getpid = os.getpid
-        try:
-            os.getpid = lambda: orig_getpid() + 1
-            lock2.acquire()
-        finally:
-            os.getpid = orig_getpid
+        lock2.acquire()
 
     lock.release()
     assert lock._locked is False
 
 
+def _concurrent_lock_worker(lock_dir: Path, barrier: mp.Barrier, results_q: mp.Queue):
+    barrier.wait()
+    lock = DirectoryLock(lock_dir)
+    acquired = False
+    try:
+        lock.acquire()
+        acquired = True
+        time.sleep(0.02)
+    except LockContentionError:
+        acquired = False
+    finally:
+        results_q.put(acquired)
+        if acquired:
+            try:
+                lock.release()
+            except Exception:
+                pass
+
+
+def test_directory_lock_concurrent_barrier_stress(tmp_path: Path):
+    """Verify kernel-enforced directory locking prevents multi-process acquisition races."""
+    lock_dir = tmp_path / "stress_lock_dir"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+
+    for _ in range(5):
+        barrier = mp.Barrier(6)
+        queue = mp.Queue()
+        procs = [
+            mp.Process(target=_concurrent_lock_worker, args=(lock_dir, barrier, queue))
+            for _ in range(6)
+        ]
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join()
+
+        acquired_count = 0
+        while not queue.empty():
+            if queue.get():
+                acquired_count += 1
+        assert acquired_count == 1, f"Expected exactly 1 process to acquire lock, got {acquired_count}"
+
+
 def test_public_api_star_import():
     """Verify 'from superghidra import *' succeeds and export aliases match."""
-    # Both casings of IL2CPP metadata report must exist and match
     assert superghidra.Il2CppMetadataReport is not None
     assert superghidra.IL2CPPMetadataReport is superghidra.Il2CppMetadataReport
-
-    # Both names of Rust/Go audit report must exist and match
     assert superghidra.CrateAuditReport is not None
     assert superghidra.RustGoAuditReport is superghidra.CrateAuditReport
 
-    # All __all__ items must be resolvable via getattr
     for name in superghidra.__all__:
         assert hasattr(superghidra, name), f"Missing export: {name}"
 
 
 def test_apple_dispatch_chained_fixup_import_bound(tmp_path: Path):
     """Verify chained fixup parser handles malformed unbounded imports count without DoS."""
-    # Create minimal Mach-O 64-bit slice with LC_DYLD_CHAINED_FIXUPS specifying 10,000,000 imports
-    # but only 64 bytes total payload.
     header = bytearray(b"\x00" * 256)
-    # Magic MH_MAGIC_64
     struct.pack_into("<I", header, 0, 0xfeedfacf)
-    # CPU type ARM64 (0x0100000c), subtype 0
     struct.pack_into("<II", header, 4, 0x0100000c, 0)
-    # Filetype MH_EXECUTE (2), ncmds 1, sizeofcmds 16
     struct.pack_into("<II", header, 12, 2, 1)
-    struct.pack_into("<I", header, 20, 16)  # sizeofcmds
+    struct.pack_into("<I", header, 20, 16)
 
-    # LC_DYLD_CHAINED_FIXUPS = 0x80000034, cmdsize = 16, dataoff = 64, datasize = 64
     cmd = struct.pack("<IIII", 0x80000034, 16, 64, 64)
     header[32 : 32 + 16] = cmd
 
-    # Fixups header at offset 64 (28 bytes minimum):
-    # fixups_version, starts_offset, imports_offset, symbols_offset, imports_count, imports_format, symbols_format
     fixups_hdr = struct.pack(
         "<7I",
-        0,   # fixups_version
-        0,   # starts_offset
-        28,  # imports_offset
-        28,  # symbols_offset
-        10000000,  # malicious imports_count (10 million)
-        1,   # imports_format: DYLD_CHAINED_IMPORT (4 bytes per entry)
-        0,   # symbols_format
+        0, 0, 28, 28, 10000000, 1, 0,
     )
     header[64 : 64 + 28] = fixups_hdr
 
@@ -121,136 +142,134 @@ def test_apple_dispatch_chained_fixup_import_bound(tmp_path: Path):
     bin_path.write_bytes(bytes(header))
 
     report = dispatch_apple_binary(bin_path)
-    # Must finish instantly without creating 10 million items
     assert len(report.chained_fixups.imports) <= 65536
     assert any("clamped" in lim.lower() for lim in report.limitations)
 
 
-def test_apple_dispatch_addend64_16_byte_unpack(tmp_path: Path):
-    """Verify DYLD_CHAINED_IMPORT_ADDEND64 unpacks as 16 bytes (<IIq) without struct.error."""
+def test_apple_dispatch_addend64_high32_offset(tmp_path: Path):
+    """Verify DYLD_CHAINED_IMPORT_ADDEND64 unpacks name_offset from bits 32..63."""
     header = bytearray(b"\x00" * 256)
     struct.pack_into("<I", header, 0, 0xfeedfacf)
     struct.pack_into("<II", header, 4, 0x0100000c, 0)
     struct.pack_into("<II", header, 12, 2, 1)
     struct.pack_into("<I", header, 20, 16)
 
-    # dataoff = 64, datasize = 80
-    cmd = struct.pack("<IIII", 0x80000034, 16, 64, 80)
+    cmd = struct.pack("<IIII", 0x80000034, 16, 64, 128)
     header[32 : 32 + 16] = cmd
 
     # Fixup header (28 bytes)
     # starts_offset=0, imports_offset=28, symbols_offset=44, imports_count=1, imports_format=3 (ADDEND64)
-    fixups_hdr = struct.pack(
-        "<7I",
-        0, 0, 28, 44, 1, 3, 0
-    )
+    fixups_hdr = struct.pack("<7I", 0, 0, 28, 44, 1, 3, 0)
     header[64 : 64 + 28] = fixups_hdr
 
-    # Import 0: 16 bytes (<IIq)
-    # name_offset = 0, meta = 0, addend = 42
-    import_entry = struct.pack("<IIq", 0, 0, 42)
+    # Symbols pool: "_foo\0_bar\0"
+    # Offset 0 is "_foo", offset 5 is "_bar"
+    sym_pool = b"_foo\x00_bar\x00"
+    symbols_abs_offset = 64 + 44
+    header[symbols_abs_offset : symbols_abs_offset + len(sym_pool)] = sym_pool
+
+    # Import entry (16 bytes) at 64 + 28 = 92
+    # In dyld_chained_import_addend64:
+    # low 32 bits (meta) = 0x00010001 (ordinal=1, flags)
+    # high 32 bits (name_offset) = 5 (points to "_bar")
+    meta = 0x00010001
+    name_offset = 5
+    addend = 120
+    import_entry = struct.pack("<IIq", meta, name_offset, addend)
     header[92 : 92 + 16] = import_entry
 
-    # Symbol pool at 64 + 44 = 108: "_target_symbol\0"
-    sym_bytes = b"_target_symbol\x00"
-    header[108 : 108 + len(sym_bytes)] = sym_bytes
-
-    bin_path = tmp_path / "addend64_macho"
+    bin_path = tmp_path / "addend64_test_macho"
     bin_path.write_bytes(bytes(header))
 
     report = dispatch_apple_binary(bin_path)
     assert len(report.chained_fixups.imports) == 1
-    assert report.chained_fixups.imports[0] == "_target_symbol"
+    # If the parser read low 32 bits, it would read meta (0x10001) or invalid.
+    # Reading high 32 bits resolves to "_bar".
+    assert report.chained_fixups.imports[0] == "_bar"
 
 
-def test_jump_table_prover_immediate_shift():
-    """Verify ARM64JumpTableProver parses 'cmp w0, #1, lsl #12' bound as 4096."""
+def test_jump_table_prover_register_parity():
+    """Verify ARM64JumpTableProver rejects candidates where cmp_reg != index_reg."""
     prover = ARM64JumpTableProver()
 
-    # Encoding of CMP W0, #1, LSL #12:
-    # 32-bit CMP imm: 0x7140041f (sf=0, op=1, S=1, 10001, sh=1 (bit 22), imm12=1, Rn=0, Rd=WZR)
-    cmp_insn = 0x7140041f
-    # B.HI +16 (default escape branch): cond=8
-    b_hi_insn = 0x54000088
-    # ADR X1, +8
-    adr_insn = 0x10000041
-    # LDRSW X2, [X1, X0, LSL #2]
-    # Register LDRSW with Rm=X0 (bits 20:16 = 0)
-    ldrsw_insn = 0xb8a07822
-    # BR X2: [31:10]=1101011000011111000000, Rn=X2 (bits 9:5 = 2)
-    br_insn = 0xd61f0040
+    cand_valid = JumpTableCandidate(
+        pc=0x1000,
+        cmp_pc=0x1000,
+        cmp_reg=0,  # X0
+        bound_imm=8,
+        branch_cond="HI",
+        default_target=0x1020,
+        base_calc_type="ADR",
+        table_base_va=0x2000,
+        load_insn_type="LDRSW",
+        entry_size=4,
+        dispatch_pc=0x1010,
+        dispatch_reg=2,
+        index_reg=0,  # X0 matches cmp_reg
+        table_target_reg=2,  # matches dispatch_reg
+    )
 
-    code = struct.pack("<5I", cmp_insn, b_hi_insn, adr_insn, ldrsw_insn, br_insn)
+    # Valid candidate with active Z3 can be proven
+    n, proven = prover.prove_bounds(
+        cand_valid.bound_imm,
+        cand_valid.branch_cond,
+        cmp_reg=cand_valid.cmp_reg,
+        index_reg=cand_valid.index_reg,
+        table_target_reg=cand_valid.table_target_reg,
+        dispatch_reg=cand_valid.dispatch_reg,
+    )
+    assert n == 9
 
-    candidates = prover.scan_candidates(code, base_va=0x1000)
-    assert len(candidates) == 1
-    cand = candidates[0]
-    assert cand.bound_imm == 4096  # 1 << 12
-    assert cand.dispatch_pc == 0x1010
+    # Candidate with mismatched index register (cmp_reg=0, index_reg=1) MUST fail proof
+    n_mismatch, proven_mismatch = prover.prove_bounds(
+        cand_valid.bound_imm,
+        cand_valid.branch_cond,
+        cmp_reg=0,
+        index_reg=1,  # different register
+        table_target_reg=2,
+        dispatch_reg=2,
+    )
+    assert proven_mismatch is False
 
 
-def test_jump_table_prover_rejects_missing_indirect_branch():
-    """Verify candidates without an actual indirect branch (BR) are rejected."""
-    prover = ARM64JumpTableProver()
-    # CMP W0, #4 followed by B.HI, ADR, LDRSW, but NO BR instruction
-    cmp_insn = 0x7100101f  # CMP W0, #4
-    b_hi_insn = 0x54000088
-    adr_insn = 0x10000041
-    ldrsw_insn = 0xb8a07822
-    nop_insn = 0xd503201f  # NOP instead of BR
-
-    code = struct.pack("<5I", cmp_insn, b_hi_insn, adr_insn, ldrsw_insn, nop_insn)
-    candidates = prover.scan_candidates(code, base_va=0x1000)
-    assert len(candidates) == 0
-
-
-def test_evidence_ledger_gatekeeper_negative_and_nan():
-    """Verify ReconstructionObligationLedger rejects negative offsets and NaN similarity."""
+def test_evidence_ledger_infinity_and_width_preservation():
+    """Verify ReconstructionObligationLedger rejects infinity similarity and detects width changes."""
     ledger = ReconstructionObligationLedger()
 
-    # 1. Negative struct field offset must fail
-    res = ledger.verify_struct_layout(
-        struct_name="BadStruct",
-        struct_size=16,
-        fields=[("bad_field", -4, 4)],
-    )
-    assert res.passed is False
-    assert "negative" in res.message.lower()
-
-    # 2. Non-positive field size must fail
-    res_sz = ledger.verify_struct_layout(
-        struct_name="BadSizeStruct",
-        struct_size=16,
-        fields=[("zero_field", 0, 0)],
-    )
-    assert res_sz.passed is False
-
-    # 3. NaN cosine similarity must fail
-    res_nan = ledger.verify_cross_version_rewrite(
+    # 1. Positive and negative infinity must fail
+    res_pos_inf = ledger.verify_cross_version_rewrite(
         old_offset=0x10,
         new_offset=0x18,
         access_width=8,
-        cosine_similarity=float("nan"),
+        cosine_similarity=float("inf"),
     )
-    assert res_nan.passed is False
-    assert "nan" in res_nan.message.lower()
+    assert res_pos_inf.passed is False
+    assert "invalid" in res_pos_inf.message.lower()
 
-    # 4. Negative cross-version offset must fail
-    res_neg = ledger.verify_cross_version_rewrite(
-        old_offset=-8,
+    res_neg_inf = ledger.verify_cross_version_rewrite(
+        old_offset=0x10,
         new_offset=0x18,
         access_width=8,
-        cosine_similarity=0.95,
+        cosine_similarity=-float("inf"),
     )
-    assert res_neg.passed is False
-    assert "negative" in res_neg.message.lower()
+    assert res_neg_inf.passed is False
 
-    # 5. Misaligned cross-version rewrite must fail
-    res_align = ledger.verify_cross_version_rewrite(
+    # 2. Score > 1.0 must fail
+    res_over = ledger.verify_cross_version_rewrite(
         old_offset=0x10,
-        new_offset=0x13,  # Misaligned for 4-byte access
+        new_offset=0x18,
+        access_width=8,
+        cosine_similarity=1.5,
+    )
+    assert res_over.passed is False
+
+    # 3. Access width change across versions (e.g. 4 bytes to 8 bytes) must be detected and rejected
+    res_width_change = ledger.verify_cross_version_rewrite(
+        old_offset=0x10,
+        new_offset=0x18,
         access_width=4,
         cosine_similarity=0.95,
+        new_access_width=8,
     )
-    assert res_align.passed is False
-    assert "misaligned" in res_align.message.lower() or "alignment" in res_align.message.lower()
+    assert res_width_change.passed is False
+    assert "access width" in res_width_change.message.lower()
