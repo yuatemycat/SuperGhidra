@@ -10,7 +10,6 @@
 import multiprocessing as mp
 import os
 import struct
-import time
 from pathlib import Path
 
 import pytest
@@ -68,18 +67,21 @@ def test_directory_lock_stale_recovery(tmp_path: Path):
     assert lock._locked is False
 
 
-def _concurrent_lock_worker(lock_dir: Path, barrier: mp.Barrier, results_q: mp.Queue):
-    barrier.wait()
+def _concurrent_lock_worker(lock_dir: Path, barrier_start: mp.Barrier, barrier_end: mp.Barrier, results_q: mp.Queue):
+    barrier_start.wait()
     lock = DirectoryLock(lock_dir)
     acquired = False
     try:
         lock.acquire()
         acquired = True
-        time.sleep(0.02)
     except LockContentionError:
         acquired = False
     finally:
         results_q.put(acquired)
+        try:
+            barrier_end.wait(timeout=2.0)
+        except Exception:
+            pass
         if acquired:
             try:
                 lock.release()
@@ -93,9 +95,16 @@ def test_directory_lock_concurrent_barrier_stress(tmp_path: Path):
     lock_dir.mkdir(parents=True, exist_ok=True)
 
     for _ in range(5):
-        barrier = mp.Barrier(6)
+        barrier_start = mp.Barrier(6)
+        barrier_end = mp.Barrier(6)
         queue = mp.Queue()
-        procs = [mp.Process(target=_concurrent_lock_worker, args=(lock_dir, barrier, queue)) for _ in range(6)]
+        procs = [
+            mp.Process(
+                target=_concurrent_lock_worker,
+                args=(lock_dir, barrier_start, barrier_end, queue),
+            )
+            for _ in range(6)
+        ]
         for p in procs:
             p.start()
         for p in procs:
