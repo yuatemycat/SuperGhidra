@@ -45,6 +45,7 @@ class JumpTableCandidate:
     dispatch_reg: int
     index_reg: int = 0
     table_target_reg: int = 0
+    target_flows_to_dispatch: bool = False
 
 
 @dataclasses.dataclass
@@ -89,6 +90,7 @@ class ARM64JumpTableProver:
         index_reg: int | None = None,
         table_target_reg: int | None = None,
         dispatch_reg: int | None = None,
+        target_flows_to_dispatch: bool = False,
     ) -> Tuple[int, bool]:
         """Proves exact case count N and register dataflow using Z3 formal verification.
 
@@ -112,7 +114,7 @@ class ARM64JumpTableProver:
             return expected_n, False
 
         # Soundness Gate 2: Table target loaded must flow to dispatch register
-        if table_target_reg != dispatch_reg:
+        if table_target_reg != dispatch_reg and not target_flows_to_dispatch:
             return expected_n, False
 
         if not HAS_Z3:
@@ -224,6 +226,8 @@ class ARM64JumpTableProver:
             dispatch_reg: int = 0
             table_idx_reg: int | None = None
             table_tgt_reg: int | None = None
+            flow_regs: set[int] = set()
+            target_flows_to_dispatch: bool = False
 
             lookahead_limit = min(num_insns, i + 10)
             cmp_reg_clobbered = False
@@ -267,6 +271,41 @@ class ARM64JumpTableProver:
                         table_tgt_reg = cur_insn & 0x1F
                         is_table_load = True
 
+                if is_table_load and table_tgt_reg is not None:
+                    flow_regs = {table_tgt_reg}
+                    continue
+
+                # Once table load has occurred, track register dataflow to dispatch register
+                if table_tgt_reg is not None:
+                    rd = cur_insn & 0x1F
+                    rn = (cur_insn >> 5) & 0x1F
+                    rm = (cur_insn >> 16) & 0x1F
+
+                    is_add_shifted = (cur_insn & 0x7F200000) == 0x0B000000
+                    is_add_extended = (cur_insn & 0x7FE00000) == 0x0B200000
+                    is_add_imm = (cur_insn & 0x7F800000) == 0x11000000
+                    is_orr_shifted = (cur_insn & 0x7F200000) == 0x2A000000
+
+                    if is_add_shifted or is_add_extended or is_orr_shifted:
+                        if rn in flow_regs or rm in flow_regs:
+                            flow_regs.add(rd)
+                        elif rd in flow_regs:
+                            flow_regs.discard(rd)
+                    elif is_add_imm:
+                        if rn in flow_regs:
+                            flow_regs.add(rd)
+                        elif rd in flow_regs:
+                            flow_regs.discard(rd)
+                    else:
+                        if (cur_insn & 0xFFFFFC1F) != 0xD61F0000 and rd != 31:
+                            is_dp_imm = (cur_insn & 0x1C000000) == 0x10000000
+                            is_dp_reg = (cur_insn & 0x0E000000) == 0x0A000000
+                            is_load = (cur_insn & 0x0A000000) == 0x08000000 and (
+                                (cur_insn & 0x00400000) != 0 or (cur_insn & 0x38000000) in (0x18000000, 0x38000000)
+                            )
+                            if is_dp_imm or is_dp_reg or is_load:
+                                flow_regs.discard(rd)
+
                 # Check if cmp_reg is overwritten before table load
                 if not is_table_load and table_idx_reg is None:
                     rd = cur_insn & 0x1F
@@ -307,6 +346,8 @@ class ARM64JumpTableProver:
                 if (cur_insn & 0xFFFFFC1F) == 0xD61F0000:
                     dispatch_pc = cur_pc
                     dispatch_reg = (cur_insn >> 5) & 0x1F
+                    if dispatch_reg in flow_regs or (table_tgt_reg is not None and dispatch_reg == table_tgt_reg):
+                        target_flows_to_dispatch = True
                     break
 
             # Candidate requires table base computation, verified table load indexed by cmp_reg,
@@ -335,6 +376,7 @@ class ARM64JumpTableProver:
                         dispatch_reg=dispatch_reg,
                         index_reg=table_idx_reg,
                         table_target_reg=table_tgt_reg,
+                        target_flows_to_dispatch=target_flows_to_dispatch,
                     )
                 )
 
@@ -355,6 +397,7 @@ class ARM64JumpTableProver:
             index_reg=candidate.index_reg,
             table_target_reg=candidate.table_target_reg,
             dispatch_reg=candidate.dispatch_reg,
+            target_flows_to_dispatch=candidate.target_flows_to_dispatch,
         )
         targets: List[int | None] = []
         unresolved = 0

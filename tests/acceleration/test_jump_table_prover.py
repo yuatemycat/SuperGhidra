@@ -279,3 +279,74 @@ def test_full_recovery_integration():
     assert len(data["targets"]) == 4
     assert data["unresolved_cases"] == 0
     assert data["proven"] is True
+
+
+def test_compiler_pattern_load_x2_add_x1_branch_x1():
+    """13. Standard compiler pattern: load into x2, add into x1, branch through x1."""
+    prover = ARM64JumpTableProver()
+    # CMP W0, #4 (cases 0..4, bounds_n = 5)
+    # B.HI default (+80 bytes)
+    # ADR X1, #32 (table base at 0x1008 + 32 = 0x1028)
+    # LDRSW X2, [X1, W0, SXTW #2] (0xB8A0D822: load 32-bit signed offset into X2)
+    # ADD X1, X1, X2 (0x8B020021: add base X1 + offset X2 -> X1)
+    # BR X1 (_encode_br(1))
+    ldrsw_x2_insn = 0xB8A0D822
+    add_x1_x1_x2 = 0x8B020021
+    insns = [
+        _encode_cmp_imm_32(0, 4),
+        _encode_b_cond(8, 20),
+        _encode_adr(1, 0x20),
+        ldrsw_x2_insn,
+        add_x1_x1_x2,
+        _encode_br(1),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.table_target_reg == 2
+    assert cand.dispatch_reg == 1
+    assert cand.target_flows_to_dispatch is True
+
+    table_data = struct.pack("<5i", 10, 20, 30, 40, 50)
+    recovered = prover.recover_jump_table(
+        candidate=cand,
+        memory_data=table_data,
+        memory_base_va=cand.table_base_va,
+    )
+    assert recovered.bounds_n == 5
+    assert recovered.proven is True
+    assert recovered.unresolved_cases == 0
+    assert len(recovered.targets) == 5
+    assert recovered.targets[0] == cand.table_base_va + (10 << 2)
+
+
+def test_compiler_pattern_clobbered_add_fails_safe():
+    """14. If dispatch register is overwritten with unrelated value, proof fails safe."""
+    prover = ARM64JumpTableProver()
+    ldrsw_x2_insn = 0xB8A0D822
+    # ADD X1, X3, X4 (0x8B040061: unrelated add into X1, does not flow from X2)
+    add_unrelated = 0x8B040061
+    insns = [
+        _encode_cmp_imm_32(0, 4),
+        _encode_b_cond(8, 20),
+        _encode_adr(1, 0x20),
+        ldrsw_x2_insn,
+        add_unrelated,
+        _encode_br(1),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.table_target_reg == 2
+    assert cand.dispatch_reg == 1
+    assert cand.target_flows_to_dispatch is False
+
+    table_data = struct.pack("<5i", 10, 20, 30, 40, 50)
+    recovered = prover.recover_jump_table(
+        candidate=cand,
+        memory_data=table_data,
+        memory_base_va=cand.table_base_va,
+    )
+    assert recovered.proven is False
