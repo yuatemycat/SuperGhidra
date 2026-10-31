@@ -36,6 +36,8 @@ from superghidra.formats.apple_dispatch import (
     CPU_TYPE_X86_64,
     DYLD_CHAINED_IMPORT,
     DYLD_CHAINED_PTR_64,
+    LC_SYMTAB,
+    LC_DYSYMTAB,
     DYLD_CHAINED_PTR_64_OFFSET,
     DYLD_CHAINED_PTR_ARM64E,
     DYLD_CHAINED_PTR_ARM64E_USERLAND24,
@@ -557,11 +559,11 @@ def test_legacy_lazy_bind_opcodes_parsing_279_entries():
     assert report.chained_fixups.legacy_info_fallback
     assert report.chained_fixups.counts["entries"] == num_lazy_entries + 1
     assert report.chained_fixups.counts["binds"] == num_lazy_entries + 1
-    lazy_entries = [e for e in report.chained_fixups.entries if e.kind == "lazy_bind"]
+    all_binds = [e for e in report.chained_fixups.entries if e.kind == "bind"]
+    assert len(all_binds) == num_lazy_entries + 1
+    assert all_binds[0].symbol_name == "_dyld_start"
+    lazy_entries = all_binds[1:]
     assert len(lazy_entries) == 279
-    standard_binds = [e for e in report.chained_fixups.entries if e.kind == "bind"]
-    assert len(standard_binds) == 1
-    assert standard_binds[0].symbol_name == "_dyld_start"
     assert lazy_entries[0].symbol_name == "_stub_func_0"
     assert lazy_entries[278].symbol_name == "_stub_func_278"
     assert lazy_entries[278].address == 0x2000 + 0x10 + 278 * 8
@@ -721,3 +723,103 @@ def test_dyld_chained_ptr_arm64e_userland24_decoding():
     assert e3.diversity == 0xCAFE
     assert e3.addr_diversity is False
     assert e3.target == image_base + 0x6000
+
+
+def test_dysymtab_indirect_symbols_hugo_intel_279_entries():
+    """Bug 4: Verify classic Mach-O LC_DYSYMTAB indirect symbol table recovery (279 Hugo Intel fixups)."""
+    # 279 indirect symbols in __la_symbol_ptr
+    num_entries = 279
+    strtab = bytearray(b"\x00_main\x00")
+    symbols_raw = bytearray()
+    # Symbol 0: _main
+    symbols_raw.extend(struct.pack("<IBBHQ", 1, 0x0F, 1, 0, 0x10001000))
+    # Symbols 1..279: _stub_i
+    for i in range(num_entries):
+        stroff = len(strtab)
+        strtab.extend(f"_hugo_sym_{i}\x00".encode("utf-8"))
+        symbols_raw.extend(struct.pack("<IBBHQ", stroff, 0x01, 0, 0, 0))
+
+    # indirect symbol table: indices 1..279
+    indirect_table = struct.pack(f"<{num_entries}I", *range(1, num_entries + 1))
+
+    # Section __la_symbol_ptr in __DATA:
+    # reserved1 = 0 (offset into indirect symbol table)
+    # size = 279 * 8
+    sect_sz = num_entries * 8
+    sect_cmd = struct.pack(
+        "<16s16sQQIIIIIIII",
+        b"__la_symbol_ptr\x00",
+        b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        0x10004000, sect_sz,
+        0x1000, 3, 0, 0, 0x07,  # flags: S_LAZY_SYMBOL_POINTERS
+        0, 8, 0,  # reserved1=0, reserved2=8, reserved3=0
+    )
+    seg_cmd = struct.pack(
+        "<II16sQQQQIIII",
+        LC_SEGMENT_64,
+        72 + 80,
+        b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        0x10004000, 0x4000, 0x1000, 0x4000, 7, 7, 1, 0,
+    ) + sect_cmd
+
+    # Layout file offsets
+    # Header: 32 bytes
+    # seg_cmd: 152 bytes
+    # dysymtab_cmd: 80 bytes
+    # symtab_cmd: 24 bytes
+    # Total cmds size: 152 + 80 + 24 = 256 bytes
+    header_and_cmds_sz = 32 + 256
+    symoff = 0x500
+    stroff = symoff + len(symbols_raw)
+    indirect_off = stroff + len(strtab)
+
+    symtab_cmd = struct.pack("<IIII", symoff, num_entries + 1, stroff, len(strtab))
+    dysym_cmd = struct.pack(
+        "<18I",
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+        indirect_off, num_entries,
+        0, 0, 0, 0,
+    )
+
+    hdr = _build_thin_macho_header(CPU_TYPE_X86_64, 3, ncmds=3, sizeofcmds=256)
+    binary = bytearray(0x4000)
+    meta = hdr + seg_cmd + struct.pack("<II", LC_SYMTAB, 24) + symtab_cmd + struct.pack("<II", LC_DYSYMTAB, 80) + dysym_cmd
+    binary[:len(meta)] = meta
+    binary[symoff : symoff + len(symbols_raw)] = symbols_raw
+    binary[stroff : stroff + len(strtab)] = strtab
+    binary[indirect_off : indirect_off + len(indirect_table)] = indirect_table
+
+    report = dispatch_apple_binary(bytes(binary), arch="x86_64")
+    assert report.chained_fixups.legacy_info_fallback is True
+    assert report.chained_fixups.counts["entries"] == 279
+    assert report.chained_fixups.counts["binds"] == 279
+    assert len(report.chained_fixups.entries) == 279
+    assert report.chained_fixups.entries[0].symbol_name == "_hugo_sym_0"
+    assert report.chained_fixups.entries[278].symbol_name == "_hugo_sym_278"
+    assert report.chained_fixups.entries[0].address == 0x10004000
+    assert report.chained_fixups.entries[278].address == 0x10004000 + 278 * 8
+
+
+def test_ios_framework_dylib_base_zero_altstorecore():
+    """Bug 9: Verify iOS dylib/framework with __TEXT.vmaddr=0 keeps image_base=0 and does not shift by __DATA."""
+    # Segment 1: __TEXT with vmaddr = 0
+    seg_text = struct.pack(
+        "<II16sQQQQIIII",
+        LC_SEGMENT_64,
+        72,
+        b"__TEXT\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        0x0, 0x4000, 0x0, 0x4000, 5, 5, 0, 0,
+    )
+    # Segment 2: __DATA with vmaddr = 0x8000
+    seg_data = struct.pack(
+        "<II16sQQQQIIII",
+        LC_SEGMENT_64,
+        72,
+        b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        0x8000, 0x4000, 0x4000, 0x4000, 7, 7, 0, 0,
+    )
+    hdr = _build_thin_macho_header(CPU_TYPE_ARM64, 0, ncmds=2, sizeofcmds=72 + 72)
+    binary = hdr + seg_text + seg_data
+    report = dispatch_apple_binary(binary, arch="arm64")
+    assert report.image_base == 0, f"Dylib __TEXT with vmaddr 0 must have image_base 0, got {hex(report.image_base)}"

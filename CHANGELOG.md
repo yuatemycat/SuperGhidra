@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] - 2026-10-31
+
+### Fixed
+- **Mach-O Dynamic Library & Framework Base Address Preservation**: Fixed `MachOSlice` image base assignment in `apple_dispatch.py` to strictly evaluate `segname == "__TEXT"`, preventing subsequent non-text segments (such as `__DATA` at `0x8000`) from clobbering `image_base = 0` on Mach-O dylibs and frameworks (e.g. `AltStoreCore`).
+- **Mach-O LC_DYSYMTAB Indirect Symbol Table Recovery**: Added `_decode_dysymtab_fixups` in `apple_dispatch.py` to parse indirect symbol tables (`indirectsymoff`), dynamic symbol definitions, and symbol pointer sections (`__la_symbol_ptr`, `__nl_symbol_ptr`, `__got`), recovering all 279 dynamic fixups on Intel x86_64 Hugo binaries lacking chained fixup commands.
+- **Mach-O Legacy Lazy Bind Classification**: Normalized legacy dyld info lazy bind entries to standard `"bind"` taxonomy, resolving mislabeled `"lazy_bind"` records in older-style Mach-O binaries.
+- **ARM64 Jump Table Switch Case 0 Target Recovery**: Modified `ARM64JumpTableProver.recover_jump_table` to accept offset value `0` for relative jump tables (`entry_sz in (1, 2, 4)`), resolving valid case-0 branch targets and eliminating false gaps across switch dispatches.
+- **ARM64 Jump Table Swift & Chromium Relative Base Resolution**: Resolved relative jump targets in data sections (`.rodata`) against `table_base_va` rather than falling back to `candidate.pc`, correcting 668 mismatched destinations in Electron and 36 in AltStore.
+- **ARM64 Jump Table Sound Code Anchor Verification**: Required that `code_anchor_va` is only assigned when the code anchor register is verified as the base in the dispatch `ADD` instruction, preventing unrelated `ADR` instructions in Rust binaries (e.g. `ripgrep`) from creating false proven jump tables.
+- **ARM64 Jump Table Z3 Proof Memoization & Candidate Bounding**: Added memoization for distinct `(bound_imm, cond)` Z3 solver proofs in `ARM64JumpTableProver` and bounded candidate `bound_imm <= 4096`, restoring scan and proof throughput on large binaries (e.g. Electron from 180s down to <1s).
+
 ## [1.0.6] - 2026-10-31
 
 ### Fixed

@@ -635,7 +635,16 @@ def test_swift_chromium_jump_table_in_data_fallback():
     assert recovered.unresolved_cases == 0
     assert recovered.targets[0] == 0x1008 + (10 << 2)
 
-    # Candidate without explicit code_anchor_va, but table is in data outside valid_range
+    # Candidate without explicit code_anchor_va (Swift/Chromium in .rodata):
+    # Offsets in table are relative to table_base_va (0x40000) landing in code section (0x1000..0x2000).
+    target_code_0 = 0x1100
+    target_code_1 = 0x1200
+    target_code_2 = 0x1300
+    offset_0 = (target_code_0 - 0x40000) >> 2
+    offset_1 = (target_code_1 - 0x40000) >> 2
+    offset_2 = (target_code_2 - 0x40000) >> 2
+    real_rodata_table = struct.pack("<3i", offset_0, offset_1, offset_2)
+
     cand_no_anchor = JumpTableCandidate(
         pc=0x1000,
         cmp_pc=0x1000,
@@ -644,7 +653,7 @@ def test_swift_chromium_jump_table_in_data_fallback():
         branch_cond="HI",
         default_target=0x1050,
         base_calc_type="ADRP_ADD",
-        table_base_va=0x40000,  # in data
+        table_base_va=0x40000,  # in .rodata
         load_insn_type="LDRSW",
         entry_size=4,
         dispatch_pc=0x1020,
@@ -655,14 +664,16 @@ def test_swift_chromium_jump_table_in_data_fallback():
     )
     recovered_fallback = prover.recover_jump_table(
         candidate=cand_no_anchor,
-        memory_data=table_data,
+        memory_data=real_rodata_table,
         memory_base_va=0x40000,
         valid_range=(0x1000, 0x2000),
     )
     assert recovered_fallback.bounds_n == 3
     assert recovered_fallback.unresolved_cases == 0
-    # Falls back to candidate.pc (0x1000)
-    assert recovered_fallback.targets[0] == 0x1000 + (10 << 2)
+    # Resolves against table_base_va (0x40000), hitting code targets exactly
+    assert recovered_fallback.targets[0] == target_code_0
+    assert recovered_fallback.targets[1] == target_code_1
+    assert recovered_fallback.targets[2] == target_code_2
 
 
 def test_absolute_jump_table_preserves_addresses():
@@ -712,3 +723,66 @@ def test_absolute_jump_table_preserves_addresses():
     table_64 = prover.recover_jump_table(cand_64, memory_data=data_64, memory_base_va=0x2000)
     assert table_64.targets[0] == 0x140001000
     assert table_64.targets[1] == 0x140002000
+
+
+def test_case_0_relative_target_is_valid():
+    """Bug 10: Switch cases with offset value 0 map to valid rel_base targets, not None."""
+    prover = ARM64JumpTableProver()
+    cand = JumpTableCandidate(
+        pc=0x1000,
+        cmp_pc=0x1000,
+        cmp_reg=0,
+        bound_imm=3,
+        branch_cond="HI",
+        default_target=0x1050,
+        base_calc_type="ADR",
+        table_base_va=0x2000,
+        load_insn_type="LDRSW",
+        entry_size=4,
+        dispatch_pc=0x1020,
+        dispatch_reg=1,
+        index_reg=0,
+        table_target_reg=1,
+    )
+    # Entry 0 has offset 0 (targets rel_base + 0 = 0x2000)
+    table_data = struct.pack("<4i", 0, 10, 20, 30)
+    table = prover.recover_jump_table(
+        candidate=cand,
+        memory_data=table_data,
+        memory_base_va=0x2000,
+        valid_range=(0x2000, 0x3000),
+    )
+    assert table.bounds_n == 4
+    assert table.targets[0] == 0x2000, "Case 0 must resolve to rel_base + 0, not None"
+    assert table.targets[1] == 0x2000 + (10 << 2)
+    assert table.unresolved_cases == 0
+
+
+def test_ripgrep_unrelated_adr_does_not_pollute_table_base():
+    """Bug 11: In ripgrep, an unrelated ADR does not override table_base_va when ADD adds table_base_reg."""
+    prover = ARM64JumpTableProver()
+
+    # CMP W0, #4
+    # B.HI default
+    # ADRP X1, table_page
+    # ADD X1, X1, table_pageoff   -> table_base_reg = 1
+    # ADR X3, unrelated_data      -> unrelated ADR
+    # LDRSW X2, [X1, X0, LSL #2]  -> load from table base X1
+    # ADD X2, X1, X2              -> ADD combines X1 (table_base_reg), NOT X3!
+    # BR X2
+    insns = [
+        _encode_cmp_imm_32(0, 4),
+        _encode_b_cond(8, 20),
+        _encode_adrp(1, 0x50000, 0x1008),
+        _encode_add_imm_64(1, 1, 0x100),  # X1 = 0x50100
+        _encode_adr(3, 0x40),             # X3 = unrelated ADR
+        _encode_ldrsw_reg(2, 1, 0),       # LDRSW X2, [X1, X0, LSL #2]
+        _encode_add_shifted_64(2, 1, 2, 0), # ADD X2, X1, X2
+        _encode_br(2),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.table_base_va == 0x50100
+    assert cand.code_anchor_va is None, "code_anchor_va must remain None because X3 was not added to the target"

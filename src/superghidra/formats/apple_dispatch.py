@@ -415,6 +415,7 @@ class MachOSection:
     reloff: int
     nreloc: int
     flags: int
+    reserved1: int = 0
 
 
 class MachOSlice:
@@ -427,8 +428,10 @@ class MachOSlice:
         self.sections: List[MachOSection] = []
         self.libraries: List[str] = []
         self.image_base: int = 0
+        self._has_text_segment: bool = False
         self.chained_fixups_cmd: Tuple[int, int] | None = None  # (dataoff, datasize)
         self.dyld_info_cmd: Tuple[int, int, int, int, int, int, int, int, int, int] | None = None
+        self.dysymtab_cmd: Tuple[int, ...] | None = None
         self.symtab_cmd: Tuple[int, int, int, int] | None = None  # symoff, nsyms, stroff, strsize
 
         self._parse_header_and_commands()
@@ -493,7 +496,10 @@ class MachOSlice:
                     flags=seg_flags,
                 )
                 self.segments.append(seg)
-                if segname == "__TEXT" or (self.image_base == 0 and vmaddr > 0):
+                if segname == "__TEXT":
+                    self.image_base = vmaddr
+                    self._has_text_segment = True
+                elif not self._has_text_segment and segname != "__PAGEZERO":
                     self.image_base = vmaddr
 
                 for s in range(nsects):
@@ -509,9 +515,19 @@ class MachOSlice:
                         addr, size, offset, align, reloff, nreloc, sflags = (
                             struct.unpack_from(e + "QQIIIII", self.data, so + 32)
                         )
+                        reserved1 = (
+                            struct.unpack_from(e + "I", self.data, so + 68)[0]
+                            if so + 72 <= len(self.data)
+                            else 0
+                        )
                     else:
                         addr, size, offset, align, reloff, nreloc, sflags = (
                             struct.unpack_from(e + "IIIIIII", self.data, so + 32)
+                        )
+                        reserved1 = (
+                            struct.unpack_from(e + "I", self.data, so + 60)[0]
+                            if so + 64 <= len(self.data)
+                            else 0
                         )
 
                     self.sections.append(
@@ -525,6 +541,7 @@ class MachOSlice:
                             reloff=reloff,
                             nreloc=nreloc,
                             flags=sflags,
+                            reserved1=reserved1,
                         )
                     )
 
@@ -534,6 +551,10 @@ class MachOSlice:
 
             elif cmd in (LC_DYLD_INFO, LC_DYLD_INFO_ONLY):
                 self.dyld_info_cmd = struct.unpack_from(e + "10I", self.data, off + 8)
+
+            elif cmd == LC_DYSYMTAB:
+                if off + 80 <= len(self.data):
+                    self.dysymtab_cmd = struct.unpack_from(e + "18I", self.data, off + 8)
 
             elif cmd == LC_SYMTAB:
                 self.symtab_cmd = struct.unpack_from(e + "4I", self.data, off + 8)
@@ -733,7 +754,11 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
     """Decodes dyld chained fixups table or falls back to legacy LC_DYLD_INFO opcodes."""
     if slice_macho.chained_fixups_cmd is None:
         if slice_macho.dyld_info_cmd is not None:
-            return _decode_legacy_dyld_info(slice_macho, limitations)
+            legacy_rep = _decode_legacy_dyld_info(slice_macho, limitations)
+            if legacy_rep.entries:
+                return legacy_rep
+        if slice_macho.dysymtab_cmd is not None:
+            return _decode_dysymtab_fixups(slice_macho, limitations)
         return ChainedFixupsReport()
 
     dataoff, datasize = slice_macho.chained_fixups_cmd
@@ -1185,7 +1210,7 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
     bind_chunks = [
         (bind_off, bind_size, "bind"),
         (weak_bind_off, weak_bind_size, "bind"),
-        (lazy_bind_off, lazy_bind_size, "lazy_bind"),
+        (lazy_bind_off, lazy_bind_size, "bind"),
     ]
 
     for chunk_off, chunk_size, chunk_kind in bind_chunks:
@@ -1322,6 +1347,152 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
         "imports": len(imports_list),
         "rebases": sum(1 for e in entries if e.kind == "rebase"),
         "binds": sum(1 for e in entries if "bind" in e.kind),
+        "auth_entries": 0,
+    }
+
+    return ChainedFixupsReport(
+        fixups_version=0,
+        pointer_format=0,
+        starts_count=len(entries),
+        imports_count=len(imports_list),
+        entries=entries,
+        imports=imports_list,
+        legacy_info_fallback=True,
+        counts=counts,
+    )
+
+
+# -----------------------------------------------------------------------------
+def _decode_dysymtab_fixups(slice_macho: MachOSlice, limitations: List[str]) -> ChainedFixupsReport:
+    """Decodes indirect symbol table and pointer sections from LC_DYSYMTAB and LC_SYMTAB."""
+    if slice_macho.dysymtab_cmd is None or slice_macho.symtab_cmd is None:
+        return ChainedFixupsReport()
+
+    (
+        ilocalsym,
+        nlocalsym,
+        iextdefsym,
+        nextdefsym,
+        iundefsym,
+        nundefsym,
+        tocoff,
+        ntoc,
+        modtaboff,
+        nmodtab,
+        extrefsymoff,
+        nextrefsyms,
+        indirectsymoff,
+        nindirectsyms,
+        extreloff,
+        nextrel,
+        locreloff,
+        nlocrel,
+    ) = slice_macho.dysymtab_cmd
+
+    symoff, nsyms, stroff, strsize = slice_macho.symtab_cmd
+    entries: List[ChainedFixupEntry] = []
+    imports_list: List[str] = []
+    ptr_size = 8 if slice_macho.bits == 64 else 4
+
+    # 1. Read symbol strings from LC_SYMTAB
+    strtab = (
+        slice_macho.data[stroff : stroff + strsize]
+        if stroff + strsize <= len(slice_macho.data)
+        else b""
+    )
+    symbols: List[str] = []
+    nlist_sz = 16 if slice_macho.bits == 64 else 12
+    nlist_fmt = slice_macho.endian + ("IBBHQ" if slice_macho.bits == 64 else "IBBHI")
+
+    for s_i in range(nsyms):
+        n_off = symoff + s_i * nlist_sz
+        if n_off + nlist_sz > len(slice_macho.data):
+            break
+        n_strx = struct.unpack_from(nlist_fmt, slice_macho.data, n_off)[0]
+        sym_name = MachOSlice._read_cstr(strtab, n_strx) if strtab else ""
+        symbols.append(sym_name or f"sym_{s_i}")
+
+    # 2. Read indirect symbol table indices
+    indirect_syms: List[int] = []
+    if (
+        indirectsymoff > 0
+        and nindirectsyms > 0
+        and indirectsymoff + nindirectsyms * 4 <= len(slice_macho.data)
+    ):
+        indirect_syms = list(
+            struct.unpack_from(
+                f"{slice_macho.endian}{nindirectsyms}I",
+                slice_macho.data,
+                indirectsymoff,
+            )
+        )
+
+    INDIRECT_SYMBOL_LOCAL = 0x80000000
+    INDIRECT_SYMBOL_ABS = 0x40000000
+
+    # 3. Locate symbol pointer sections (__la_symbol_ptr, __nl_symbol_ptr, __got)
+    for sec in slice_macho.sections:
+        stype = sec.flags & 0xFF
+        is_ptr_sect = (stype in (6, 7)) or sec.sectname in (
+            "__nl_symbol_ptr",
+            "__la_symbol_ptr",
+            "__got",
+            "__auth_got",
+            "__auth_ptr",
+        )
+        if not is_ptr_sect or sec.size <= 0:
+            continue
+
+        num_ptrs = sec.size // ptr_size
+        start_idx = sec.reserved1
+
+        for i in range(num_ptrs):
+            indirect_idx = start_idx + i
+            if indirect_idx < 0 or indirect_idx >= len(indirect_syms):
+                continue
+            sym_idx = indirect_syms[indirect_idx]
+            slot_va = sec.addr + i * ptr_size
+            slot_off = sec.offset + i * ptr_size
+
+            if sym_idx in (INDIRECT_SYMBOL_LOCAL, INDIRECT_SYMBOL_ABS):
+                target_val = 0
+                if slot_off + ptr_size <= len(slice_macho.data):
+                    target_val = struct.unpack_from(
+                        slice_macho.endian + ("Q" if ptr_size == 8 else "I"),
+                        slice_macho.data,
+                        slot_off,
+                    )[0]
+                entries.append(
+                    ChainedFixupEntry(
+                        offset=slot_off,
+                        address=slot_va,
+                        kind="rebase",
+                        target=target_val,
+                    )
+                )
+            else:
+                sym_name = (
+                    symbols[sym_idx]
+                    if sym_idx < len(symbols)
+                    else f"import_{sym_idx}"
+                )
+                if sym_name not in imports_list:
+                    imports_list.append(sym_name)
+                entries.append(
+                    ChainedFixupEntry(
+                        offset=slot_off,
+                        address=slot_va,
+                        kind="bind",
+                        ordinal=sym_idx,
+                        symbol_name=sym_name,
+                    )
+                )
+
+    counts = {
+        "entries": len(entries),
+        "imports": len(imports_list),
+        "rebases": sum(1 for e in entries if e.kind == "rebase"),
+        "binds": sum(1 for e in entries if e.kind == "bind"),
         "auth_entries": 0,
     }
 

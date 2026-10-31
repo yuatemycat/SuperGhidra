@@ -83,6 +83,7 @@ class ARM64JumpTableProver:
 
     def __init__(self, use_gpu: bool = False) -> None:
         self.use_gpu = use_gpu
+        self._z3_cache: dict[tuple[int, str], bool] = {}
 
     def prove_bounds(
         self,
@@ -126,6 +127,10 @@ class ARM64JumpTableProver:
         if table_target_reg != dispatch_reg and not target_flows_to_dispatch:
             return expected_n, False
 
+        cache_key = (bound_imm, cond.upper())
+        if cache_key in self._z3_cache:
+            return expected_n, self._z3_cache[cache_key]
+
         if not HAS_Z3:
             return expected_n, False
 
@@ -158,9 +163,11 @@ class ARM64JumpTableProver:
             if s2.check() != z3.unsat:
                 return expected_n, False
 
+            self._z3_cache[cache_key] = True
             return expected_n, True
         except Exception as exc:
             logger.debug("Z3 bounds proof error: %s", exc)
+            self._z3_cache[cache_key] = False
             return expected_n, False
 
     def scan_candidates(
@@ -203,7 +210,7 @@ class ARM64JumpTableProver:
                 sh = (insn0 >> 22) & 1
                 bound_imm = (imm12 << 12) if sh else imm12
 
-            if not is_cmp or bound_imm <= 0:
+            if not is_cmp or bound_imm <= 0 or bound_imm > 4096:
                 continue
 
             # insn1 should be B.cond (B.HI: cond=8 (0x8), B.HS/B.CS: cond=2 (0x2))
@@ -242,6 +249,7 @@ class ARM64JumpTableProver:
             table_tgt_reg: int | None = None
             flow_regs: set[int] = set()
             target_flows_to_dispatch: bool = False
+            used_code_anchor: bool = False
 
             lookahead_limit = min(num_insns, i + 10)
             cmp_reg_clobbered = False
@@ -357,6 +365,9 @@ class ARM64JumpTableProver:
                         (rn in flow_regs and rm in target_rel_bases)
                         or (rm in flow_regs and rn in target_rel_bases)
                     ):
+                        added_reg = rm if rn in flow_regs else rn
+                        if added_reg in code_anchor_regs:
+                            used_code_anchor = True
                         flow_regs.add(rd)
                         if rd in base_regs:
                             base_regs.discard(rd)
@@ -470,7 +481,7 @@ class ARM64JumpTableProver:
                         table_target_reg=table_tgt_reg,
                         target_flows_to_dispatch=target_flows_to_dispatch,
                         table_base_reg=table_base_reg,
-                        code_anchor_va=code_anchor_va,
+                        code_anchor_va=code_anchor_va if used_code_anchor else None,
                     )
                 )
 
@@ -501,17 +512,10 @@ class ARM64JumpTableProver:
         entry_sz = candidate.entry_size
 
         # Determine relative base for relative jump targets:
-        # If code_anchor_va is known (e.g. Apple Clang / LLVM), relative offsets resolve from it.
-        # Fallback to pc if table is in a data section separate from code,
-        # otherwise fallback to table_base_va.
+        # If code_anchor_va is verified (Apple Clang), relative offsets resolve from it.
+        # Otherwise, relative offsets resolve from table_base_va.
         if candidate.code_anchor_va is not None:
             rel_base = candidate.code_anchor_va
-        elif (
-            valid_range
-            and not (valid_range[0] <= candidate.table_base_va <= valid_range[1])
-            and (valid_range[0] <= candidate.pc <= valid_range[1])
-        ):
-            rel_base = candidate.pc
         else:
             rel_base = candidate.table_base_va
 
@@ -542,8 +546,17 @@ class ARM64JumpTableProver:
             else:
                 target_addr = 0
 
-            # Validate range and non-literal bounds
-            if val in (0xFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0):
+            # Validate range and unmapped/sentinel entries
+            is_unmapped = False
+            if entry_sz == 8 and val == 0:
+                is_unmapped = True
+            elif val in (0xFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF, -1):
+                if valid_range and not (valid_range[0] <= target_addr <= valid_range[1]):
+                    is_unmapped = True
+                elif not valid_range and entry_sz == 1 and val == 0xFF:
+                    is_unmapped = True
+
+            if is_unmapped:
                 targets.append(None)
                 unresolved += 1
             elif valid_range and not (valid_range[0] <= target_addr <= valid_range[1]):
