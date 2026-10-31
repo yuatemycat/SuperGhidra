@@ -328,7 +328,7 @@ def _recover_rust_metadata(data: bytes, sections: Dict[str, bytes], limitations:
             limitations.append(f"Failed to decode .dep-v0 payload: {e}")
 
     # If cargo-auditable payload was absent, recover crates from embedded cargo registry paths
-    if not crates:
+    if not crates and b".cargo" in data:
         seen_crates: set[tuple[str, str]] = set()
         for m in re.finditer(
             rb"(?:[a-zA-Z0-9_\.\-]+[/\\])?\.cargo[/\\]registry[/\\]src[/\\][^/\\]+[/\\]([a-zA-Z0-9_\-]+)-([0-9]+\.[0-9]+(?:\.[0-9]+[a-zA-Z0-9_\.\-]*)?)",
@@ -341,18 +341,19 @@ def _recover_rust_metadata(data: bytes, sections: Dict[str, bytes], limitations:
                 crates.append(RustCrateInfo(name=c_name, version=c_ver, source="crates.io"))
 
         # Also recover standard library crates (core, alloc, std) if referenced in symbol tables
-        std_crates = ["std", "core", "alloc"]
-        for sc in std_crates:
-            if not any(c.name == sc for c in crates) and (
-                f"_ZN{len(sc)}{sc}".encode() in data or f"_R{len(sc)}{sc}".encode() in data
-            ):
-                crates.append(
-                    RustCrateInfo(
-                        name=sc,
-                        version="1.0",
-                        source="rust-lang",
+        if any(k in data for k in (b"_ZN", b"_R")):
+            std_crates = ["std", "core", "alloc"]
+            for sc in std_crates:
+                if not any(c.name == sc for c in crates) and (
+                    f"_ZN{len(sc)}{sc}".encode() in data or f"_R{len(sc)}{sc}".encode() in data
+                ):
+                    crates.append(
+                        RustCrateInfo(
+                            name=sc,
+                            version="1.0",
+                            source="rust-lang",
+                        )
                     )
-                )
 
         if not pkg_name and crates:
             pkg_name = crates[0].name

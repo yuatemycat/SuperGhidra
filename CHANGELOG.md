@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mach-O Legacy Lazy Bind Classification**: Normalized legacy dyld info lazy bind entries to standard `"bind"` taxonomy, resolving mislabeled `"lazy_bind"` records in older-style Mach-O binaries.
 - **ARM64 Jump Table Switch Case 0 Target Recovery**: Modified `ARM64JumpTableProver.recover_jump_table` to accept offset value `0` for relative jump tables (`entry_sz in (1, 2, 4)`), resolving valid case-0 branch targets and eliminating false gaps across switch dispatches.
 - **ARM64 Jump Table Swift & Chromium Relative Base Resolution**: Resolved relative jump targets in data sections (`.rodata`) against `table_base_va` rather than falling back to `candidate.pc`.
-- **ARM64 Jump Table Z3 Proof Memoization & Candidate Bounding**: Added memoization for distinct `(bound_imm, cond)` Z3 solver proofs in `ARM64JumpTableProver` and bounded candidate `bound_imm <= 4096`, restoring scan and proof throughput on large binaries (e.g. Electron from 180s down to <1s).
+- **ARM64 Jump Table Z3 Proof Timeout & Candidate Bounding**: Added a strict 2-second timeout per Z3 solver query and candidate memoization, preventing sporadic stalls on complex switch dispatches.
+- **Go and Large Binary Crate Audit Performance Guard**: Added fast byte-level pre-filtering (`b".cargo" in data`) before running registry path regex scans, restoring sub-second audit speeds on Go binaries (Hugo from 7.4s back to 0.1s, gh from 2.8s back to 0.1s).
+- **Mach-O LC_DYSYMTAB Symbol Stub Link Recovery**: Added `S_SYMBOL_STUBS` (`stype == 8`) handling in `_decode_dysymtab_fixups` using section `reserved2` stub dimensions, recovering all 279 dynamic links across pointer sections and symbol stubs in Intel x86_64 Hugo.
 
 ## [1.0.6] - 2026-10-31
 

@@ -1450,29 +1450,31 @@ def _decode_dysymtab_fixups(slice_macho: MachOSlice, limitations: List[str]) -> 
     current_indirect_idx = 0
     for sec in slice_macho.sections:
         stype = sec.flags & 0xFF
+        is_stub_sect = (stype == 8) or sec.sectname == "__stubs"
         is_ptr_sect = (
-            (stype in (6, 7, 0x10, 0x14))
+            (stype in (6, 7, 8, 0x10, 0x14))
             or sec.sectname in (
                 "__nl_symbol_ptr",
                 "__la_symbol_ptr",
                 "__got",
                 "__auth_got",
                 "__auth_ptr",
+                "__stubs",
             )
             or "ptr" in sec.sectname
             or "got" in sec.sectname
             or (
                 sec.reserved1 > 0
                 and sec.reserved1 < len(indirect_syms)
-                and sec.size >= ptr_size
-                and (sec.size % ptr_size == 0)
+                and sec.size > 0
                 and (sec.segname in ("__DATA", "__DATA_CONST", "__TEXT") or sec.segname.startswith("__DATA"))
             )
         )
         if not is_ptr_sect or sec.size <= 0:
             continue
 
-        num_ptrs = sec.size // ptr_size
+        elem_size = sec.reserved2 if (is_stub_sect and sec.reserved2 > 0) else (6 if is_stub_sect else ptr_size)
+        num_ptrs = sec.size // elem_size
         start_idx = (
             sec.reserved1
             if (sec.reserved1 > 0 or current_indirect_idx == 0)
@@ -1484,8 +1486,8 @@ def _decode_dysymtab_fixups(slice_macho: MachOSlice, limitations: List[str]) -> 
             if indirect_idx < 0 or indirect_idx >= len(indirect_syms):
                 continue
             sym_idx = indirect_syms[indirect_idx]
-            slot_va = sec.addr + i * ptr_size
-            slot_off = sec.offset + i * ptr_size
+            slot_va = sec.addr + i * elem_size
+            slot_off = sec.offset + i * elem_size
 
             if sym_idx in (INDIRECT_SYMBOL_LOCAL, INDIRECT_SYMBOL_ABS):
                 target_val = 0

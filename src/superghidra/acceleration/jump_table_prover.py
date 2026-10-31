@@ -152,6 +152,7 @@ class ARM64JumpTableProver:
 
             # Test 1: Can fallthrough ever execute with x >= expected_n?
             s1 = z3.Solver()
+            s1.set("timeout", 2000)
             s1.add(fallthrough)
             s1.add(z3.UGE(x, z3.BitVecVal(expected_n, 32)))
             if s1.check() != z3.unsat:
@@ -159,6 +160,7 @@ class ARM64JumpTableProver:
 
             # Test 2: Can x >= expected_n ever fail to take the escape branch?
             s2 = z3.Solver()
+            s2.set("timeout", 2000)
             s2.add(z3.UGE(x, z3.BitVecVal(expected_n, 32)))
             s2.add(z3.Not(branch_taken))
             if s2.check() != z3.unsat:
