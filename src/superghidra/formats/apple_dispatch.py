@@ -1069,6 +1069,16 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
         "auth_entries": sum(1 for e in entries if "auth" in e.kind),
     }
 
+    if not entries:
+        if slice_macho.dyld_info_cmd is not None:
+            legacy_rep = _decode_legacy_dyld_info(slice_macho, limitations)
+            if legacy_rep.entries:
+                return legacy_rep
+        if slice_macho.dysymtab_cmd is not None:
+            dysym_rep = _decode_dysymtab_fixups(slice_macho, limitations)
+            if dysym_rep.entries:
+                return dysym_rep
+
     return ChainedFixupsReport(
         fixups_version=fixups_version,
         pointer_format=pointer_format if starts_offset < datasize else 0,
@@ -1484,6 +1494,36 @@ def _decode_dysymtab_fixups(slice_macho: MachOSlice, limitations: List[str]) -> 
                         address=slot_va,
                         kind="bind",
                         ordinal=sym_idx,
+                        symbol_name=sym_name,
+                    )
+                )
+
+    if not entries:
+        reloc_chunks = []
+        if extreloff > 0 and nextrel > 0 and extreloff + nextrel * 8 <= len(slice_macho.data):
+            reloc_chunks.append((extreloff, nextrel, "bind"))
+        if locreloff > 0 and nlocrel > 0 and locreloff + nlocrel * 8 <= len(slice_macho.data):
+            reloc_chunks.append((locreloff, nlocrel, "rebase"))
+        for sec in slice_macho.sections:
+            if sec.reloff > 0 and sec.nreloc > 0 and sec.reloff + sec.nreloc * 8 <= len(slice_macho.data):
+                reloc_chunks.append((sec.reloff, sec.nreloc, "bind"))
+
+        for r_off, r_cnt, r_kind in reloc_chunks:
+            for r_i in range(r_cnt):
+                entry_off = r_off + r_i * 8
+                r_addr, r_info = struct.unpack_from(slice_macho.endian + "iI", slice_macho.data, entry_off)
+                r_symnum = r_info & 0x00FFFFFF
+                r_extern = (r_info >> 27) & 1
+                sym_name = symbols[r_symnum] if (r_extern and r_symnum < len(symbols)) else None
+                if sym_name and sym_name not in imports_list:
+                    imports_list.append(sym_name)
+                slot_va = slice_macho.offset_to_va(r_addr) or (slice_macho.image_base + r_addr)
+                entries.append(
+                    ChainedFixupEntry(
+                        offset=r_addr,
+                        address=slot_va,
+                        kind="bind" if r_extern else "rebase",
+                        ordinal=r_symnum,
                         symbol_name=sym_name,
                     )
                 )
