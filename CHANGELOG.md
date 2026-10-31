@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-10-31
+
+### Fixed
+- **ARM64 Jump Table Prover Table Base Provenance Verification**: Fixed jump table recovery in `ARM64JumpTableProver` to require that relative `ADD` consumes the verified table base register from `ADR`/`ADRP`. Added Soundness Gate 1.5 rejecting candidates where `table_base_reg == cmp_reg`, and invalidated table base dataflow if overwritten prior to dispatch calculation. Common compiler idioms remain proven while eliminating false-positive candidates.
+- **DirectoryLock Stress Test Synchronization**: Eliminated race condition in multi-process barrier stress tests by adding coordinated start and end barriers.
+
 ## [1.0.4] - 2026-10-29
 
 ### Fixed
