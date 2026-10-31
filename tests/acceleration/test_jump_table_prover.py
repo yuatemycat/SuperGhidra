@@ -465,3 +465,250 @@ def test_prove_bounds_base_matches_cmp_reg_fails_safe():
         table_base_reg=0,  # base matches cmp_reg!
     )
     assert proven is False
+
+
+def _encode_adrp(rd: int, target_page_va: int, pc: int) -> int:
+    """Encodes ADRP Xd, #imm21 (page offset)."""
+    imm21 = ((target_page_va & ~0xFFF) - (pc & ~0xFFF)) >> 12
+    immlo = imm21 & 0x3
+    immhi = (imm21 >> 2) & 0x7FFFF
+    return 0x90000000 | (immlo << 29) | (immhi << 5) | (rd & 0x1F)
+
+
+def _encode_add_imm_64(rd: int, rn: int, imm12: int) -> int:
+    """Encodes ADD Xd, Xn, #imm12."""
+    return 0x91000000 | ((imm12 & 0xFFF) << 10) | ((rn & 0x1F) << 5) | (rd & 0x1F)
+
+
+def _encode_add_shifted_64(rd: int, rn: int, rm: int, shift_amount: int = 2) -> int:
+    """Encodes ADD Xd, Xn, Xm, LSL #shift_amount."""
+    return 0x8B000000 | ((rm & 0x1F) << 16) | ((shift_amount & 0x3F) << 10) | ((rn & 0x1F) << 5) | (rd & 0x1F)
+
+
+def _encode_ldrsw_reg(rt: int, rn: int, rm: int) -> int:
+    """Encodes LDRSW Xt, [Xn, Xm, LSL #2]."""
+    return 0xB8A07800 | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5) | (rt & 0x1F)
+
+
+def test_apple_clang_canonical_pattern_candidate_scan():
+    """20. Bug 6: Apple Clang canonical switch pattern is not dropped by ADR code-anchor overwrite."""
+    prover = ARM64JumpTableProver()
+
+    # Canonical Apple Clang ARM64 switch dispatch:
+    # 0x1000: CMP W2, #4               (cmp_reg = 2, bound = 4 -> 5 cases)
+    # 0x1004: B.HI default             (+80 bytes)
+    # 0x1008: ADRP X0, #0x8000         (table base page in .rodata)
+    # 0x100C: ADD X0, X0, #0x100       (table base pageoff -> 0x8100)
+    # 0x1010: .Ltmp0: ADR X1, .Ltmp0   (code anchor in .text at 0x1010)
+    # 0x1014: LDRSW X3, [X0, X2, LSL #2] (table load from X0)
+    # 0x1018: ADD X1, X1, X3, LSL #2   (code anchor X1 + offset X3 -> X1)
+    # 0x101C: BR X1                    (dispatch through X1)
+    insns = [
+        _encode_cmp_imm_32(2, 4),
+        _encode_b_cond(8, 20),
+        _encode_adrp(0, 0x8000, 0x1008),
+        _encode_add_imm_64(0, 0, 0x100),
+        _encode_adr(1, 0),  # ADR X1, .Ltmp0 (offset 0 from 0x1010)
+        _encode_ldrsw_reg(3, 0, 2),
+        _encode_add_shifted_64(1, 1, 3, 2),
+        _encode_br(1),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+
+    assert len(candidates) == 1, "Canonical Apple Clang switch sequence must be detected as candidate"
+    cand = candidates[0]
+    assert cand.table_base_va == 0x8100, "Table base in .rodata must not be overwritten by ADR anchor"
+    assert cand.code_anchor_va == 0x1010, "Code anchor PC (.Ltmp0) must be captured accurately"
+    assert cand.table_base_reg == 0
+    assert cand.table_target_reg == 3
+    assert cand.dispatch_reg == 1
+    assert cand.target_flows_to_dispatch is True, "Target flow from table load + anchor to BR must be verified"
+
+
+def test_apple_clang_relative_targets_resolve_against_code_anchor():
+    """21. Bug 5: Jump table relative targets resolve with respect to code_anchor_va (.Ltmp0), not table_base_va."""
+    prover = ARM64JumpTableProver()
+
+    insns = [
+        _encode_cmp_imm_32(2, 4),
+        _encode_b_cond(8, 20),
+        _encode_adrp(0, 0x8000, 0x1008),
+        _encode_add_imm_64(0, 0, 0x100),
+        _encode_adr(1, 0),  # .Ltmp0 at 0x1010
+        _encode_ldrsw_reg(3, 0, 2),
+        _encode_add_shifted_64(1, 1, 3, 2),
+        _encode_br(1),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    cand = prover.scan_candidates(code, base_va=0x1000)[0]
+
+    # Relative offsets from .Ltmp0 (0x1010) to code targets in .text (0x1000..0x2000):
+    # case 0 -> 0x1030 (offset = 32 bytes -> val = 8)
+    # case 1 -> 0x1040 (offset = 48 bytes -> val = 12)
+    # case 2 -> 0x1060 (offset = 80 bytes -> val = 20)
+    # case 3 -> 0x1080 (offset = 112 bytes -> val = 28)
+    # case 4 -> 0x10A0 (offset = 144 bytes -> val = 36)
+    table_data = struct.pack("<5i", 8, 12, 20, 28, 36)
+    recovered = prover.recover_jump_table(
+        candidate=cand,
+        memory_data=table_data,
+        memory_base_va=0x8100,
+        valid_range=(0x1000, 0x2000),  # .text range
+    )
+
+    assert recovered.proven is True
+    assert recovered.bounds_n == 5
+    assert recovered.unresolved_cases == 0
+    assert recovered.targets[0] == 0x1030, "Target must resolve relative to code anchor (0x1010), not table VA (0x8100)"
+    assert recovered.targets[1] == 0x1040
+    assert recovered.targets[2] == 0x1060
+    assert recovered.targets[3] == 0x1080
+    assert recovered.targets[4] == 0x10A0
+    # Explicitly verify it did not compute against table_base_va
+    assert recovered.targets[0] != 0x8100 + (8 << 2)
+
+
+def test_apple_clang_reused_index_register():
+    """22. Apple Clang variant where index register is reused as target register (Rt == cmp_reg)."""
+    prover = ARM64JumpTableProver()
+
+    insns = [
+        _encode_cmp_imm_32(2, 3),  # CMP W2, #3 -> 4 cases
+        _encode_b_cond(8, 20),
+        _encode_adrp(0, 0x9000, 0x1008),
+        _encode_add_imm_64(0, 0, 0x80),
+        _encode_adr(1, 0),  # .Ltmp0 at 0x1010
+        _encode_ldrsw_reg(2, 0, 2),  # LDRSW X2, [X0, X2, LSL #2] -> Rt == 2
+        _encode_add_shifted_64(1, 1, 2, 2),  # ADD X1, X1, X2, LSL #2
+        _encode_br(1),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.table_target_reg == 2
+    assert cand.target_flows_to_dispatch is True
+
+    table_data = struct.pack("<4i", 10, 20, 30, 40)
+    recovered = prover.recover_jump_table(
+        candidate=cand,
+        memory_data=table_data,
+        memory_base_va=0x9080,
+    )
+    assert recovered.proven is True
+    assert recovered.bounds_n == 4
+    assert recovered.targets[0] == 0x1010 + (10 << 2)
+
+
+def test_swift_chromium_jump_table_in_data_fallback():
+    """23. Swift/Chromium jump tables in data section fall back to code anchor/PC."""
+    prover = ARM64JumpTableProver()
+
+    # Candidate with explicit code_anchor_va located in .text while table is in .rodata
+    cand = JumpTableCandidate(
+        pc=0x1000,
+        cmp_pc=0x1000,
+        cmp_reg=0,
+        bound_imm=2,
+        branch_cond="HI",
+        default_target=0x1050,
+        base_calc_type="ADRP_ADD",
+        table_base_va=0x40000,  # in .rodata
+        load_insn_type="LDRSW",
+        entry_size=4,
+        dispatch_pc=0x1020,
+        dispatch_reg=1,
+        index_reg=0,
+        table_target_reg=1,
+        code_anchor_va=0x1008,  # code anchor in .text
+    )
+
+    table_data = struct.pack("<3i", 10, 20, 30)
+    recovered = prover.recover_jump_table(
+        candidate=cand,
+        memory_data=table_data,
+        memory_base_va=0x40000,
+        valid_range=(0x1000, 0x2000),  # code section
+    )
+    assert recovered.bounds_n == 3
+    assert recovered.unresolved_cases == 0
+    assert recovered.targets[0] == 0x1008 + (10 << 2)
+
+    # Candidate without explicit code_anchor_va, but table is in data outside valid_range
+    cand_no_anchor = JumpTableCandidate(
+        pc=0x1000,
+        cmp_pc=0x1000,
+        cmp_reg=0,
+        bound_imm=2,
+        branch_cond="HI",
+        default_target=0x1050,
+        base_calc_type="ADRP_ADD",
+        table_base_va=0x40000,  # in data
+        load_insn_type="LDRSW",
+        entry_size=4,
+        dispatch_pc=0x1020,
+        dispatch_reg=1,
+        index_reg=0,
+        table_target_reg=1,
+        code_anchor_va=None,
+    )
+    recovered_fallback = prover.recover_jump_table(
+        candidate=cand_no_anchor,
+        memory_data=table_data,
+        memory_base_va=0x40000,
+        valid_range=(0x1000, 0x2000),
+    )
+    assert recovered_fallback.bounds_n == 3
+    assert recovered_fallback.unresolved_cases == 0
+    # Falls back to candidate.pc (0x1000)
+    assert recovered_fallback.targets[0] == 0x1000 + (10 << 2)
+
+
+def test_absolute_jump_table_preserves_addresses():
+    """24. Absolute jump table addresses (> 0x40000000 or 64-bit) are preserved."""
+    prover = ARM64JumpTableProver()
+
+    # 32-bit absolute table: entries > 0x40000000
+    cand_32 = JumpTableCandidate(
+        pc=0x1000,
+        cmp_pc=0x1000,
+        cmp_reg=0,
+        bound_imm=1,
+        branch_cond="HI",
+        default_target=0x1050,
+        base_calc_type="ADR",
+        table_base_va=0x2000,
+        load_insn_type="LDRSW",
+        entry_size=4,
+        dispatch_pc=0x1020,
+        dispatch_reg=1,
+        index_reg=0,
+        table_target_reg=1,
+    )
+    data_32 = struct.pack("<2I", 0x50001000, 0x50002000)
+    table_32 = prover.recover_jump_table(cand_32, memory_data=data_32, memory_base_va=0x2000)
+    assert table_32.targets[0] == 0x50001000
+    assert table_32.targets[1] == 0x50002000
+
+    # 64-bit absolute table
+    cand_64 = JumpTableCandidate(
+        pc=0x1000,
+        cmp_pc=0x1000,
+        cmp_reg=0,
+        bound_imm=1,
+        branch_cond="HI",
+        default_target=0x1050,
+        base_calc_type="ADR",
+        table_base_va=0x2000,
+        load_insn_type="LDR",
+        entry_size=8,
+        dispatch_pc=0x1020,
+        dispatch_reg=1,
+        index_reg=0,
+        table_target_reg=1,
+    )
+    data_64 = struct.pack("<2Q", 0x140001000, 0x140002000)
+    table_64 = prover.recover_jump_table(cand_64, memory_data=data_64, memory_base_va=0x2000)
+    assert table_64.targets[0] == 0x140001000
+    assert table_64.targets[1] == 0x140002000

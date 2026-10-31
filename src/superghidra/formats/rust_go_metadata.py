@@ -246,11 +246,19 @@ def _find_sections(data: bytes) -> Dict[str, bytes]:
                             break
                         sec_name = data[sect_off : sect_off + 16].rstrip(b"\x00").decode("utf-8", errors="replace")
                         if is_64:
-                            f_off, f_sz = struct.unpack_from(endian + "II", data, sect_off + 48)
+                            s_sz = struct.unpack_from(endian + "Q", data, sect_off + 40)[0]
+                            f_off = struct.unpack_from(endian + "I", data, sect_off + 48)[0]
                         else:
-                            f_off, f_sz = struct.unpack_from(endian + "II", data, sect_off + 36)
-                        if f_off + f_sz <= len(data):
-                            sections[sec_name] = data[f_off : f_off + f_sz]
+                            s_sz = struct.unpack_from(endian + "I", data, sect_off + 36)[0]
+                            f_off = struct.unpack_from(endian + "I", data, sect_off + 40)[0]
+                        if f_off + s_sz <= len(data):
+                            sec_bytes = data[f_off : f_off + s_sz]
+                            sections[sec_name] = sec_bytes
+                            if sec_name.startswith("__"):
+                                norm_name = "." + sec_name[2:]
+                                sections[norm_name] = sec_bytes
+                                if "_" in norm_name:
+                                    sections[norm_name.replace("_", ".")] = sec_bytes
                         sect_off += s_stride
                 curr_cmd += cmdsz
         except Exception:
@@ -266,7 +274,7 @@ def _find_sections(data: bytes) -> Dict[str, bytes]:
 def _recover_rust_metadata(data: bytes, sections: Dict[str, bytes], limitations: List[str]) -> CrateAuditReport:
     """Parses .dep-v0 section and extracts Rust toolchain commit hashes."""
     dep_section: bytes | None = None
-    for sname in (".dep-v0", ".dep_v0", "dep-v0", "rust_metadata"):
+    for sname in (".dep-v0", ".dep_v0", "dep-v0", "rust_metadata", "__dep_v0"):
         if sname in sections:
             dep_section = sections[sname]
             break
@@ -348,6 +356,63 @@ def _recover_rust_metadata(data: bytes, sections: Dict[str, bytes], limitations:
 # Go Metadata Recovery (.go.buildinfo & pclntab)
 # -----------------------------------------------------------------------------
 
+PCLNTAB_MAGIC_VERSIONS = {
+    PCLNTAB_MAGIC_115: "Go 1.2-1.15",
+    PCLNTAB_MAGIC_116: "Go 1.16-1.17",
+    PCLNTAB_MAGIC_118: "Go 1.18-1.19",
+    PCLNTAB_MAGIC_120: "Go 1.20+",
+}
+
+
+def _parse_pclntab_header(candidate: bytes) -> Tuple[str, int] | None:
+    """
+    Validates candidate bytes against the Go pcHeader contract:
+    - magic (4 bytes): must be in PCLNTAB_MAGIC_VERSIONS
+    - pad1 (byte 4): must be 0
+    - pad2 (byte 5): must be 0
+    - minLC (byte 6): must be in (1, 2, 4)
+    - ptrSize (byte 7): must be in (4, 8)
+    - nfunc (offset 8): uint64 if ptrSize == 8, uint32 if ptrSize == 4
+    - nfunc range: 1 <= nfunc < 2_000_000
+
+    Returns (version_string, function_count) if valid, or None if rejected.
+    """
+    if len(candidate) < 12:
+        return None
+
+    for endian in ("<", ">"):
+        magic = struct.unpack_from(endian + "I", candidate, 0)[0]
+        if magic not in PCLNTAB_MAGIC_VERSIONS:
+            continue
+
+        pad1 = candidate[4]
+        pad2 = candidate[5]
+        if pad1 != 0 or pad2 != 0:
+            continue
+
+        min_lc = candidate[6]
+        if min_lc not in (1, 2, 4):
+            continue
+
+        ptr_size = candidate[7]
+        if ptr_size not in (4, 8):
+            continue
+
+        if ptr_size == 8:
+            if len(candidate) < 16:
+                continue
+            nfunc = struct.unpack_from(endian + "Q", candidate, 8)[0]
+        else:
+            nfunc = struct.unpack_from(endian + "I", candidate, 8)[0]
+
+        if not (1 <= nfunc < 2_000_000):
+            continue
+
+        return PCLNTAB_MAGIC_VERSIONS[magic], nfunc
+
+    return None
+
+
 def _parse_go_modinfo(raw_text: str) -> Tuple[str | None, GoModuleInfo | None, List[GoModuleInfo], List[GoBuildSetting]]:
     """Parses standard Go buildinfo key-value module lines."""
     main_path: str | None = None
@@ -418,9 +483,20 @@ def _recover_go_metadata(data: bytes, sections: Dict[str, bytes], limitations: L
         # Search forward for "\x00go1." or "\xff"
         v_idx = data.find(b"go1.", pos)
         if v_idx != -1 and v_idx - pos < 512:
-            end_v = data.find(b"\x00", v_idx)
-            if end_v != -1:
-                go_version = data[v_idx:end_v].decode("utf-8", errors="replace")
+            candidate_chunk = data[v_idx : min(len(data), v_idx + 64)]
+            # Go version pattern: e.g. go1.21.3, go1.22rc1, go1.18-devel
+            m = re.match(rb"^(go[0-9]+(?:\.[0-9]+)+(?:(?:rc|beta|alpha)[0-9]+|-[a-zA-Z0-9.:_-]+)?)", candidate_chunk)
+            if m:
+                ver_cand = m.group(1).decode("ascii", errors="replace").rstrip(".-_")
+                if len(ver_cand) <= 64:
+                    go_version = ver_cand
+            else:
+                # Check for 0x00 termination within 32 bytes max
+                end_v = candidate_chunk.find(b"\x00")
+                if 0 < end_v <= 32:
+                    ver_cand = candidate_chunk[:end_v].decode("ascii", errors="replace").rstrip(".-_")
+                    if re.match(r"^go[0-9]+", ver_cand) and len(ver_cand) <= 64:
+                        go_version = ver_cand
 
         # Search for module text "\xff" or "path\t"
         mod_start = data.find(b"path\t", pos)
@@ -435,31 +511,37 @@ def _recover_go_metadata(data: bytes, sections: Dict[str, bytes], limitations: L
             raw_text = data[mod_start:mod_end].decode("utf-8", errors="replace")
             main_path, main_mod, deps, settings = _parse_go_modinfo(raw_text)
 
-    # 2. Check for pclntab header in .gopclntab or scanned data
-    pcln_bytes = sections.get(".gopclntab") or sections.get("pclntab")
-    if pcln_bytes is None:
-        # Scan for magic
-        for magic_val in (PCLNTAB_MAGIC_120, PCLNTAB_MAGIC_118, PCLNTAB_MAGIC_116, PCLNTAB_MAGIC_115):
-            magic_bytes = struct.pack("<I", magic_val)
-            p_idx = data.find(magic_bytes)
-            if p_idx != -1 and p_idx + 32 <= len(data):
-                pcln_bytes = data[p_idx : min(len(data), p_idx + 65536)]
-                break
+    # 2. Check for pclntab header in sections (.gopclntab, pclntab, __gopclntab)
+    pcln_bytes = (
+        sections.get(".gopclntab")
+        or sections.get("pclntab")
+        or sections.get("__gopclntab")
+    )
+    if pcln_bytes is not None and len(pcln_bytes) >= 12:
+        parsed = _parse_pclntab_header(pcln_bytes)
+        if parsed is not None:
+            pclntab_ver, func_count = parsed
 
-    if pcln_bytes is not None and len(pcln_bytes) >= 16:
-        magic_val = struct.unpack_from("<I", pcln_bytes, 0)[0]
-        if magic_val == PCLNTAB_MAGIC_115:
-            pclntab_ver = "Go 1.2-1.15"
-            func_count = struct.unpack_from("<I", pcln_bytes, 8)[0] if len(pcln_bytes) >= 12 else 0
-        elif magic_val == PCLNTAB_MAGIC_116:
-            pclntab_ver = "Go 1.16-1.17"
-            func_count = struct.unpack_from("<I", pcln_bytes, 8)[0] if len(pcln_bytes) >= 12 else 0
-        elif magic_val == PCLNTAB_MAGIC_118:
-            pclntab_ver = "Go 1.18-1.19"
-            func_count = struct.unpack_from("<I", pcln_bytes, 8)[0] if len(pcln_bytes) >= 12 else 0
-        elif magic_val == PCLNTAB_MAGIC_120:
-            pclntab_ver = "Go 1.20+"
-            func_count = struct.unpack_from("<I", pcln_bytes, 8)[0] if len(pcln_bytes) >= 12 else 0
+    # If not found or invalid in sections, scan raw data for valid pcHeader
+    if pclntab_ver is None:
+        for magic_val in (PCLNTAB_MAGIC_120, PCLNTAB_MAGIC_118, PCLNTAB_MAGIC_116, PCLNTAB_MAGIC_115):
+            for endian in ("<", ">"):
+                magic_bytes = struct.pack(endian + "I", magic_val)
+                pos_scan = 0
+                while True:
+                    p_idx = data.find(magic_bytes, pos_scan)
+                    if p_idx == -1:
+                        break
+                    if p_idx + 12 <= len(data):
+                        parsed = _parse_pclntab_header(data[p_idx : min(len(data), p_idx + 64)])
+                        if parsed is not None:
+                            pclntab_ver, func_count = parsed
+                            break
+                    pos_scan = p_idx + 1
+                if pclntab_ver is not None:
+                    break
+            if pclntab_ver is not None:
+                break
 
     counts = {
         "dependencies": len(deps),

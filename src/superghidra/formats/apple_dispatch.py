@@ -81,9 +81,11 @@ DYLD_CHAINED_PTR_64_OFFSET = 6
 DYLD_CHAINED_PTR_ARM64E_KERNEL = 7
 DYLD_CHAINED_PTR_64_KERNEL_CACHE = 8
 DYLD_CHAINED_PTR_ARM64E_USERLAND = 9
-DYLD_CHAINED_PTR_ARM64E_USERLAND2 = 10
-DYLD_CHAINED_PTR_ARM64E_FIRMWARE = 11
-DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE = 12
+DYLD_CHAINED_PTR_ARM64E_FIRMWARE = 10
+DYLD_CHAINED_PTR_X86_64_KERNEL_CACHE = 11
+DYLD_CHAINED_PTR_ARM64E_USERLAND24 = 12
+DYLD_CHAINED_PTR_ARM64E_SHARED_CACHE = 13
+DYLD_CHAINED_PTR_ARM64E_USERLAND2 = DYLD_CHAINED_PTR_ARM64E_USERLAND24
 
 # Chained import formats
 DYLD_CHAINED_IMPORT = 1
@@ -812,7 +814,7 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
                 continue
 
             size, page_size, pointer_format, segment_offset, max_valid_pointer, page_count = (
-                struct.unpack_from("<IHHIQH", slice_macho.data, seg_starts_base)
+                struct.unpack_from("<IHHQIH", slice_macho.data, seg_starts_base)
             )
 
             page_starts_offset = seg_starts_base + 22
@@ -861,8 +863,9 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
                         DYLD_CHAINED_PTR_ARM64E,
                         DYLD_CHAINED_PTR_ARM64E_KERNEL,
                         DYLD_CHAINED_PTR_ARM64E_USERLAND,
-                        DYLD_CHAINED_PTR_ARM64E_USERLAND2,
                         DYLD_CHAINED_PTR_ARM64E_FIRMWARE,
+                        DYLD_CHAINED_PTR_ARM64E_USERLAND24,
+                        DYLD_CHAINED_PTR_ARM64E_SHARED_CACHE,
                     ):
                         if chain_file_off + 8 > len(slice_macho.data):
                             break
@@ -878,7 +881,10 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
                             addr_div = bool((val >> 48) & 1)
                             diversity = (val >> 32) & 0xFFFF
                             if bind:
-                                ordinal = val & 0xFFFF
+                                if pointer_format == DYLD_CHAINED_PTR_ARM64E_USERLAND24:
+                                    ordinal = val & 0xFFFFFF
+                                else:
+                                    ordinal = val & 0xFFFF
                                 sym_name = imports[ordinal] if ordinal < len(imports) else None
                                 entries.append(
                                     ChainedFixupEntry(
@@ -893,7 +899,7 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
                                     )
                                 )
                             else:
-                                target = val & 0xFFFFFFFF
+                                target = (slice_macho.image_base + (val & 0xFFFFFFFF)) & 0xFFFFFFFFFFFFFFFF
                                 entries.append(
                                     ChainedFixupEntry(
                                         offset=chain_file_off,
@@ -907,7 +913,10 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
                                 )
                         else:
                             if bind:
-                                ordinal = val & 0xFFFF
+                                if pointer_format == DYLD_CHAINED_PTR_ARM64E_USERLAND24:
+                                    ordinal = val & 0xFFFFFF
+                                else:
+                                    ordinal = val & 0xFFFF
                                 addend = (val >> 32) & 0x7FFFF
                                 if addend & 0x40000:
                                     addend -= 0x80000
@@ -923,9 +932,15 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
                                     )
                                 )
                             else:
-                                target = val & ((1 << 43) - 1)
-                                high8 = (val >> 43) & 0xFF
-                                full_target = (high8 << 56) | target
+                                if pointer_format in (
+                                    DYLD_CHAINED_PTR_ARM64E_USERLAND,
+                                    DYLD_CHAINED_PTR_ARM64E_USERLAND24,
+                                ):
+                                    full_target = (slice_macho.image_base + (val & ((1 << 43) - 1))) & 0xFFFFFFFFFFFFFFFF
+                                else:
+                                    target = val & ((1 << 43) - 1)
+                                    high8 = (val >> 43) & 0xFF
+                                    full_target = (high8 << 56) | target
                                 entries.append(
                                     ChainedFixupEntry(
                                         offset=chain_file_off,
@@ -965,7 +980,10 @@ def _decode_chained_fixups(slice_macho: MachOSlice, limitations: List[str]) -> C
                         else:
                             target = val & 0xFFFFFFFFF
                             high8 = (val >> 36) & 0xFF
-                            full_target = (high8 << 56) | target
+                            if pointer_format == DYLD_CHAINED_PTR_64_OFFSET:
+                                full_target = ((high8 << 56) | (slice_macho.image_base + target)) & 0xFFFFFFFFFFFFFFFF
+                            else:
+                                full_target = (high8 << 56) | target
                             entries.append(
                                 ChainedFixupEntry(
                                     offset=chain_file_off,
@@ -1043,10 +1061,28 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
     if slice_macho.dyld_info_cmd is None:
         return ChainedFixupsReport()
 
-    rebase_off, rebase_size, bind_off, bind_size, _, _, _, _, _, _ = slice_macho.dyld_info_cmd
+    (
+        rebase_off,
+        rebase_size,
+        bind_off,
+        bind_size,
+        weak_bind_off,
+        weak_bind_size,
+        lazy_bind_off,
+        lazy_bind_size,
+        export_off,
+        export_size,
+    ) = slice_macho.dyld_info_cmd
     entries: List[ChainedFixupEntry] = []
     imports_list: List[str] = []
     ptr_size = 8 if slice_macho.bits == 64 else 4
+
+    def _read_rebase_target(off: int) -> int:
+        if ptr_size == 8 and off + 8 <= len(slice_macho.data):
+            return struct.unpack_from(slice_macho.endian + "Q", slice_macho.data, off)[0]
+        elif ptr_size == 4 and off + 4 <= len(slice_macho.data):
+            return struct.unpack_from(slice_macho.endian + "I", slice_macho.data, off)[0]
+        return 0
 
     # 1. Parse rebase opcodes
     if rebase_size > 0 and rebase_off + rebase_size <= len(slice_macho.data):
@@ -1081,7 +1117,14 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
                     if seg:
                         va = seg.vmaddr + seg_offset
                         off = seg.fileoff + seg_offset
-                        entries.append(ChainedFixupEntry(offset=off, address=va, kind="rebase"))
+                        entries.append(
+                            ChainedFixupEntry(
+                                offset=off,
+                                address=va,
+                                kind="rebase",
+                                target=_read_rebase_target(off),
+                            )
+                        )
                     seg_offset += ptr_size
             elif op == REBASE_OPCODE_DO_REBASE_ULEB_TIMES:
                 count, n = _read_uleb128(slice_macho.data, p)
@@ -1091,14 +1134,28 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
                     if seg:
                         va = seg.vmaddr + seg_offset
                         off = seg.fileoff + seg_offset
-                        entries.append(ChainedFixupEntry(offset=off, address=va, kind="rebase"))
+                        entries.append(
+                            ChainedFixupEntry(
+                                offset=off,
+                                address=va,
+                                kind="rebase",
+                                target=_read_rebase_target(off),
+                            )
+                        )
                     seg_offset += ptr_size
             elif op == REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB:
                 seg = slice_macho.segments[seg_idx] if seg_idx < len(slice_macho.segments) else None
                 if seg:
                     va = seg.vmaddr + seg_offset
                     off = seg.fileoff + seg_offset
-                    entries.append(ChainedFixupEntry(offset=off, address=va, kind="rebase"))
+                    entries.append(
+                        ChainedFixupEntry(
+                            offset=off,
+                            address=va,
+                            kind="rebase",
+                            target=_read_rebase_target(off),
+                        )
+                    )
                 val, n = _read_uleb128(slice_macho.data, p)
                 p += n
                 seg_offset += ptr_size + val
@@ -1112,13 +1169,30 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
                     if seg:
                         va = seg.vmaddr + seg_offset
                         off = seg.fileoff + seg_offset
-                        entries.append(ChainedFixupEntry(offset=off, address=va, kind="rebase"))
+                        entries.append(
+                            ChainedFixupEntry(
+                                offset=off,
+                                address=va,
+                                kind="rebase",
+                                target=_read_rebase_target(off),
+                            )
+                        )
                     seg_offset += ptr_size + skip
+            else:
+                break
 
-    # 2. Parse bind opcodes
-    if bind_size > 0 and bind_off + bind_size <= len(slice_macho.data):
-        p = bind_off
-        end = bind_off + bind_size
+    # 2. Parse bind, weak_bind, and lazy_bind opcodes
+    bind_chunks = [
+        (bind_off, bind_size, "bind"),
+        (weak_bind_off, weak_bind_size, "bind"),
+        (lazy_bind_off, lazy_bind_size, "lazy_bind"),
+    ]
+
+    for chunk_off, chunk_size, chunk_kind in bind_chunks:
+        if chunk_size <= 0 or chunk_off + chunk_size > len(slice_macho.data):
+            continue
+        p = chunk_off
+        end = chunk_off + chunk_size
         seg_idx = 0
         seg_offset = 0
         sym_name: str | None = None
@@ -1138,13 +1212,25 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
             elif op == BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB:
                 dylib_ord, n = _read_uleb128(slice_macho.data, p)
                 p += n
+            elif op == BIND_OPCODE_SET_DYLIB_SPECIAL_IMM:
+                if imm == 0:
+                    dylib_ord = 0
+                else:
+                    dylib_ord = imm | ~0x0F
             elif op == BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM:
-                idx = slice_macho.data.find(b"\x00", p)
+                idx = slice_macho.data.find(b"\x00", p, end)
                 if idx >= p:
                     sym_name = slice_macho.data[p:idx].decode("utf-8", errors="replace")
                     p = idx + 1
                     if sym_name not in imports_list:
                         imports_list.append(sym_name)
+                else:
+                    sym_name = slice_macho.data[p:end].decode("utf-8", errors="replace")
+                    p = end
+                    if sym_name not in imports_list:
+                        imports_list.append(sym_name)
+            elif op == BIND_OPCODE_SET_TYPE_IMM:
+                pass
             elif op == BIND_OPCODE_SET_ADDEND_SLEB:
                 addend, n = _read_sleb128(slice_macho.data, p)
                 p += n
@@ -1166,7 +1252,7 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
                         ChainedFixupEntry(
                             offset=off,
                             address=va,
-                            kind="bind",
+                            kind=chunk_kind,
                             ordinal=dylib_ord,
                             symbol_name=sym_name,
                             addend=addend,
@@ -1182,7 +1268,7 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
                         ChainedFixupEntry(
                             offset=off,
                             address=va,
-                            kind="bind",
+                            kind=chunk_kind,
                             ordinal=dylib_ord,
                             symbol_name=sym_name,
                             addend=addend,
@@ -1200,19 +1286,42 @@ def _decode_legacy_dyld_info(slice_macho: MachOSlice, limitations: List[str]) ->
                         ChainedFixupEntry(
                             offset=off,
                             address=va,
-                            kind="bind",
+                            kind=chunk_kind,
                             ordinal=dylib_ord,
                             symbol_name=sym_name,
                             addend=addend,
                         )
                     )
                 seg_offset += ptr_size + imm * ptr_size
+            elif op == BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB:
+                count, n = _read_uleb128(slice_macho.data, p)
+                p += n
+                skip, n2 = _read_uleb128(slice_macho.data, p)
+                p += n2
+                for _ in range(count):
+                    seg = slice_macho.segments[seg_idx] if seg_idx < len(slice_macho.segments) else None
+                    if seg:
+                        va = seg.vmaddr + seg_offset
+                        off = seg.fileoff + seg_offset
+                        entries.append(
+                            ChainedFixupEntry(
+                                offset=off,
+                                address=va,
+                                kind=chunk_kind,
+                                ordinal=dylib_ord,
+                                symbol_name=sym_name,
+                                addend=addend,
+                            )
+                        )
+                    seg_offset += ptr_size + skip
+            else:
+                break
 
     counts = {
         "entries": len(entries),
         "imports": len(imports_list),
         "rebases": sum(1 for e in entries if e.kind == "rebase"),
-        "binds": sum(1 for e in entries if e.kind == "bind"),
+        "binds": sum(1 for e in entries if "bind" in e.kind),
         "auth_entries": 0,
     }
 

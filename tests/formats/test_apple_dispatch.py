@@ -35,6 +35,10 @@ from superghidra.formats.apple_dispatch import (
     CPU_TYPE_ARM64,
     CPU_TYPE_X86_64,
     DYLD_CHAINED_IMPORT,
+    DYLD_CHAINED_PTR_64,
+    DYLD_CHAINED_PTR_64_OFFSET,
+    DYLD_CHAINED_PTR_ARM64E,
+    DYLD_CHAINED_PTR_ARM64E_USERLAND24,
     FAT_MAGIC,
     LC_DYLD_CHAINED_FIXUPS,
     LC_DYLD_INFO_ONLY,
@@ -358,7 +362,7 @@ def test_dyld_chained_fixups_arm64e_auth_chain():
     # dyld_chained_starts_in_segment: size(4), page_size(2), pointer_format(2), segment_offset(8), max_valid_pointer(4), page_count(2), page_start[1](2)
     # pointer_format = DYLD_CHAINED_PTR_ARM64E (1)
     page_start = 0  # starts at offset 0
-    seg_starts = struct.pack("<IHHIHQH", 24, 0x4000, 1, 0, 0, 1, page_start)
+    seg_starts = struct.pack("<IHHQIH", 24, 0x4000, 1, 0, 0, 1) + struct.pack("<H", page_start)
 
     # starts in image pointing to seg_starts
     starts_in_image = struct.pack("<II", 1, 8) + seg_starts
@@ -389,7 +393,7 @@ def test_dyld_chained_fixups_arm64e_auth_chain():
         LC_SEGMENT_64,
         seg_size,
         b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
-        0x4000, 0x1000, 32 + 16 + len(payload), 0x1000, 7, 7, 0, 0
+        0x4000, 0x1000, 32 + seg_size + 16 + len(payload), 0x1000, 7, 7, 0, 0
     )
 
     fixup_cmd = struct.pack(
@@ -405,6 +409,13 @@ def test_dyld_chained_fixups_arm64e_auth_chain():
 
     report = dispatch_apple_binary(binary, arch="arm64e")
     assert report.arch == "arm64e"
+    assert len(report.chained_fixups.entries) == 1
+    e = report.chained_fixups.entries[0]
+    assert e.kind == "auth_rebase"
+    assert e.auth_key == "IA"
+    assert e.diversity == 0x1234
+    assert e.addr_diversity is True
+    assert e.target == 0x4000 + 0x10000000
 
 
 def test_to_dict_serialization():
@@ -418,3 +429,295 @@ def test_to_dict_serialization():
     assert "chained_fixups" in d
     assert "swift5" in d
     assert "objc" in d
+
+
+def test_legacy_rebase_target_extracted_from_data():
+    """Bug 1: Verify legacy dyld_info rebase reads pre-slid target pointer from binary data."""
+    seg_fileoff = 0x100
+    seg_vmaddr = 0x1000
+    expected_target = 0x0000000100084000
+    rel_slot_off = 0x28
+
+    rebase_stream = bytes([
+        REBASE_OPCODE_SET_TYPE_IMM | REBASE_TYPE_POINTER,
+        REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB | 0,
+        rel_slot_off,
+        REBASE_OPCODE_DO_REBASE_IMM_TIMES | 1,
+        REBASE_OPCODE_DONE,
+    ])
+
+    rebase_off = 32 + 72 + 48
+    rebase_size = len(rebase_stream)
+
+    seg_cmd = struct.pack(
+        "<II16sQQQQIIII",
+        LC_SEGMENT_64,
+        72,
+        b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        seg_vmaddr, 0x1000, seg_fileoff, 0x1000, 7, 7, 0, 0
+    )
+
+    dyld_cmd = struct.pack(
+        "<IIIIIIIIIIII",
+        LC_DYLD_INFO_ONLY,
+        48,
+        rebase_off,
+        rebase_size,
+        0, 0, 0, 0, 0, 0, 0, 0
+    )
+
+    hdr = _build_thin_macho_header(CPU_TYPE_X86_64, 3, ncmds=2, sizeofcmds=72 + 48)
+    prefix = hdr + seg_cmd + dyld_cmd + rebase_stream
+
+    total_len = seg_fileoff + rel_slot_off + 8
+    binary_bytes = bytearray(total_len)
+    binary_bytes[:len(prefix)] = prefix
+    struct.pack_into("<Q", binary_bytes, seg_fileoff + rel_slot_off, expected_target)
+
+    report = dispatch_apple_binary(bytes(binary_bytes), arch="x86_64")
+    assert report.chained_fixups.legacy_info_fallback
+    assert len(report.chained_fixups.entries) == 1
+    rebase_entry = report.chained_fixups.entries[0]
+    assert rebase_entry.kind == "rebase"
+    assert rebase_entry.address == seg_vmaddr + rel_slot_off
+    assert rebase_entry.offset == seg_fileoff + rel_slot_off
+    assert rebase_entry.target == expected_target
+
+
+def test_legacy_lazy_bind_opcodes_parsing_279_entries():
+    """Bug 4: Verify legacy dyld_info weak_bind and lazy_bind opcodes decoding (279 Hugo lazy binds)."""
+    def encode_uleb128(val: int) -> bytes:
+        out = bytearray()
+        while True:
+            b = val & 0x7F
+            val >>= 7
+            if val:
+                out.append(b | 0x80)
+            else:
+                out.append(b)
+                break
+        return bytes(out)
+
+    bind_stream = bytearray([
+        BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB | 0,
+        0x00,
+        BIND_OPCODE_SET_DYLIB_ORDINAL_IMM | 1,
+        BIND_OPCODE_SET_TYPE_IMM | BIND_TYPE_POINTER,
+        BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM | 0,
+    ])
+    bind_stream.extend(b"_dyld_start\x00")
+    bind_stream.extend([
+        BIND_OPCODE_DO_BIND,
+        BIND_OPCODE_DONE,
+    ])
+
+    num_lazy_entries = 279
+    lazy_stream = bytearray()
+    for i in range(num_lazy_entries):
+        slot_offset = 0x10 + i * 8
+        lazy_stream.append(BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB | 0)
+        lazy_stream.extend(encode_uleb128(slot_offset))
+        lazy_stream.append(BIND_OPCODE_SET_DYLIB_ORDINAL_IMM | 2)
+        lazy_stream.append(BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM | 0)
+        lazy_stream.extend(f"_stub_func_{i}\x00".encode("utf-8"))
+        lazy_stream.append(BIND_OPCODE_DO_BIND)
+        lazy_stream.append(BIND_OPCODE_DONE)
+
+    seg_cmd = struct.pack(
+        "<II16sQQQQIIII",
+        LC_SEGMENT_64,
+        72,
+        b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        0x2000, 0x4000, 0x1000, 0x4000, 7, 7, 0, 0
+    )
+
+    base_off = 32 + 72 + 48
+    bind_off = base_off
+    bind_size = len(bind_stream)
+    lazy_off = bind_off + bind_size
+    lazy_size = len(lazy_stream)
+
+    dyld_cmd = struct.pack(
+        "<IIIIIIIIIIII",
+        LC_DYLD_INFO_ONLY,
+        48,
+        0, 0,
+        bind_off, bind_size,
+        0, 0,
+        lazy_off, lazy_size,
+        0, 0
+    )
+
+    hdr = _build_thin_macho_header(CPU_TYPE_X86_64, 3, ncmds=2, sizeofcmds=72 + 48)
+    binary = bytearray(0x2000)
+    meta = hdr + seg_cmd + dyld_cmd + bytes(bind_stream) + bytes(lazy_stream)
+    binary[:len(meta)] = meta
+
+    report = dispatch_apple_binary(bytes(binary), arch="x86_64")
+    assert report.chained_fixups.legacy_info_fallback
+    assert report.chained_fixups.counts["entries"] == num_lazy_entries + 1
+    assert report.chained_fixups.counts["binds"] == num_lazy_entries + 1
+    lazy_entries = [e for e in report.chained_fixups.entries if e.kind == "lazy_bind"]
+    assert len(lazy_entries) == 279
+    standard_binds = [e for e in report.chained_fixups.entries if e.kind == "bind"]
+    assert len(standard_binds) == 1
+    assert standard_binds[0].symbol_name == "_dyld_start"
+    assert lazy_entries[0].symbol_name == "_stub_func_0"
+    assert lazy_entries[278].symbol_name == "_stub_func_278"
+    assert lazy_entries[278].address == 0x2000 + 0x10 + 278 * 8
+    assert "_stub_func_0" in report.chained_fixups.imports
+    assert "_stub_func_278" in report.chained_fixups.imports
+
+
+def test_dyld_chained_ptr_64_offset_adds_image_base():
+    """Bug 2: Verify DYLD_CHAINED_PTR_64_OFFSET correctly adds slice_macho.image_base."""
+    page_start = 0
+    seg_starts = struct.pack("<IHHQIH", 24, 0x1000, DYLD_CHAINED_PTR_64_OFFSET, 0, 0, 1) + struct.pack("<H", page_start)
+    starts_in_image = struct.pack("<II", 1, 8) + seg_starts
+
+    fixups_header = struct.pack(
+        "<IIIIIII",
+        0,   # version
+        28,  # starts_offset
+        28 + len(starts_in_image),  # imports_offset
+        28 + len(starts_in_image) + 4,  # symbols_offset
+        1,   # imports_count
+        DYLD_CHAINED_IMPORT,
+        0,   # symbols_format
+    )
+    import_entry = struct.pack("<I", 0)
+    symbols_table = b"\x00unused\x00"
+    payload = fixups_header + starts_in_image + import_entry + symbols_table
+
+    offset_target = 0x1234
+    high8 = 0x05
+    val = (0 << 63) | (0 << 51) | (high8 << 36) | offset_target
+    ptr_bytes = struct.pack("<Q", val)
+
+    seg_size = 72
+    image_base = 0x100000000
+    seg_cmd = struct.pack(
+        "<II16sQQQQIIII",
+        LC_SEGMENT_64,
+        seg_size,
+        b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        image_base, 0x1000, 32 + seg_size + 16 + len(payload), 0x1000, 7, 7, 0, 0
+    )
+
+    fixup_cmd = struct.pack(
+        "<IIII",
+        LC_DYLD_CHAINED_FIXUPS,
+        16,
+        32 + seg_size + 16,
+        len(payload)
+    )
+
+    hdr = _build_thin_macho_header(CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, ncmds=2, sizeofcmds=seg_size + 16)
+    binary = hdr + seg_cmd + fixup_cmd + payload + ptr_bytes
+
+    report = dispatch_apple_binary(binary, arch="arm64")
+    assert len(report.chained_fixups.entries) == 1
+    e = report.chained_fixups.entries[0]
+    assert e.kind == "rebase"
+    expected_full_target = (high8 << 56) | (image_base + offset_target)
+    assert e.target == expected_full_target
+
+
+def test_dyld_chained_ptr_arm64e_userland24_decoding():
+    """Bug 3: Verify DYLD_CHAINED_PTR_ARM64E_USERLAND24 decodes 24-bit ordinals, PAC keys, and targets."""
+    page_start = 0
+    seg_starts = struct.pack(
+        "<IHHQIH",
+        24,
+        0x4000,
+        DYLD_CHAINED_PTR_ARM64E_USERLAND24,
+        0,
+        0,
+        1,
+    ) + struct.pack("<H", page_start)
+    starts_in_image = struct.pack("<II", 1, 8) + seg_starts
+
+    fixups_header = struct.pack(
+        "<IIIIIII",
+        0,   # version
+        28,  # starts_offset
+        28 + len(starts_in_image),  # imports_offset
+        28 + len(starts_in_image) + 4,  # symbols_offset
+        1,   # imports_count
+        DYLD_CHAINED_IMPORT,
+        0,   # symbols_format
+    )
+    import_entry = struct.pack("<I", 0)
+    symbols_table = b"\x00unused\x00"
+    payload = fixups_header + starts_in_image + import_entry + symbols_table
+
+    # Build 4 chained fixup slots in a chain:
+    # Slot 0: auth_bind24 with stride 8 (next=1)
+    # auth=1, bind=1, next=1, key=2 (DA), addr_div=1, diversity=0xBEEF, ordinal=0x123456 (24-bit)
+    val_auth_bind = (1 << 63) | (1 << 62) | (1 << 51) | (2 << 49) | (1 << 48) | (0xBEEF << 32) | 0x123456
+
+    # Slot 1: bind24 with stride 8 (next=1)
+    # auth=0, bind=1, next=1, addend=-42 (19-bit signed: -42 & 0x7FFFF), ordinal=0x654321 (24-bit)
+    val_bind24 = (0 << 63) | (1 << 62) | (1 << 51) | (((-42) & 0x7FFFF) << 32) | 0x654321
+
+    # Slot 2: unauth rebase in USERLAND24 with stride 8 (next=1)
+    # auth=0, bind=0, next=1, target=0x5000 (VM offset from image_base)
+    val_rebase = (0 << 63) | (0 << 62) | (1 << 51) | 0x5000
+
+    # Slot 3: auth rebase in USERLAND24 with stride 0 (end of chain)
+    # auth=1, bind=0, next=0, key=1 (IB), addr_div=0, diversity=0xCAFE, target=0x6000 (runtime offset)
+    val_auth_rebase = (1 << 63) | (0 << 62) | (0 << 51) | (1 << 49) | (0 << 48) | (0xCAFE << 32) | 0x6000
+
+    ptr_chain_bytes = (
+        struct.pack("<Q", val_auth_bind) +
+        struct.pack("<Q", val_bind24) +
+        struct.pack("<Q", val_rebase) +
+        struct.pack("<Q", val_auth_rebase)
+    )
+
+    image_base = 0x100004000
+    seg_size = 72
+    seg_cmd = struct.pack(
+        "<II16sQQQQIIII",
+        LC_SEGMENT_64,
+        seg_size,
+        b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        image_base, 0x4000, 32 + seg_size + 16 + len(payload), 0x4000, 7, 7, 0, 0
+    )
+
+    fixup_cmd = struct.pack(
+        "<IIII",
+        LC_DYLD_CHAINED_FIXUPS,
+        16,
+        32 + seg_size + 16,
+        len(payload)
+    )
+
+    hdr = _build_thin_macho_header(CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64E, ncmds=2, sizeofcmds=seg_size + 16)
+    binary = hdr + seg_cmd + fixup_cmd + payload + ptr_chain_bytes
+
+    report = dispatch_apple_binary(binary, arch="arm64e")
+    assert len(report.chained_fixups.entries) == 4
+
+    e0 = report.chained_fixups.entries[0]
+    assert e0.kind == "auth_bind"
+    assert e0.ordinal == 0x123456
+    assert e0.auth_key == "DA"
+    assert e0.diversity == 0xBEEF
+    assert e0.addr_diversity is True
+
+    e1 = report.chained_fixups.entries[1]
+    assert e1.kind == "bind"
+    assert e1.ordinal == 0x654321
+    assert e1.addend == -42
+
+    e2 = report.chained_fixups.entries[2]
+    assert e2.kind == "rebase"
+    assert e2.target == image_base + 0x5000
+
+    e3 = report.chained_fixups.entries[3]
+    assert e3.kind == "auth_rebase"
+    assert e3.auth_key == "IB"
+    assert e3.diversity == 0xCAFE
+    assert e3.addr_diversity is False
+    assert e3.target == image_base + 0x6000

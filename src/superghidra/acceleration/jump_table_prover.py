@@ -47,6 +47,7 @@ class JumpTableCandidate:
     table_target_reg: int = 0
     target_flows_to_dispatch: bool = False
     table_base_reg: int | None = None
+    code_anchor_va: int | None = None
 
 
 @dataclasses.dataclass
@@ -230,6 +231,9 @@ class ARM64JumpTableProver:
             base_calc: str = "ADR"
             table_base_reg: int | None = None
             base_regs: set[int] = set()
+            code_anchor_va: int | None = None
+            code_anchor_reg: int | None = None
+            code_anchor_regs: set[int] = set()
             entry_sz: int = 4
             load_type: str | None = None
             dispatch_pc: int = 0
@@ -264,10 +268,15 @@ class ARM64JumpTableProver:
                     imm21 = (immhi << 2) | immlo
                     if imm21 & 0x100000:
                         imm21 -= 0x200000
-                    base_va_found = cur_pc + imm21
-                    base_calc = "ADR"
-                    table_base_reg = rd
-                    base_regs = {rd}
+                    if base_va_found is not None:
+                        code_anchor_va = cur_pc + imm21
+                        code_anchor_reg = rd
+                        code_anchor_regs = {rd}
+                    else:
+                        base_va_found = cur_pc + imm21
+                        base_calc = "ADR"
+                        table_base_reg = rd
+                        base_regs = {rd}
                     continue
 
                 # ADRP: [31]=1, [28:24]=10000
@@ -325,12 +334,15 @@ class ARM64JumpTableProver:
                         flow_regs = {rd}
                         if rd in base_regs:
                             base_regs.discard(rd)
+                        if rd in code_anchor_regs:
+                            code_anchor_regs.discard(rd)
                     else:
                         if rd == cmp_reg and table_idx_reg is None:
                             cmp_reg_clobbered = True
                             break
                         flow_regs.discard(rd)
                         base_regs.discard(rd)
+                        code_anchor_regs.discard(rd)
                     continue
 
                 # ADD (shifted register) or ADD (extended register)
@@ -340,15 +352,20 @@ class ARM64JumpTableProver:
                     rd = cur_insn & 0x1F
                     rn = (cur_insn >> 5) & 0x1F
                     rm = (cur_insn >> 16) & 0x1F
+                    target_rel_bases = base_regs | code_anchor_regs
                     if table_tgt_reg is not None and (
-                        (rn in flow_regs and rm in base_regs) or (rm in flow_regs and rn in base_regs)
+                        (rn in flow_regs and rm in target_rel_bases)
+                        or (rm in flow_regs and rn in target_rel_bases)
                     ):
                         flow_regs.add(rd)
                         if rd in base_regs:
                             base_regs.discard(rd)
+                        if rd in code_anchor_regs:
+                            code_anchor_regs.discard(rd)
                     else:
                         flow_regs.discard(rd)
                         base_regs.discard(rd)
+                        code_anchor_regs.discard(rd)
                     if rd == cmp_reg and table_idx_reg is None:
                         cmp_reg_clobbered = True
                         break
@@ -370,9 +387,12 @@ class ARM64JumpTableProver:
                         flow_regs.add(rd)
                         if rd in base_regs:
                             base_regs.discard(rd)
+                        if rd in code_anchor_regs:
+                            code_anchor_regs.discard(rd)
                     else:
                         flow_regs.discard(rd)
                         base_regs.discard(rd)
+                        code_anchor_regs.discard(rd)
                     if rd == cmp_reg and table_idx_reg is None:
                         cmp_reg_clobbered = True
                         break
@@ -393,9 +413,14 @@ class ARM64JumpTableProver:
                             base_regs.add(rd)
                         else:
                             base_regs.discard(rd)
+                        if rm in code_anchor_regs:
+                            code_anchor_regs.add(rd)
+                        else:
+                            code_anchor_regs.discard(rd)
                     else:
                         flow_regs.discard(rd)
                         base_regs.discard(rd)
+                        code_anchor_regs.discard(rd)
                     if rd == cmp_reg and table_idx_reg is None:
                         cmp_reg_clobbered = True
                         break
@@ -415,6 +440,7 @@ class ARM64JumpTableProver:
                             break
                         flow_regs.discard(rd)
                         base_regs.discard(rd)
+                        code_anchor_regs.discard(rd)
 
             # Candidate requires table base computation, verified table load indexed by cmp_reg,
             # non-clobbered cmp_reg, and explicit indirect branch (BR Xn)
@@ -444,6 +470,7 @@ class ARM64JumpTableProver:
                         table_target_reg=table_tgt_reg,
                         target_flows_to_dispatch=target_flows_to_dispatch,
                         table_base_reg=table_base_reg,
+                        code_anchor_va=code_anchor_va,
                     )
                 )
 
@@ -473,6 +500,21 @@ class ARM64JumpTableProver:
         table_offset = candidate.table_base_va - memory_base_va
         entry_sz = candidate.entry_size
 
+        # Determine relative base for relative jump targets:
+        # If code_anchor_va is known (e.g. Apple Clang / LLVM), relative offsets resolve from it.
+        # Fallback to pc if table is in a data section separate from code,
+        # otherwise fallback to table_base_va.
+        if candidate.code_anchor_va is not None:
+            rel_base = candidate.code_anchor_va
+        elif (
+            valid_range
+            and not (valid_range[0] <= candidate.table_base_va <= valid_range[1])
+            and (valid_range[0] <= candidate.pc <= valid_range[1])
+        ):
+            rel_base = candidate.pc
+        else:
+            rel_base = candidate.table_base_va
+
         for i in range(bounds_n):
             curr_offset = table_offset + i * entry_sz
             if curr_offset < 0 or curr_offset + entry_sz > len(memory_data):
@@ -483,16 +525,15 @@ class ARM64JumpTableProver:
             # Read entry according to entry_size
             if entry_sz == 1:
                 val = memory_data[curr_offset]
-                # Scaled relative branch from table_base_va or dispatch_pc
-                target_addr = candidate.table_base_va + (val << 2)
+                target_addr = rel_base + (val << 2)
             elif entry_sz == 2:
                 (val,) = struct.unpack_from("<H", memory_data, curr_offset)
-                target_addr = candidate.table_base_va + (val << 2)
+                target_addr = rel_base + (val << 2)
             elif entry_sz == 4:
                 (val,) = struct.unpack_from("<i", memory_data, curr_offset)
-                # If value is negative/signed relative, add to table_base_va, else absolute
+                # If value is negative/signed relative, add to rel_base, else absolute
                 if abs(val) < 0x40000000:
-                    target_addr = candidate.table_base_va + (val << 2)
+                    target_addr = rel_base + (val << 2)
                 else:
                     target_addr = val & 0xFFFFFFFF
             elif entry_sz == 8:
@@ -524,5 +565,6 @@ class ARM64JumpTableProver:
                 "load_type": candidate.load_insn_type,
                 "base_calc": candidate.base_calc_type,
                 "cmp_reg": candidate.cmp_reg,
+                "code_anchor_va": candidate.code_anchor_va,
             },
         )

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-10-31
+
+### Fixed
+- **Mach-O Legacy Dyld Rebase Pointer Extraction**: Extract concrete pre-slid pointer targets directly from disk images during `LC_DYLD_INFO` rebase decoding, resolving null targets on older-style Mac binaries.
+- **Mach-O DYLD_CHAINED_PTR_64_OFFSET Image Base Accounting**: Added image base compensation to rebase target calculation for format 6 chained fixups, correcting fixed address offset errors on iOS and macOS binaries.
+- **Mach-O DYLD_CHAINED_PTR_ARM64E_USERLAND24 Enum and 24-bit Ordinals**: Corrected fixup format enumeration alignment to canonical dyld specifications, resolving ARM64E format 12 collisions and decoding 24-bit import ordinals with PAC keys.
+- **Mach-O Legacy Lazy & Weak Bind Stream Decoding**: Extended `_decode_legacy_dyld_info` to parse lazy and weak dynamic bind streams alongside regular binds, recovering all 279 dynamic symbols on Intel x86_64 Hugo. Corrected segment starts unpacking layout to `<IHHQIH`.
+- **ARM64 Jump Table Code Anchor Address Resolution**: Computed relative jump table targets against code anchor locations (`.Ltmp0` / `ADR`) rather than the data section table address, eliminating wrong-target deviations on Swift and Chromium binaries.
+- **ARM64 Jump Table Apple Clang Lowering Pattern Detection**: Added independent tracking for table base registers and code anchor registers in `ARM64JumpTableProver.scan_candidates`, allowing detection of canonical Apple Clang switch sequences (`adrp+add` -> `adr` -> `ldrsw` -> `add` -> `br`).
+- **Go/Rust Runtime Identification pcHeader Structural Verification**: Enforced strict Go runtime `pcHeader` contract validation (`pad1==0`, `pad2==0`, `minLC in (1, 2, 4)`, `ptrSize in (4, 8)`, `func_count < 2M`), preventing arbitrary code bytes in Rust binaries from falsely matching pclntab signatures with 4.29B function counts. Fixed 64-bit Mach-O section header size parsing in `_find_sections`.
+- **Go Runtime Version Bounded Extraction**: Replaced unbounded null-terminator scanning with a bounded 64-byte regex window for Go buildinfo version strings, eliminating multi-kilobyte string pollution.
+
 ## [1.0.5] - 2026-10-31
 
 ### Fixed
