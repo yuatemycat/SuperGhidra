@@ -327,6 +327,37 @@ def _recover_rust_metadata(data: bytes, sections: Dict[str, bytes], limitations:
         except Exception as e:
             limitations.append(f"Failed to decode .dep-v0 payload: {e}")
 
+    # If cargo-auditable payload was absent, recover crates from embedded cargo registry paths
+    if not crates:
+        seen_crates: set[tuple[str, str]] = set()
+        for m in re.finditer(
+            rb"(?:[a-zA-Z0-9_\.\-]+[/\\])?\.cargo[/\\]registry[/\\]src[/\\][^/\\]+[/\\]([a-zA-Z0-9_\-]+)-([0-9]+\.[0-9]+(?:\.[0-9]+[a-zA-Z0-9_\.\-]*)?)",
+            data,
+        ):
+            c_name = m.group(1).decode("utf-8", errors="replace")
+            c_ver = m.group(2).decode("utf-8", errors="replace")
+            if (c_name, c_ver) not in seen_crates:
+                seen_crates.add((c_name, c_ver))
+                crates.append(RustCrateInfo(name=c_name, version=c_ver, source="crates.io"))
+
+        # Also recover standard library crates (core, alloc, std) if referenced in symbol tables
+        std_crates = ["std", "core", "alloc"]
+        for sc in std_crates:
+            if not any(c.name == sc for c in crates) and (
+                f"_ZN{len(sc)}{sc}".encode() in data or f"_R{len(sc)}{sc}".encode() in data
+            ):
+                crates.append(
+                    RustCrateInfo(
+                        name=sc,
+                        version="1.0",
+                        source="rust-lang",
+                    )
+                )
+
+        if not pkg_name and crates:
+            pkg_name = crates[0].name
+            pkg_ver = crates[0].version
+
     # Extract rustc commit hash from string tables or rodata: /rustc/<40-hex>/
     rustc_commit: str | None = None
     rustc_match = re.search(rb"/rustc/([0-9a-fA-F]{40})/", data)
@@ -339,7 +370,7 @@ def _recover_rust_metadata(data: bytes, sections: Dict[str, bytes], limitations:
     }
 
     # If .dep-v0 was missing, mark observed_absence (epistemic status)
-    epistemic = "observed" if has_audit else "observed_absence"
+    epistemic = "observed" if (has_audit or crates) else "observed_absence"
 
     return CrateAuditReport(
         has_audit_data=has_audit,

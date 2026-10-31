@@ -141,6 +141,10 @@ class ChainedFixupEntry:
     diversity: int = 0
     addr_diversity: bool = False
 
+    def __post_init__(self) -> None:
+        if self.address is not None:
+            self.address &= 0x0000FFFFFFFFFFFF
+
     def to_dict(self) -> Dict[str, Any]:
         res: Dict[str, Any] = {
             "offset": hex(self.offset),
@@ -370,6 +374,7 @@ class AppleDispatchReport:
     chained_fixups: ChainedFixupsReport
     swift5: Swift5Report
     objc: ObjCRecoveryReport
+    libraries: List[str] = field(default_factory=list)
     counts: Dict[str, int] = field(default_factory=dict)
     limitations: List[str] = field(default_factory=list)
     epistemic_status: str = "observed"
@@ -379,6 +384,7 @@ class AppleDispatchReport:
             "arch": self.arch,
             "bits": self.bits,
             "image_base": hex(self.image_base),
+            "libraries": list(self.libraries),
             "chained_fixups": self.chained_fixups.to_dict(),
             "swift5": self.swift5.to_dict(),
             "objc": self.objc.to_dict(),
@@ -559,7 +565,7 @@ class MachOSlice:
             elif cmd == LC_SYMTAB:
                 self.symtab_cmd = struct.unpack_from(e + "4I", self.data, off + 8)
 
-            elif cmd in (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, LC_REEXPORT_DYLIB):
+            elif cmd in (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, LC_REEXPORT_DYLIB, 0x20, 0x8000001D, 0x80000023, 0x1D):
                 name_off = struct.unpack_from(e + "I", self.data, off + 8)[0]
                 if name_off < cmdsize:
                     dylib_str = self._read_cstr(self.data, off + name_off, cmdsize - name_off)
@@ -1441,20 +1447,37 @@ def _decode_dysymtab_fixups(slice_macho: MachOSlice, limitations: List[str]) -> 
     INDIRECT_SYMBOL_ABS = 0x40000000
 
     # 3. Locate symbol pointer sections (__la_symbol_ptr, __nl_symbol_ptr, __got)
+    current_indirect_idx = 0
     for sec in slice_macho.sections:
         stype = sec.flags & 0xFF
-        is_ptr_sect = (stype in (6, 7)) or sec.sectname in (
-            "__nl_symbol_ptr",
-            "__la_symbol_ptr",
-            "__got",
-            "__auth_got",
-            "__auth_ptr",
+        is_ptr_sect = (
+            (stype in (6, 7, 0x10, 0x14))
+            or sec.sectname in (
+                "__nl_symbol_ptr",
+                "__la_symbol_ptr",
+                "__got",
+                "__auth_got",
+                "__auth_ptr",
+            )
+            or "ptr" in sec.sectname
+            or "got" in sec.sectname
+            or (
+                sec.reserved1 > 0
+                and sec.reserved1 < len(indirect_syms)
+                and sec.size >= ptr_size
+                and (sec.size % ptr_size == 0)
+                and (sec.segname in ("__DATA", "__DATA_CONST", "__TEXT") or sec.segname.startswith("__DATA"))
+            )
         )
         if not is_ptr_sect or sec.size <= 0:
             continue
 
         num_ptrs = sec.size // ptr_size
-        start_idx = sec.reserved1
+        start_idx = (
+            sec.reserved1
+            if (sec.reserved1 > 0 or current_indirect_idx == 0)
+            else current_indirect_idx
+        )
 
         for i in range(num_ptrs):
             indirect_idx = start_idx + i
@@ -1497,6 +1520,7 @@ def _decode_dysymtab_fixups(slice_macho: MachOSlice, limitations: List[str]) -> 
                         symbol_name=sym_name,
                     )
                 )
+        current_indirect_idx = max(current_indirect_idx, start_idx + num_ptrs)
 
     if not entries:
         reloc_chunks = []
@@ -2065,6 +2089,7 @@ def dispatch_apple_binary(
         chained_fixups=chained_fixups,
         swift5=swift5,
         objc=objc,
+        libraries=list(slice_macho.libraries),
         counts=counts,
         limitations=limitations,
         epistemic_status="observed",

@@ -48,6 +48,7 @@ class JumpTableCandidate:
     target_flows_to_dispatch: bool = False
     table_base_reg: int | None = None
     code_anchor_va: int | None = None
+    target_shift: int = 2
 
 
 @dataclasses.dataclass
@@ -236,6 +237,8 @@ class ARM64JumpTableProver:
             # Search forward up to 8 instructions for table base load and table lookup
             base_va_found: int | None = None
             base_calc: str = "ADR"
+            adrp_pageoff_added: bool = False
+            target_shift: int = 2
             table_base_reg: int | None = None
             base_regs: set[int] = set()
             code_anchor_va: int | None = None
@@ -300,6 +303,7 @@ class ARM64JumpTableProver:
                         imm21 -= 0x200000
                     base_va_found = (cur_pc & ~0xFFF) + (imm21 << 12)
                     base_calc = "ADRP_ADD"
+                    adrp_pageoff_added = False
                     table_base_reg = rd
                     base_regs = {rd}
                     continue
@@ -368,6 +372,14 @@ class ARM64JumpTableProver:
                         added_reg = rm if rn in flow_regs else rn
                         if added_reg in code_anchor_regs:
                             used_code_anchor = True
+                        if rm in flow_regs:
+                            if is_add_shifted:
+                                shift_type = (cur_insn >> 22) & 0x3
+                                target_shift = ((cur_insn >> 10) & 0x3F) if shift_type == 0 else 0
+                            else:
+                                target_shift = (cur_insn >> 10) & 0x7
+                        else:
+                            target_shift = 0
                         flow_regs.add(rd)
                         if rd in base_regs:
                             base_regs.discard(rd)
@@ -394,6 +406,7 @@ class ARM64JumpTableProver:
                         base_va_found = (base_va_found or 0) + imm
                         base_regs.add(rd)
                         table_base_reg = rd
+                        adrp_pageoff_added = True
                     elif table_tgt_reg is not None and rn in flow_regs:
                         flow_regs.add(rd)
                         if rd in base_regs:
@@ -458,6 +471,7 @@ class ARM64JumpTableProver:
             if (
                 not cmp_reg_clobbered
                 and base_va_found is not None
+                and (base_calc != "ADRP_ADD" or adrp_pageoff_added)
                 and dispatch_pc != 0
                 and table_idx_reg is not None
                 and table_tgt_reg is not None
@@ -482,6 +496,7 @@ class ARM64JumpTableProver:
                         target_flows_to_dispatch=target_flows_to_dispatch,
                         table_base_reg=table_base_reg,
                         code_anchor_va=code_anchor_va if used_code_anchor else None,
+                        target_shift=target_shift,
                     )
                 )
 
@@ -529,15 +544,15 @@ class ARM64JumpTableProver:
             # Read entry according to entry_size
             if entry_sz == 1:
                 val = memory_data[curr_offset]
-                target_addr = rel_base + (val << 2)
+                target_addr = rel_base + (val << candidate.target_shift)
             elif entry_sz == 2:
                 (val,) = struct.unpack_from("<H", memory_data, curr_offset)
-                target_addr = rel_base + (val << 2)
+                target_addr = rel_base + (val << candidate.target_shift)
             elif entry_sz == 4:
                 (val,) = struct.unpack_from("<i", memory_data, curr_offset)
                 # If value is negative/signed relative, add to rel_base, else absolute
                 if abs(val) < 0x40000000:
-                    target_addr = rel_base + (val << 2)
+                    target_addr = rel_base + (val << candidate.target_shift)
                 else:
                     target_addr = val & 0xFFFFFFFF
             elif entry_sz == 8:
@@ -573,11 +588,12 @@ class ARM64JumpTableProver:
             table_va=candidate.table_base_va,
             targets=targets,
             unresolved_cases=unresolved,
-            proven=proven,
+            proven=proven and (unresolved == 0) and (bounds_n > 0),
             data_sources={
                 "load_type": candidate.load_insn_type,
                 "base_calc": candidate.base_calc_type,
                 "cmp_reg": candidate.cmp_reg,
                 "code_anchor_va": candidate.code_anchor_va,
+                "target_shift": candidate.target_shift,
             },
         )

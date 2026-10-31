@@ -35,16 +35,14 @@ from superghidra.formats.apple_dispatch import (
     CPU_TYPE_ARM64,
     CPU_TYPE_X86_64,
     DYLD_CHAINED_IMPORT,
-    DYLD_CHAINED_PTR_64,
-    LC_SYMTAB,
-    LC_DYSYMTAB,
     DYLD_CHAINED_PTR_64_OFFSET,
-    DYLD_CHAINED_PTR_ARM64E,
     DYLD_CHAINED_PTR_ARM64E_USERLAND24,
     FAT_MAGIC,
     LC_DYLD_CHAINED_FIXUPS,
     LC_DYLD_INFO_ONLY,
+    LC_DYSYMTAB,
     LC_SEGMENT_64,
+    LC_SYMTAB,
     MH_MAGIC_64,
     REBASE_OPCODE_DO_REBASE_IMM_TIMES,
     REBASE_OPCODE_DONE,
@@ -521,7 +519,7 @@ def test_legacy_lazy_bind_opcodes_parsing_279_entries():
         lazy_stream.extend(encode_uleb128(slot_offset))
         lazy_stream.append(BIND_OPCODE_SET_DYLIB_ORDINAL_IMM | 2)
         lazy_stream.append(BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM | 0)
-        lazy_stream.extend(f"_stub_func_{i}\x00".encode("utf-8"))
+        lazy_stream.extend(f"_stub_func_{i}\x00".encode())
         lazy_stream.append(BIND_OPCODE_DO_BIND)
         lazy_stream.append(BIND_OPCODE_DONE)
 
@@ -736,7 +734,7 @@ def test_dysymtab_indirect_symbols_hugo_intel_279_entries():
     # Symbols 1..279: _stub_i
     for i in range(num_entries):
         stroff = len(strtab)
-        strtab.extend(f"_hugo_sym_{i}\x00".encode("utf-8"))
+        strtab.extend(f"_hugo_sym_{i}\x00".encode())
         symbols_raw.extend(struct.pack("<IBBHQ", stroff, 0x01, 0, 0, 0))
 
     # indirect symbol table: indices 1..279
@@ -823,3 +821,93 @@ def test_ios_framework_dylib_base_zero_altstorecore():
     binary = hdr + seg_text + seg_data
     report = dispatch_apple_binary(binary, arch="arm64")
     assert report.image_base == 0, f"Dylib __TEXT with vmaddr 0 must have image_base 0, got {hex(report.image_base)}"
+
+
+def test_dysymtab_split_sections_hugo_intel_279_entries():
+    """Verify classic Mach-O LC_DYSYMTAB recovery when 279 entries are split across __nl_symbol_ptr (140) and __la_symbol_ptr (139)."""
+    num_nl = 140
+    num_la = 139
+    total_entries = num_nl + num_la  # 279
+    strtab = bytearray(b"\x00_main\x00")
+    symbols_raw = bytearray()
+    symbols_raw.extend(struct.pack("<IBBHQ", 1, 0x0F, 1, 0, 0x10001000))
+    for i in range(total_entries):
+        stroff = len(strtab)
+        strtab.extend(f"_hugo_split_{i}\x00".encode())
+        symbols_raw.extend(struct.pack("<IBBHQ", stroff, 0x01, 0, 0, 0))
+
+    # indirect symbol table: indices 1..279
+    indirect_table = struct.pack(f"<{total_entries}I", *range(1, total_entries + 1))
+
+    # Section 1: __nl_symbol_ptr (140 entries)
+    sect1_sz = num_nl * 8
+    sect1_cmd = struct.pack(
+        "<16s16sQQIIIIIIII",
+        b"__nl_symbol_ptr\x00",
+        b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        0x10004000, sect1_sz,
+        0x1000, 3, 0, 0, 0x06,  # S_NON_LAZY_SYMBOL_POINTERS
+        0, 0, 0,  # reserved1=0
+    )
+
+    # Section 2: __la_symbol_ptr (139 entries)
+    sect2_sz = num_la * 8
+    sect2_cmd = struct.pack(
+        "<16s16sQQIIIIIIII",
+        b"__la_symbol_ptr\x00",
+        b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        0x10004000 + sect1_sz, sect2_sz,
+        0x1000 + sect1_sz, 3, 0, 0, 0x07,  # S_LAZY_SYMBOL_POINTERS
+        num_nl, 8, 0,  # reserved1=140
+    )
+
+    seg_cmd = struct.pack(
+        "<II16sQQQQIIII",
+        LC_SEGMENT_64,
+        72 + 80 + 80,
+        b"__DATA\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        0x10004000, 0x4000, 0x1000, 0x4000, 7, 7, 2, 0,
+    ) + sect1_cmd + sect2_cmd
+
+    symoff = 0x500
+    stroff = symoff + len(symbols_raw)
+    indirect_off = stroff + len(strtab)
+
+    symtab_cmd = struct.pack("<IIII", symoff, total_entries + 1, stroff, len(strtab))
+    dysym_cmd = struct.pack(
+        "<18I",
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+        indirect_off, total_entries,
+        0, 0, 0, 0,
+    )
+
+    hdr = _build_thin_macho_header(CPU_TYPE_X86_64, 3, ncmds=3, sizeofcmds=72 + 160 + 24 + 80)
+    binary = bytearray(0x5000)
+    meta = hdr + seg_cmd + struct.pack("<II", LC_SYMTAB, 24) + symtab_cmd + struct.pack("<II", LC_DYSYMTAB, 80) + dysym_cmd
+    binary[:len(meta)] = meta
+    binary[symoff : symoff + len(symbols_raw)] = symbols_raw
+    binary[stroff : stroff + len(strtab)] = strtab
+    binary[indirect_off : indirect_off + len(indirect_table)] = indirect_table
+
+    report = dispatch_apple_binary(bytes(binary), arch="x86_64")
+    assert report.chained_fixups.counts["entries"] == 279, f"Expected 279 entries, got {report.chained_fixups.counts['entries']}"
+    assert report.chained_fixups.counts["binds"] == 279
+    assert report.chained_fixups.entries[0].symbol_name == "_hugo_split_0"
+    assert report.chained_fixups.entries[140].symbol_name == "_hugo_split_140"
+    assert report.chained_fixups.entries[278].symbol_name == "_hugo_split_278"
+
+
+def test_chained_fixup_strips_high_bit_junk():
+    """Verify ChainedFixupEntry strips high-bit junk (like _malloc/_free in bat) to canonical 48-bit userland VA."""
+    from superghidra.formats.apple_dispatch import ChainedFixupEntry
+
+    junk_address = 0xFFFF800010045000  # Sign-extended or tagged address
+    entry = ChainedFixupEntry(
+        offset=0x1000,
+        address=junk_address,
+        kind="bind",
+        symbol_name="_malloc",
+    )
+    assert entry.address == 0x800010045000, f"Expected canonical 48-bit VA, got {hex(entry.address)}"
+    assert entry.address <= 0x0000FFFFFFFFFFFF

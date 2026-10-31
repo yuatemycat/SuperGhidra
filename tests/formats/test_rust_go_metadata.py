@@ -436,3 +436,37 @@ def test_pclntab_32bit_pointer_support():
     report = audit_rust_go_binary(dummy_data)
     assert report.go.pclntab_version == "Go 1.16-1.17"
     assert report.go.function_count == 77
+
+
+def test_rust_crates_recovered_without_auditable_section():
+    """Verify compiled Rust binaries without .dep-v0 recover crates from cargo registry paths and symbols."""
+    from superghidra.formats.rust_go_metadata import audit_rust_go_binary
+
+    # Create dummy Mach-O with embedded cargo registry paths (panic formatting / file!() strings)
+    # and std symbol references
+    payload = bytearray(0x2000)
+    # Mach-O 64-bit header
+    payload[:4] = b"\xcf\xfa\xed\xfe"
+    struct.pack_into("<iIIIII", payload, 4, 0x0100000C, 0, 2, 0, 0, 0)
+
+    # Embed cargo registry paths
+    p1 = b"/Users/runner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/regex-1.10.2/src/lib.rs\x00"
+    p2 = b"/Users/runner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/clap-4.4.11/src/lib.rs\x00"
+    p3 = b"/Users/runner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.193/src/lib.rs\x00"
+    sym = b"_ZN4core3ptr13drop_in_place17h1234567890abcdefE"
+    rustc_str = b"/rustc/a53f9e72f71ed0f42f9f342936e10f856a4302fb/library/core/src/ptr.rs"
+
+    payload[0x200 : 0x200 + len(p1)] = p1
+    payload[0x400 : 0x400 + len(p2)] = p2
+    payload[0x600 : 0x600 + len(p3)] = p3
+    payload[0x800 : 0x800 + len(sym)] = sym
+    payload[0xA00 : 0xA00 + len(rustc_str)] = rustc_str
+
+    report = audit_rust_go_binary(bytes(payload))
+    assert report.rust.counts["crates_count"] >= 3
+    crate_names = [c.name for c in report.rust.crates]
+    assert "regex" in crate_names
+    assert "clap" in crate_names
+    assert "serde" in crate_names
+    assert report.rust.epistemic_status == "observed"
+    assert report.rust.rustc_commit == "a53f9e72f71ed0f42f9f342936e10f856a4302fb"

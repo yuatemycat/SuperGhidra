@@ -67,12 +67,14 @@ def test_adr_table_base_load():
 
 def test_adrp_add_table_base_load():
     """4. Parses ADRP + page base calculation."""
-    # ADRP X1, #0 (page of 0x1000 is 0x1000)
+    # ADRP X1, #0 (page of 0x1000 is 0x1000) + ADD X1, X1, #0x80
     adrp_insn = 0x90000001
+    add_insn = 0x91020021  # ADD X1, X1, #0x80
     insns = [
         _encode_cmp_imm_32(0, 5),
         _encode_b_cond(8, 15),
         adrp_insn,
+        add_insn,
         0x38606822,  # LDRB W2, [X1, X0]
         _encode_br(2),
     ]
@@ -288,10 +290,10 @@ def test_compiler_pattern_load_x2_add_x1_branch_x1():
     # B.HI default (+80 bytes)
     # ADR X1, #32 (table base at 0x1008 + 32 = 0x1028)
     # LDRSW X2, [X1, W0, SXTW #2] (0xB8A0D822: load 32-bit signed offset into X2)
-    # ADD X1, X1, X2 (0x8B020021: add base X1 + offset X2 -> X1)
+    # ADD X1, X1, X2, LSL #2 (0x8B020821: add base X1 + offset X2 -> X1)
     # BR X1 (_encode_br(1))
     ldrsw_x2_insn = 0xB8A0D822
-    add_x1_x1_x2 = 0x8B020021
+    add_x1_x1_x2 = 0x8B020821
     insns = [
         _encode_cmp_imm_32(0, 4),
         _encode_b_cond(8, 20),
@@ -786,3 +788,81 @@ def test_ripgrep_unrelated_adr_does_not_pollute_table_base():
     cand = candidates[0]
     assert cand.table_base_va == 0x50100
     assert cand.code_anchor_va is None, "code_anchor_va must remain None because X3 was not added to the target"
+
+
+def test_swift_chromium_shift_0_jump_table():
+    """27. Swift / Chromium LLVM jump tables emit ADD Xd, Xbase, Xoffset with shift 0."""
+    prover = ARM64JumpTableProver()
+    # CMP W0, #3 -> bounds_n = 4
+    # B.HI default
+    # ADR X1, #0x30 -> table_base_va = 0x1038
+    # LDRSW X2, [X1, W0, SXTW #2]
+    # ADD X1, X1, X2 (0x8B020021: shift = 0!)
+    # BR X1
+    insns = [
+        _encode_cmp_imm_32(0, 3),
+        _encode_b_cond(8, 20),
+        _encode_adr(1, 0x30),
+        0xB8A0D822,
+        0x8B020021,  # ADD X1, X1, X2 (shift=0)
+        _encode_br(1),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+    assert len(candidates) == 1
+    cand = candidates[0]
+    assert cand.target_shift == 0, "Shift must be 0 for unshifted ADD in Swift/Chromium"
+
+    # Offsets in table are raw byte offsets: 16, 32, 48, 64
+    table_data = struct.pack("<4i", 16, 32, 48, 64)
+    recovered = prover.recover_jump_table(
+        candidate=cand,
+        memory_data=table_data,
+        memory_base_va=cand.table_base_va,
+    )
+    assert recovered.bounds_n == 4
+    assert recovered.proven is True
+    assert recovered.targets[0] == cand.table_base_va + 16
+    assert recovered.targets[1] == cand.table_base_va + 32
+    assert recovered.targets[2] == cand.table_base_va + 48
+    assert recovered.targets[3] == cand.table_base_va + 64
+
+
+def test_adrp_without_add_rejected_as_candidate():
+    """28. ADRP without paired ADD (pageoff) is rejected to prevent false proven tables."""
+    prover = ARM64JumpTableProver()
+    insns = [
+        _encode_cmp_imm_32(0, 5),
+        _encode_b_cond(8, 15),
+        0x90000001,  # ADRP X1, #0 without ADD
+        0x38606822,  # LDRB W2, [X1, X0]
+        _encode_br(2),
+    ]
+    code = struct.pack(f"<{len(insns)}I", *insns)
+    candidates = prover.scan_candidates(code, base_va=0x1000)
+    assert len(candidates) == 0, "Bare ADRP must not form a jump table candidate"
+
+
+def test_unresolved_targets_mark_table_unproven():
+    """29. Table with unresolved/out-of-bounds targets must have proven == False."""
+    prover = ARM64JumpTableProver()
+    cand = JumpTableCandidate(
+        pc=0x1000,
+        cmp_pc=0x1000,
+        cmp_reg=0,
+        bound_imm=3,
+        branch_cond="HI",
+        default_target=0x1200,
+        base_calc_type="ADR",
+        table_base_va=0x2000,
+        load_insn_type="LDRSW",
+        entry_size=4,
+        dispatch_pc=0x1010,
+        dispatch_reg=2,
+    )
+    # Target 1 is sentinel 0xFFFFFFFF
+    memory_data = struct.pack("<4i", 10, -1, 30, 40)
+    table = prover.recover_jump_table(cand, memory_data=memory_data, memory_base_va=0x2000, valid_range=(0x2000, 0x3000))
+    assert table.bounds_n == 4
+    assert table.unresolved_cases == 1
+    assert table.proven is False, "Unresolved targets must invalidate proof status"
